@@ -71,7 +71,7 @@
         if (!m) return null;
         return {
           title: `欢迎来到 ${g.school}！`, portrait: { member: m.id },
-          text: `你成为了 <b>${U.esc(g.pi.name)}</b>（${a.name}）门下的一名博士生，研究方向是 <b>${G().area(g).name} · ${G().topic(g, g.policies.coreTopic).name}</b>。<br><br>接下来的五年里，你要发论文、过资格考试和开题、去实习和开会、和导师处好关系……然后带着这些成果去<b>找教职</b>。能去什么学校、带着什么背景开始自己的实验室，都取决于这几年。<br><br><span class="dim">提示：「我」页面能看到你的毕业进度和求职竞争力；「方针」里可以调整自己的工作节奏。${a.tip || ''}</span>`,
+          text: `你成为了 <b>${U.esc(g.pi.name)}</b>（${a.name}）门下的一名博士生，研究方向是 <b>${G().area(g).name} · ${U.esc(S().dirName(g, S().interestOf(m) || g.startSub))}</b>。<br><br>接下来的五年里，你要发论文、过资格考试和开题、去实习和开会、和导师处好关系……然后带着这些成果去<b>找教职</b>。能去什么学校、带着什么背景开始自己的实验室，都取决于这几年。<br><br><span class="dim">提示：「我」页面能看到你的毕业进度和求职竞争力；「方针」里可以调整自己的工作节奏。${a.tip || ''}</span>`,
           choices: [{ label: '开始读博！', def: true, apply: nop }],
         };
       },
@@ -86,23 +86,29 @@
         const interest = S().interestOf(m);
         const alloc = S().computeAlloc(g);
         const heatWord = h => (h >= 2.2 ? '很热门' : h >= 1.5 ? '较热门' : h >= 1.1 ? '热度一般' : '冷门');
-        const ch = (c.opts || []).filter(tid => g.topics[tid]).map(tid => {
-          const t = G().topic(g, tid);
-          const gr = S().groupOfTopic(g, tid);
+        const last = c.sub || (c.topic ? G().asSub(g, c.topic) : null);
+        const lastTopic = last ? G().sub(g, last).topic : null;
+        const def = c.def ? G().asSub(g, c.def) : null;
+        const opts = (c.opts || []).map(x => G().asSub(g, x)).filter((x, i, a) => a.indexOf(x) === i);
+        const ch = opts.map(sid => {
+          const s = G().sub(g, sid);
+          const t = G().topic(g, s.topic);
+          const gr = S().groupOfSub(g, sid);
+          const fit = S().interestFit(m, sid);
           const tags = [];
-          if (tid === c.def) tags.push('导师建议');
-          if (tid === c.topic) tags.push('接着做');
-          if (tid === interest) tags.push('你最想做');
+          if (sid === def) tags.push('导师建议');
+          if (sid === last) tags.push('接着做');
+          if (fit === 1) tags.push('你最想做');
           const r = gr ? alloc.ratio[gr.id] : 9;
           const comp = gr ? (alloc.dem[gr.id] > 0 ? (r >= 1 ? '组里算力充足' : `组里算力只够 ${Math.round(r * 100)}%`) : '组里算力空闲') : '组里没人做，用共享算力';
           const hint = [
-            `实验室积累 ${(g.expertise[tid] || 0).toFixed(1)} · ${heatWord(g.topics[tid].heat)} · ${comp}`,
-            tid === c.topic ? '构思更快' : null,
-            tid === interest ? '心情 +6 · 效率 +5%' : '不是你最想做的：心情 -3',
-            tid === c.def ? '导师信任 +3' : null,
+            `${t.name} · 实验室积累 ${(g.expertise[s.topic] || 0).toFixed(1)} · ${heatWord(S().heat(g, sid))} · ${comp}`,
+            sid === last ? '构思快很多' : s.topic === lastTopic ? '同一方向，构思稍快' : null,
+            fit === 1 ? '心情 +6 · 效率 +5%' : fit ? '你有点兴趣：心情 +2' : '不是你想做的：心情 -3',
+            sid === def ? '导师信任 +3' : null,
           ].filter(Boolean).join(' · ');
-          return { label: `做「${t.name}」${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: tid === c.def,
-            apply: g => { S().startNext(g, m, tid, 'pi'); if (tid === c.def) S().addTrust(m, 3); } };
+          return { label: `做「${s.name}」${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: sid === def,
+            apply: g => { S().startNext(g, m, sid, 'pi'); if (sid === def) S().addTrust(m, 3); } };
         });
         const help = S().helpTarget(g, m);
         if (help) {
@@ -112,10 +118,10 @@
         }
         if (!ch.length) return null;
         if (!ch.some(x => x.def)) ch[0].def = true;
-        const defT = c.def && g.topics[c.def] ? G().topic(g, c.def).name : '';
+        const defT = def ? S().subName(g, def) : '';
         return {
           title: '下一个课题做什么？', portrait: { member: m.id },
-          text: `${c.title ? `《${U.esc(c.title)}》写完了，交给导师去投稿了。<br>` : ''}你在想下一个课题做什么。${defT ? `${U.esc(g.pi.name)} 的意见是做「${U.esc(defT)}」。` : ''}<br><span class="dim">你最感兴趣的是「${interest ? U.esc(G().topic(g, interest).name) : '还没想好'}」· 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}</span>`,
+          text: `${c.title ? `《${U.esc(c.title)}》写完了，交给导师去投稿了。<br>` : ''}你在想下一个课题做什么。${defT ? `${U.esc(g.pi.name)} 的意见是做「${U.esc(defT)}」。` : ''}<br><span class="dim">你最感兴趣的是「${U.esc(S().dirName(g, interest))}」· 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}</span>`,
           choices: ch,
         };
       },
@@ -148,25 +154,27 @@
         const m = me(g);
         if (!m) return null;
         const mine = S().myPapers(g);
-        const ch = (c.opts || []).filter(t => g.topics[t]).map((tid, i) => {
-          const t = G().topic(g, tid);
-          const n = mine.filter(p => p.topic === tid).length;
-          const fav = tid === S().interestOf(m);
-          return { label: `博士论文做「${t.name}」`, hint: `你在这个方向发过 ${n} 篇论文 · 方向积累 +0.5${fav ? ' · 你最感兴趣：心情 +5' : ''} · 将来自己实验室的核心方向`, def: i === 0,
+        const opts = (c.opts || []).map(x => G().asSub(g, x)).filter((x, i, a) => a.indexOf(x) === i);
+        const ch = opts.map((sid, i) => {
+          const s = G().sub(g, sid);
+          const t = G().topic(g, s.topic);
+          const n = mine.filter(p => (p.sub || G().asSub(g, p.topic)) === sid).length;
+          const fav = sid === S().interestOf(m);
+          return { label: `博士论文做「${s.name}」`, hint: `${t.name} · 你在这个子方向发过 ${n} 篇论文 · 方向积累 +0.5${fav ? ' · 你最感兴趣：心情 +5' : ''} · 将来自己实验室的核心方向和第一个小组`, def: i === 0,
             apply: g => {
               g.phd.proposal = true;
-              g.phd.thesis = tid;
-              g.expertise[tid] = Math.min(10, (g.expertise[tid] || 0) + 0.5);
+              g.phd.thesis = sid;
+              g.expertise[s.topic] = Math.min(10, (g.expertise[s.topic] || 0) + 0.5);
               if (fav) S().addMood(m, 5);
               S().addTrust(m, 3);
-              S().phdMilestone(g, 'proposal', `通过开题答辩，博士论文方向：${t.name}`);
-              S().story(g, m, `开题：${t.name}`);
+              S().phdMilestone(g, 'proposal', `通过开题答辩，博士论文方向：${t.name} · ${s.name}`);
+              S().story(g, m, `开题：${s.name}`);
             } };
         });
         if (!ch.length) return null;
         return {
           title: '开题答辩', portrait: { icon: 'paper' },
-          text: '读博第三年，该开题了：你要定下博士论文的方向，向答辩委员会讲清楚接下来两三年要做什么。<br><span class="dim">博士论文方向会成为你将来自己实验室的核心方向。</span>',
+          text: '读博第三年，该开题了：你要定下博士论文的方向，向答辩委员会讲清楚接下来两三年要做什么。<br><span class="dim">博士论文所在的方向会成为你将来自己实验室的核心方向，这个子方向就是你实验室的第一个小组。</span>',
           choices: ch,
         };
       },

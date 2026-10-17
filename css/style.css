@@ -323,6 +323,8 @@ button.mini-btn { padding: 0 6px; }
 .grant-pick .seg { margin-top: 4px; }
 .venue-list { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
 .venue-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; background: var(--card); }
+.venue-sec { display: flex; align-items: center; gap: 6px; padding: 8px 4px 2px; color: var(--warn); border-bottom: 1px dashed #3d4677; }
+.venue-sec:first-child { padding-top: 0; }
 .summary { display: flex; gap: 16px; align-items: center; margin: 4px 0 8px; }
 .grade { width: 72px; height: 72px; display: flex; align-items: center; justify-content: center; font-size: 48px; line-height: 48px; clip-path: var(--notch); flex: 0 0 auto; }
 .grade.gS { background: #b0781e; color: #fff4d6; }

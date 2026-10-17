@@ -101,8 +101,27 @@
     m.bio.interest = o.interest || S.randomInterest(g);
     return m;
   };
-  // 学生感兴趣的方向：热门方向更受欢迎
-  S.randomInterest = g => U.weighted(G.area(g).topics, t => 0.5 + g.topics[t.id].heat).id;
+  // ---------- 研究方向（领域 → 方向 → 子方向） ----------
+  // 热度记在子方向上；方向的热度取它所有子方向的平均
+  S.heat = (g, id) => {
+    const s = g.subs && g.subs[id];
+    if (s) return s.heat;
+    const t = G.area(g).topics.find(x => x.id === id);
+    return t ? U.avg(t.subs, x => (g.subs[x.id] || x).heat) : 1;
+  };
+  S.subName = (g, sid) => (sid ? G.sub(g, sid).name : '还没想好');
+  S.dirName = (g, sid) => (sid ? `${G.topicOf(g, sid).name} · ${G.sub(g, sid).name}` : '还没想好');
+  // 兴趣和子方向的契合度：正好想做 1，同一个方向下的其他子方向 0.5
+  S.interestFit = (m, sid) => {
+    const it = S.interestOf(m);
+    if (!it || !sid) return 0;
+    if (it === sid) return 1;
+    const a = RS.SUBS[it], b = RS.SUBS[sid];
+    return a && b && a.topic === b.topic ? 0.5 : 0;
+  };
+  // 学生感兴趣的子方向：热门的更受欢迎；冲着实验室来的学生多半想做核心方向，或者已经有小组的方向
+  S.randomInterest = g => U.weighted(G.area(g).subs, s =>
+    (0.5 + S.heat(g, s.id)) * (s.topic === g.policies.coreTopic ? 3 : 1) * ((g.groups || []).some(gr => gr.sub === s.id) ? 1.6 : 1)).id;
   // 给旧存档里的成员补上个性档案
   S.normalize = function (g) {
     g.members.forEach(m => {
@@ -206,22 +225,23 @@
   };
 
   // ---------- 课题 ----------
-  S.pickTopic = function (g) {
+  // 没有小组的人按「选题倾向」挑一个子方向
+  S.pickSub = function (g) {
     const A = G.area(g);
     const pol = g.policies.topic;
-    if (g.flags.trendTopic && g.flags.trendUntil > g.day && U.chance(0.5)) return g.flags.trendTopic;
+    if (g.flags.trendTopic && g.flags.trendUntil > g.day && U.chance(0.5)) return G.asSub(g, g.flags.trendTopic);
     if (pol === 'core') {
-      if (U.chance(0.7)) return g.policies.coreTopic;
-      return U.weighted(A.topics, t => 1 + (g.expertise[t.id] || 0) * 0.5).id;
+      if (U.chance(0.7)) return U.weighted(G.topic(g, g.policies.coreTopic).subs, s => 0.6 + S.heat(g, s.id)).id;
+      return U.weighted(A.subs, s => ((1 + (g.expertise[s.topic] || 0) * 0.5) * (0.6 + S.heat(g, s.id))) / G.topic(g, s.topic).subs.length).id;
     }
-    if (pol === 'hot') return U.weighted(A.topics, t => Math.pow(g.topics[t.id].heat, 2.2)).id;
-    return U.pick(A.topics).id;
+    if (pol === 'hot') return U.weighted(A.subs, s => Math.pow(S.heat(g, s.id), 2.2)).id;
+    return U.pick(A.subs).id;
   };
 
-  // 论文标题：方向自己的风格、通用模板，偶尔来个“标题党”
-  S.genTitle = function (g, tid) {
+  // 论文标题：领域自己的风格、通用模板，偶尔来个“标题党”；研究任务来自子方向
+  S.genTitle = function (g, sid) {
     const A = G.area(g);
-    const T = G.topic(g, tid);
+    const T = G.sub(g, sid);
     const P = RS.TITLE_PARTS;
     const r = Math.random();
     const tpl = r < 0.04 ? U.pick(P.fun) : A.templates && r < 0.5 ? U.pick(A.templates) : U.pick(P.templates);
@@ -237,21 +257,22 @@
   };
 
   // 尽量不和在研课题、已发表论文重名
-  S.uniqueTitle = function (g, tid) {
+  S.uniqueTitle = function (g, sid) {
     const used = t => g.projects.some(p => p.title === t) || g.papers.some(p => p.title === t);
-    let t = S.genTitle(g, tid);
-    for (let i = 0; i < 8 && used(t); i++) t = S.genTitle(g, tid);
+    let t = S.genTitle(g, sid);
+    for (let i = 0; i < 8 && used(t); i++) t = S.genTitle(g, sid);
     return t;
   };
 
-  S.newProject = function (g, lead, tid) {
+  // sid：子方向（也可以传方向，取它的第一个子方向）
+  S.newProject = function (g, lead, sid) {
     const A = G.area(g);
-    tid = tid || S.pickTopic(g);
+    sid = G.asSub(g, sid || S.pickSub(g));
     const scale = { phd: 1, postdoc: 1, ms: 0.9, ug: 0.75, visit: 0.85 }[lead.role] || 1;
     const need = {};
     S.WORK_PHASES.forEach(ph => { need[ph] = Math.round(A.need[ph] * NEED_MULT * U.range(0.85, 1.15) * scale); });
     const p = {
-      id: G.nid(g, 'p'), title: S.uniqueTitle(g, tid), topic: tid,
+      id: G.nid(g, 'p'), title: S.uniqueTitle(g, sid), topic: RS.SUBS[sid].topic, sub: sid,
       lead: lead.id, helpers: [], authors: [lead.id],
       phase: 'idea', prog: 0, need,
       acc: { idea: 0, exp: 0, write: 0 }, wsum: { idea: 0, exp: 0, write: 0 }, cf: { sum: 0, n: 0 },
@@ -268,11 +289,11 @@
   // 本科生/访问学生默认去给高年级学生打下手（优先本组的课题）；其他人在所属小组的方向里开新课题
   S.assignWork = function (g, m) {
     if (m.role === 'ug' || m.role === 'visit') {
-      const mine = S.memberTopics(g, m);
+      const mine = S.memberSubs(g, m);
       const cands = g.projects.filter(p => S.WORK_PHASES.includes(p.phase) && p.helpers.length < 2 && p.lead !== m.id &&
         (G.member(g, p.lead) || {}).role !== 'ug');
       if (cands.length) {
-        const cost = p => p.helpers.length * 2 - (mine.includes(p.topic) ? 1 : 0);
+        const cost = p => p.helpers.length * 2 - (mine.includes(p.sub) ? 1 : 0);
         const p = cands.reduce((a, b) => (cost(a) <= cost(b) ? a : b));
         p.helpers.push(m.id);
         if (!p.authors.includes(m.id)) p.authors.push(m.id);
@@ -281,7 +302,7 @@
         return p;
       }
     }
-    const p = S.newProject(g, m, S.pickTopicFor(g, m));
+    const p = S.newProject(g, m, S.pickSubFor(g, m));
     S.continuity(m, p);
     return p;
   };
@@ -348,7 +369,7 @@
 
   // 难度随“你的职业生涯开始以后”的年份增长（读完博士再当 PI 的存档，起点是入职那一年）
   S.epoch = g => g.epoch || G.BASE_YEAR;
-  S.projectDemand = (g, p) => 6 * G.area(g).compute * G.topic(g, p.topic).compute * Math.pow(1.15, Math.max(0, G.calYear(g) - S.epoch(g)));
+  S.projectDemand = (g, p) => 6 * G.area(g).compute * G.sub(g, p.sub).compute * Math.pow(1.15, Math.max(0, G.calYear(g) - S.epoch(g)));
   S.computeDemand = g => U.sum(g.projects, p => (p.phase === 'exp' ? S.projectDemand(g, p) : 0));
   // 课题用所在小组的算力（没有对应小组的课题用共享池）
   S.computeFactor = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : U.clamp(Math.pow(S.projRatio(g, p, ctx), 0.6), 0.25, 1.15));
@@ -380,7 +401,7 @@
     let w = S.workRate(g, m, ph, ctx);
     if (!lead) w *= 0.5 * tMul(m, 'helper');
     else if (!p.helpers.length) w *= tMul(m, 'solo');
-    if (S.interestOf(m) === p.topic) w *= 1.05; // 做自己感兴趣的方向，更有干劲
+    w *= 1 + 0.05 * S.interestFit(m, p.sub); // 做自己感兴趣的方向，更有干劲
     if (S.leadsGroup(g, m)) w *= 0.92; // 组长要花时间带组员
     if (ph === 'exp') {
       const cf = S.computeFactor(g, p, ctx);
@@ -493,10 +514,10 @@
         const m = G.member(g, id);
         if (!m || m.projectId !== p.id) return;
         // 做完之后会来找你商量下一个方向；做着做着也可能喜欢上这个方向
-        if (S.CONSULT_ROLES.includes(m.role)) m.lastDone = { title: p.title, topic: p.topic };
-        if (m.bio && m.bio.interest !== p.topic && U.chance(0.15)) {
-          m.bio.interest = p.topic;
-          S.story(g, m, `做完《${short(p.title)}》后，喜欢上了「${G.topic(g, p.topic).name}」`);
+        if (S.CONSULT_ROLES.includes(m.role)) m.lastDone = { title: p.title, topic: p.topic, sub: p.sub };
+        if (m.bio && m.bio.interest !== p.sub && U.chance(0.15)) {
+          m.bio.interest = p.sub;
+          S.story(g, m, `做完《${short(p.title)}》后，喜欢上了「${G.sub(g, p.sub).name}」`);
         }
       });
       S.releaseProject(g, p);
@@ -571,7 +592,7 @@
   };
   S.venueThr = (g, v, p) => {
     let thr = RS.TIERS[v.tier].thr + (v.type === 'jour' ? 2 : 0) + S.fieldBar(g);
-    if (p && g.topics[p.topic]) thr += (g.topics[p.topic].heat - 1) * 1.5;
+    if (p && p.sub) thr += (S.heat(g, p.sub) - 1) * 1.5; // 越热的子方向，同行投稿越多，越难中
     return thr;
   };
   S.acceptProb = function (g, p, v, q) {
@@ -697,7 +718,7 @@
 
   S.citeRate = function (g, p, v, best) {
     const A = G.area(g);
-    const heat = g.topics[p.topic] ? g.topics[p.topic].heat : 1;
+    const heat = p.sub ? S.heat(g, p.sub) : 1;
     const lead = G.member(g, p.lead);
     let r = RS.TIERS[v.tier].cite * Math.pow(Math.max(25, p.q) / 72, 3) * Math.pow(heat, 0.5) * A.citeMult;
     r *= lead ? tMul(lead, 'cite') : 1;
@@ -720,7 +741,7 @@
     }
     const ao = S.authorOrder(g, p);
     const paper = {
-      id: G.nid(g, 'pa'), title: p.title, topic: p.topic, venue: v.id, tier: v.tier, year, day: g.day,
+      id: G.nid(g, 'pa'), title: p.title, topic: p.topic, sub: p.sub, venue: v.id, tier: v.tier, year, day: g.day,
       q: Math.round(p.q * 10) / 10, cites: 0, acc: 0, rate: S.citeRate(g, p, v, best) * (p.guest ? 1.1 : 1), best, oral,
       authors: ao.order, co: ao.co, lead: ao.order[0], ext: p.collab ? p.collab.who : null, guest: p.guest || null,
       scores: info.scores || null, pid: p.id,

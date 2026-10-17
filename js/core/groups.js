@@ -10,31 +10,33 @@
   S.MAX_MEMBER_GROUPS = 2;
 
   // ---------- 查询 ----------
-  S.maxGroups = g => Math.min(G.area(g).topics.length, 2 + g.room);
+  // 每个小组做一个子方向（gr.sub），gr.topic 是它所属的方向
+  S.maxGroups = g => Math.min(G.area(g).subs.length, 2 + g.room);
   S.group = (g, id) => g.groups.find(x => x.id === id) || null;
-  S.groupOfTopic = (g, tid) => g.groups.find(x => x.topic === tid) || null;
-  S.groupName = (g, gr) => G.topic(g, gr.topic).name + '组';
+  S.groupOfSub = (g, sid) => g.groups.find(x => x.sub === sid) || null;
+  S.groupName = (g, gr) => G.sub(g, gr.sub).name + '组';
   S.inGroup = (m, gid) => !!(m.groups && m.groups.includes(gid));
   S.groupMembers = (g, gr) => g.members.filter(m => S.inGroup(m, gr.id));
   S.memberGroups = (g, m) => (m.groups || []).map(id => S.group(g, id)).filter(Boolean);
-  S.memberTopics = (g, m) => S.memberGroups(g, m).map(x => x.topic);
+  S.memberSubs = (g, m) => S.memberGroups(g, m).map(x => x.sub);
   S.interestOf = m => (m && m.bio && m.bio.interest) || null;
   S.leadsGroup = (g, m) => g.groups.find(x => x.lead === m.id) || null;
   S.canLead = (g, m) => m.role === 'postdoc' || (m.role === 'phd' && S.memberYears(g, m) >= 2);
 
   // ---------- 成立 / 解散 / 分组 ----------
-  S.canCreateGroup = function (g, tid) {
-    if (!G.area(g).topics.some(t => t.id === tid)) return '没有这个方向';
-    if (S.groupOfTopic(g, tid)) return '这个方向已经有小组了';
+  S.canCreateGroup = function (g, sid) {
+    if (!G.area(g).subs.some(s => s.id === sid)) return '没有这个子方向';
+    if (S.groupOfSub(g, sid)) return '这个子方向已经有小组了';
     const max = S.maxGroups(g);
     if (g.groups.length >= max) return `现在的实验室最多设 ${max} 个小组，扩建实验室后可以设更多`;
     return null;
   };
-  S.createGroup = function (g, tid, silent) {
+  S.createGroup = function (g, sid, silent) {
+    sid = G.asSub(g, sid);
     const used = g.groups.map(x => x.color);
     let color = 0;
     while (used.includes(color)) color++;
-    const gr = { id: G.nid(g, 'gr'), topic: tid, lead: null, color: color % 6, since: g.day };
+    const gr = { id: G.nid(g, 'gr'), sub: sid, topic: RS.SUBS[sid].topic, lead: null, color: color % 6, since: g.day };
     g.groups.push(gr);
     if (!silent) G.log(g, `成立了「${S.groupName(g, gr)}」`, 'info');
     return gr;
@@ -56,7 +58,8 @@
     if (on && !has) {
       if (m.groups.length >= S.MAX_MEMBER_GROUPS) return `${m.name} 已经在两个小组里了，先退出一个`;
       m.groups.push(gid);
-      if (S.interestOf(m) === gr.topic) S.addMood(m, 4);
+      const fit = S.interestFit(m, gr.sub);
+      if (fit) S.addMood(m, fit === 1 ? 4 : 2);
     } else if (!on && has) {
       m.groups = m.groups.filter(x => x !== gid);
       if (gr.lead === m.id) gr.lead = null;
@@ -101,7 +104,7 @@
   S.groupGrowth = (g, m) => (g.groups.some(gr => gr.lead && gr.lead !== m.id && S.inGroup(m, gr.id)) ? 1.12 : 1);
   // 同组的人多，讨论起来想法更多；组长也会帮着把关
   S.groupSynergy = function (g, p) {
-    const gr = S.groupOfTopic(g, p.topic);
+    const gr = S.groupOfSub(g, p.sub);
     if (!gr) return 0;
     const others = g.members.filter(m => m.id !== p.lead && m.status === 'active' && S.inGroup(m, gr.id)).length;
     return Math.min(2, others * 0.6) + (gr.lead && gr.lead !== p.lead ? 1 : 0);
@@ -160,7 +163,7 @@
     g.groups.forEach(gr => { own[gr.id] = S.allocUnits(g, gr.id) * cut; dedicated += own[gr.id]; dem[gr.id] = 0; });
     for (const p of g.projects) {
       if (p.phase !== 'exp') continue;
-      const gr = S.groupOfTopic(g, p.topic);
+      const gr = S.groupOfSub(g, p.sub);
       dem[gr ? gr.id : '_pool'] += S.projectDemand(g, p);
     }
     const pool = Math.max(0, total - dedicated);
@@ -189,42 +192,44 @@
   };
   S.projRatio = (g, p, ctx) => {
     if (!ctx.alloc) return ctx.ratio;
-    const gr = S.groupOfTopic(g, p.topic);
+    const gr = S.groupOfSub(g, p.sub);
     const r = ctx.alloc.ratio[gr ? gr.id : '_pool'];
     return r == null ? ctx.ratio : r;
   };
 
   // ---------- 选题 ----------
-  // 选题倾向：深耕积累 / 追热点 / 尊重兴趣
-  S.topicScore = function (g, m, tid) {
+  // 选题倾向：深耕积累 / 追热点 / 尊重兴趣（积累算在方向上，热度和兴趣看子方向）
+  S.subScore = function (g, m, sid) {
     const pol = g.policies.topic;
-    const heat = g.topics[tid] ? g.topics[tid].heat : 1;
-    let w = 1 + (g.expertise[tid] || 0) * 0.25;
-    if (pol === 'core' && tid === g.policies.coreTopic) w *= 1.8;
-    if (pol === 'hot') w *= Math.pow(heat, 2);
-    if (S.interestOf(m) === tid) w *= pol === 'free' ? 4 : 1.5;
+    const s = G.sub(g, sid);
+    let w = 1 + (g.expertise[s.topic] || 0) * 0.25;
+    if (pol === 'core' && s.topic === g.policies.coreTopic) w *= 1.8;
+    if (pol === 'hot') w *= Math.pow(S.heat(g, sid), 2);
+    const fit = S.interestFit(m, sid);
+    if (fit === 1) w *= pol === 'free' ? 4 : 1.5;
+    else if (fit) w *= pol === 'free' ? 2 : 1.2;
     return w;
   };
-  S.pickTopicFor = function (g, m) {
-    if (g.flags.trendTopic && g.flags.trendUntil > g.day && U.chance(0.35)) return g.flags.trendTopic;
-    const ts = m ? S.memberTopics(g, m) : [];
-    if (!ts.length) {
+  S.pickSubFor = function (g, m) {
+    if (g.flags.trendTopic && g.flags.trendUntil > g.day && U.chance(0.35)) return G.asSub(g, g.flags.trendTopic);
+    const ss = m ? S.memberSubs(g, m) : [];
+    if (!ss.length) {
       const it = S.interestOf(m);
       if (it && g.policies.topic === 'free' && U.chance(0.7)) return it;
-      return S.pickTopic(g);
+      return S.pickSub(g);
     }
-    return U.weighted(ts, t => S.topicScore(g, m, t)) || ts[0];
+    return U.weighted(ss, s => S.subScore(g, m, s)) || ss[0];
   };
   const argmax = (list, f) => list.reduce((a, b) => (f(b) > f(a) ? b : a));
-  // 商量时给出的几个方向：所在小组的方向、上一个课题的方向、TA 感兴趣的方向、当下最热的方向
-  S.topicOptions = function (g, m, last) {
+  // 商量时给出的几个子方向：所在小组的、上一个课题的、TA 感兴趣的、核心方向里最热的、整个领域最热的
+  S.subOptions = function (g, m, last) {
     const out = [];
-    const add = t => { if (t && g.topics[t] && !out.includes(t)) out.push(t); };
-    S.memberTopics(g, m).sort((a, b) => S.topicScore(g, m, b) - S.topicScore(g, m, a)).forEach(add);
+    const add = s => { if (s && g.subs[s] && !out.includes(s)) out.push(s); };
+    S.memberSubs(g, m).sort((a, b) => S.subScore(g, m, b) - S.subScore(g, m, a)).forEach(add);
     add(last);
     add(S.interestOf(m));
-    add(argmax(G.area(g).topics, t => g.topics[t.id].heat).id);
-    if (out.length < 2) add(g.policies.coreTopic);
+    add(argmax(G.topic(g, g.policies.coreTopic).subs, s => S.heat(g, s.id)).id);
+    add(argmax(G.area(g).subs, s => S.heat(g, s.id)).id);
     return out.slice(0, 4);
   };
   S.wantsConsult = (g, m) => {
@@ -235,37 +240,43 @@
   };
   S.queueConsult = function (g, m) {
     const last = m.lastDone || {};
-    const opts = S.topicOptions(g, m, last.topic);
-    const mine = S.memberTopics(g, m).filter(t => opts.includes(t));
-    const def = argmax(mine.length ? mine : opts, t => S.topicScore(g, m, t));
-    G.queue(g, { type: 'event', id: m.isPlayer ? 'phd_next' : 'next_topic', ctx: { mid: m.id, title: last.title || '', topic: last.topic || null, opts, def } });
+    const lastSub = last.sub || (last.topic ? G.asSub(g, last.topic) : null);
+    const opts = S.subOptions(g, m, lastSub);
+    const mine = S.memberSubs(g, m).filter(s => opts.includes(s));
+    const def = argmax(mine.length ? mine : opts, s => S.subScore(g, m, s));
+    G.queue(g, { type: 'event', id: m.isPlayer ? 'phd_next' : 'next_topic', ctx: { mid: m.id, title: last.title || '', sub: lastSub, opts, def } });
   };
-  // 延续上一个课题的方向：代码和数据都是现成的，构思更快
+  // 延续上一个课题：同一个子方向代码和数据都是现成的，构思快很多；同一个方向也能快一点
   S.continuity = function (m, p) {
-    if (m.lastDone && m.lastDone.topic === p.topic) p.need.idea = Math.round(p.need.idea * 0.8);
+    const last = m.lastDone;
+    if (last && last.sub === p.sub) p.need.idea = Math.round(p.need.idea * 0.75);
+    else if (last && last.topic === p.topic) p.need.idea = Math.round(p.need.idea * 0.9);
     m.lastDone = null;
   };
-  // 商量的结果：按选定的方向开一个新课题
-  S.startNext = function (g, m, tid, how) {
+  // 商量的结果：按选定的子方向开一个新课题
+  S.startNext = function (g, m, sid, how) {
+    sid = G.asSub(g, sid);
     const interest = S.interestOf(m);
-    const gr = S.groupOfTopic(g, tid);
+    const fit = S.interestFit(m, sid);
+    const gr = S.groupOfSub(g, sid);
     if (gr && !S.inGroup(m, gr.id) && (m.groups || []).length < S.MAX_MEMBER_GROUPS) {
       S.setMemberGroup(g, m, gr.id, true);
       G.log(g, `${m.name} 加入了「${S.groupName(g, gr)}」`, 'info');
     }
-    const p = S.newProject(g, m, tid);
+    const p = S.newProject(g, m, sid);
     S.continuity(m, p);
     if (how === 'self') { S.addTrust(m, 3); S.addMood(m, 4); }
-    if (interest === tid) { S.addMood(m, 6); S.addTrust(m, 2); }
+    if (fit === 1) { S.addMood(m, 6); S.addTrust(m, 2); }
+    else if (fit) S.addMood(m, 2);
     else if (interest && how !== 'self') S.addMood(m, -3);
-    G.log(g, `${m.name} 开始了新课题《${short(p.title)}》（${G.topic(g, tid).name}）`, 'info');
+    G.log(g, `${m.name} 开始了新课题《${short(p.title)}》（${G.sub(g, sid).name}）`, 'info');
     return p;
   };
   // 先去帮别人：选最接近完成、还缺人手的课题（优先本组）
   S.helpTarget = function (g, m) {
-    const mine = S.memberTopics(g, m);
+    const mine = S.memberSubs(g, m);
     const c = g.projects.filter(p => S.WORK_PHASES.includes(p.phase) && p.lead !== m.id && p.helpers.length < 2 && G.member(g, p.lead) &&
-      (!mine.length || mine.includes(p.topic)));
+      (!mine.length || mine.includes(p.sub)));
     return c.length ? argmax(c, p => S.projectPct(p)) : null;
   };
   S.helpWith = function (g, m, p) {
@@ -274,10 +285,10 @@
     G.log(g, `${m.name} 先去帮 ${G.personName(g, p.lead)} 做《${short(p.title)}》`, 'info');
   };
 
-  // 想换组的人：最感兴趣的方向有小组，但自己不在里面
+  // 想换组的人：最感兴趣的子方向有小组，但自己不在里面
   S.switchCands = g => g.members.filter(m => {
     if (m.status !== 'active' || m.role === 'visit') return false;
-    const gr = S.groupOfTopic(g, S.interestOf(m));
+    const gr = S.groupOfSub(g, S.interestOf(m));
     return !!gr && !S.inGroup(m, gr.id);
   });
   // DDL 前抢算力的两个小组：都有实验在跑、而且算力不够分
@@ -291,15 +302,17 @@
   };
 
   // ---------- 新成员分组 ----------
+  // 新人分组：正好做 TA 想做的子方向的组 > 同一个方向的组（人少的优先）> 人最少的组
   S.suggestGroup = function (g, m) {
-    const byInterest = S.groupOfTopic(g, S.interestOf(m));
+    const byInterest = S.groupOfSub(g, S.interestOf(m));
     if (byInterest) return byInterest.id;
-    return argmax(g.groups, gr => -S.groupMembers(g, gr).length).id;
+    const near = g.groups.filter(gr => S.interestFit(m, gr.sub) > 0);
+    return argmax(near.length ? near : g.groups, gr => -S.groupMembers(g, gr).length).id;
   };
   S.onJoin = function (g, m) {
     if (!g.groups.length) return;
     const it = S.interestOf(m);
-    const canNew = it && !S.groupOfTopic(g, it) && !S.canCreateGroup(g, it);
+    const canNew = it && !S.groupOfSub(g, it) && !S.canCreateGroup(g, it);
     if (g.groups.length === 1 && !canNew) {
       S.setMemberGroup(g, m, g.groups[0].id, true);
       return;
@@ -377,7 +390,7 @@
     if (!g.groups) {
       g.groups = [];
       if (g.members.length) {
-        const gr = S.createGroup(g, g.policies.coreTopic, true);
+        const gr = S.createGroup(g, g.startSub || g.policies.coreTopic, true);
         g.members.forEach(m => { m.groups = [gr.id]; });
       }
     }

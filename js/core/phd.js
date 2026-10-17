@@ -27,7 +27,7 @@
   };
 
   // ---------- 新开一局博士生涯 ----------
-  // o: { name, avatar, region, tier, school, areaId, coreTopic, advisor, ugbg }
+  // o: { name, avatar, region, tier, school, areaId, coreTopic, coreSub, advisor, ugbg }
   G.newPhdGame = function (o) {
     const R = RS.REGIONS[o.region];
     const nm = RS.randomName(o.region);
@@ -36,7 +36,7 @@
     const piName = zh ? (o.region === 'cn' ? nm : `${nm} 教授`) : `Prof. ${nm.split(' ').slice(-1)[0]}`;
     const g = G.newGame({
       piName, labName: `${U.pick(RS.TITLE_PARTS.acr)} Lab`, school: o.school, region: o.region, tier: o.tier,
-      areaId: o.areaId, coreTopic: o.coreTopic, perk: 'star', avatar: RS.randomAvatar(),
+      areaId: o.areaId, coreTopic: o.coreTopic, coreSub: o.coreSub, perk: 'star', avatar: RS.randomAvatar(),
     });
     g.mode = 'phd';
     g.phd = {
@@ -52,7 +52,7 @@
 
   // 课题已经做到一半的样子（给师兄师姐用）
   S.seedProject = function (g, m, phase, frac) {
-    const p = S.newProject(g, m, S.pickTopicFor(g, m));
+    const p = S.newProject(g, m, S.pickSubFor(g, m));
     const st = m.stats, pi = g.pi.stats, exp = g.expertise[p.topic] || 0;
     if (phase !== 'idea') p.sc.nov = 0.72 * st.idea + 0.28 * pi.research + exp * 0.5 + U.normal(0, 4);
     if (phase === 'write') p.sc.sol = 0.78 * st.code + 0.22 * pi.research + exp * 0.3 + U.normal(0, 4);
@@ -83,11 +83,16 @@
       const av = S.gpuAvailable(g).filter(x => x.id !== 'ws');
       for (let i = 0; i < adv.gpu && av.length; i++) { const s = av[Math.min(av.length - 1, i % 2)]; g.gpus[s.id] = (g.gpus[s.id] || 0) + 1; }
     }
-    // 小组和师兄师姐
-    const core = S.createGroup(g, g.policies.coreTopic, true);
+    // 小组和师兄师姐：你进的是导师核心方向下你选的那个子方向；人多的组还有别的子方向
+    const core = S.createGroup(g, g.startSub, true);
     const n = U.int(adv.lab[0], adv.lab[1]);
-    const other = A.topics.filter(t => t.id !== core.topic);
-    const second = n >= 5 && other.length ? S.createGroup(g, U.pick(other).id, true) : null;
+    const sibling = () => {
+      const same = G.topic(g, core.topic).subs.filter(s => !S.groupOfSub(g, s.id));
+      const far = A.subs.filter(s => s.topic !== core.topic && !S.groupOfSub(g, s.id));
+      return (same.length && (U.chance(0.7) || !far.length) ? U.pick(same) : U.pick(far)).id;
+    };
+    const second = n >= 5 ? S.createGroup(g, sibling(), true) : null;
+    if (n >= 8) S.createGroup(g, sibling(), true);
     for (let i = 0; i < n; i++) {
       const role = i === 0 && adv.postdoc ? 'postdoc' : U.weighted(['phd', 'ms', 'ug'], r => ({ phd: 5, ms: R.id === 'cn' ? 2.5 : 1, ug: 1 }[r]));
       const yrs = role === 'phd' ? U.range(0.6, 4.6) : role === 'ms' ? U.range(0.3, 1.5) : role === 'postdoc' ? U.range(0.2, 1.4) : U.range(0.1, 1);
@@ -98,8 +103,8 @@
         m.pubs = k; m.first = Math.round(k * 0.7); m.pubsA = Math.round(k * 0.6); m.firstA = Math.min(m.first, Math.round(m.pubsA * 0.7));
       }
       S.addMember(g, m, true);
-      const gr = second && i % 3 === 2 ? second : core;
-      if (U.chance(0.6)) m.bio.interest = gr.topic;
+      const gr = second && i % 3 === 2 ? second : g.groups.length > 2 && i % 3 === 1 ? g.groups[2] : core;
+      if (U.chance(0.6)) m.bio.interest = gr.sub;
       S.setMemberGroup(g, m, gr.id, true);
       if (role !== 'ug') S.seedProject(g, m, U.pick(['idea', 'exp', 'exp', 'write']), U.range(0.1, 0.85));
     }
@@ -117,14 +122,14 @@
     me.isPlayer = true;
     me.pot = U.clamp(me.pot + (ug.pot || 0), 0.85, 1.5);
     me.bio.goal = 'academia';
-    me.bio.interest = g.policies.coreTopic;
+    me.bio.interest = core.sub;
     me.funding = 'ra';
     g.phd.network = ug.network || 0;
     S.addMember(g, me, true);
     g.player = me.id;
     S.setMemberGroup(g, me, core.id, true);
     S.story(g, me, `进入 ${g.school} 读博，导师是 ${g.pi.name}`);
-    S.newProject(g, me, g.policies.coreTopic);
+    S.newProject(g, me, core.sub);
     // 导师手上的项目经费，够实验室撑过你读博的这几年
     const burn = Math.max(1000, S.expenses(g).total);
     const monthly = Math.round(burn * adv.funds);
@@ -266,9 +271,12 @@
   S.thesisOptions = function (g) {
     const m = S.me(g);
     const cnt = {};
-    S.myPapers(g).forEach(p => { if (p.topic) cnt[p.topic] = (cnt[p.topic] || 0) + (/一作/.test(S.authorPos(p, m.id)) ? 2 : 1); });
+    S.myPapers(g).forEach(p => {
+      const s = p.sub || (p.topic && G.asSub(g, p.topic));
+      if (s) cnt[s] = (cnt[s] || 0) + (/一作/.test(S.authorPos(p, m.id)) ? 2 : 1);
+    });
     const out = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
-    [S.interestOf(m), g.policies.coreTopic].forEach(t => { if (t && !out.includes(t)) out.push(t); });
+    [S.interestOf(m), g.startSub].forEach(s => { if (s && g.subs[s] && !out.includes(s)) out.push(s); });
     return out.slice(0, 3);
   };
   // 新学期：低年级可能要当助教
@@ -535,12 +543,17 @@
     const phdYears = Math.round(S.memberYears(g, m) * 10) / 10;
     const day = G.nextDate(g.day + P.extraYears * 360 + 1, R.start[0], R.start[1]);
     const mine = S.myPapers(g);
-    const cnt = {};
-    mine.forEach(p => { if (p.topic) cnt[p.topic] = (cnt[p.topic] || 0) + 1; });
-    const core = P.thesis || Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0] || g.policies.coreTopic;
+    const cnt = {}, subCnt = {};
+    mine.forEach(p => {
+      if (p.topic) cnt[p.topic] = (cnt[p.topic] || 0) + 1;
+      if (p.sub) subCnt[p.sub] = (subCnt[p.sub] || 0) + 1;
+    });
+    // 博士论文的子方向决定你实验室的核心方向，也是第一个小组的方向
+    const thesis = P.thesis ? G.asSub(g, P.thesis) : Object.keys(subCnt).sort((a, b) => subCnt[b] - subCnt[a])[0] || S.interestOf(m) || g.startSub;
+    const core = RS.SUBS[thesis].topic;
     const pg = G.newGame({
       piName: m.name, labName: (labName || '').trim() || `${U.pick(RS.TITLE_PARTS.acr)} Lab`, school: offer.school, region: offer.region, tier: offer.tier,
-      areaId: g.areaId, coreTopic: core, perk: perk.id, avatar: m.avatar, day,
+      areaId: g.areaId, coreTopic: core, coreSub: thesis, perk: perk.id, avatar: m.avatar, day,
     });
     pg.startup = pg.funds = offer.startup;
     pg.epoch = G.yearOfDay(day); // 领域门槛和算力需求从你入职那年开始算，和直接开局一样难
@@ -557,7 +570,7 @@
     pg.rep = Math.round(10 + (perk.rep || 0) + Math.min(40, Math.max(0, sc.total) * 0.6));
     pg.pi.age0 = 23 + Math.round(phdYears) + P.extraYears;
     // 世界是连续的：方向热度延续，读博时积累的方向经验带过来
-    Object.keys(g.topics).forEach(t => { if (pg.topics[t]) pg.topics[t].heat = g.topics[t].heat; });
+    Object.keys(g.subs).forEach(s => { if (pg.subs[s]) pg.subs[s].heat = g.subs[s].heat; });
     Object.keys(cnt).forEach(t => { pg.expertise[t] = Math.min(4, (pg.expertise[t] || 0) + cnt[t] * 0.6); });
     pg.expertise[core] = Math.max(pg.expertise[core] || 0, 2);
     // 读博期间的论文：算进引用和 h-index，但不算进考核
@@ -571,7 +584,7 @@
     pg.year = G.freshYear(pg);
     pg.pi.phd = {
       school: g.school, region: g.region, advisor: g.pi.name, advisorType: P.advisor, years: phdYears,
-      papers: m.pubs, first: m.first || 0, firstA: m.firstA || 0, cites: pg.stats.cites, thesis: core,
+      papers: m.pubs, first: m.first || 0, firstA: m.firstA || 0, cites: pg.stats.cites, thesis,
       path: P.path, pathPlace: P.pathPlace, score: Math.round(sc.total * 10) / 10, perk: perk.id,
     };
     // 读博时带得最多、关系最好的学弟学妹可能跟着你走

@@ -19,7 +19,7 @@
   // 在读的研究生和博士后（会独立负责课题的人）
   const seniorOf = (g, pred) => activeOf(g, m => RS.Sys.CONSULT_ROLES.includes(m.role) && (!pred || pred(m)));
   // 要用真人数据、做用户实验的方向（要过伦理审查）
-  const HUMAN_TOPICS = ['med', 'access', 'haic', 'wear', 'social', 'edu', 'xr', 'vis', 'rec', 'dialog'];
+  const HUMAN_TOPICS = ['med', 'access', 'haic', 'wear', 'social', 'edu', 'xr', 'vis', 'rec', 'dialog', 'sensing'];
   const humanProjects = g => g.projects.filter(p => (p.phase === 'idea' || p.phase === 'exp') && !p.irb && (g.areaId === 'hci' || HUMAN_TOPICS.includes(p.topic)));
   // 可以申请奖学金的学生
   const fellowCands = g => (g.region === 'us'
@@ -251,21 +251,23 @@
     hot_trend: {
       minor: true,
       build: (g, c) => {
-        const t = G().topic(g, c.tid);
-        const ideas = g.projects.filter(p => p.phase === 'idea' && p.topic !== c.tid);
+        const sid = G().asSub(g, c.sid || c.tid);
+        const s = G().sub(g, sid);
+        const t = G().topic(g, s.topic);
+        const ideas = g.projects.filter(p => p.phase === 'idea' && p.sub !== sid);
         const ch = [
-          { label: '构思中的课题全部转向', hint: `${ideas.length} 个构思中的课题转向（构思进度减半）`, disabled: ideas.length ? null : '目前没有构思中的课题',
-            apply: g => { ideas.forEach(p => S().changeTopic(g, p, c.tid)); } },
-          { label: '新课题优先做这个方向', hint: '一年内约三分之一的新课题会选这个方向', def: true, apply: g => { g.flags.trendTopic = c.tid; g.flags.trendUntil = g.day + 360; } },
+          { label: '构思中的课题全部转向', hint: `${ideas.length} 个构思中的课题转向（同一方向的保留七成构思进度，其他的减半）`, disabled: ideas.length ? null : '目前没有构思中的课题',
+            apply: g => { ideas.forEach(p => S().changeTopic(g, p, sid)); } },
+          { label: '新课题优先做这个子方向', hint: '一年内约三分之一的新课题会选它', def: true, apply: g => { g.flags.trendTopic = sid; g.flags.trendUntil = g.day + 360; } },
         ];
-        if (!S().groupOfTopic(g, c.tid)) {
-          ch.push({ label: `成立「${t.name}组」专门做`, hint: '新开一个子方向，之后去「小组」页把人加进来、分服务器', disabled: S().canCreateGroup(g, c.tid),
-            apply: g => { if (!S().canCreateGroup(g, c.tid)) S().createGroup(g, c.tid); } });
+        if (!S().groupOfSub(g, sid)) {
+          ch.push({ label: `成立「${s.name}组」专门做`, hint: '新开一个子方向小组，之后去「小组」页把人加进来、分服务器', disabled: S().canCreateGroup(g, sid),
+            apply: g => { if (!S().canCreateGroup(g, sid)) S().createGroup(g, sid); } });
         }
         ch.push({ label: '不追热点，坚持自己的方向', hint: '核心方向的积累 +0.5', apply: g => { const k = g.policies.coreTopic; g.expertise[k] = Math.min(10, (g.expertise[k] || 0) + 0.5); } });
         return {
           title: '热点爆发！', portrait: { icon: 'fire' },
-          text: `「<b>${t.name}</b>」方向突然爆火！大佬们纷纷入场，相关论文的引用和基金都水涨船高（当然竞争也更激烈了）。<br>要不要跟进？`,
+          text: `「${t.name}」方向下的「<b>${s.name}</b>」突然爆火！大佬们纷纷入场，相关论文的引用和基金都水涨船高（当然竞争也更激烈了）。<br>${s.topic === g.policies.coreTopic ? '这正是你的核心方向。' : ''}要不要跟进？`,
           choices: ch,
         };
       },
@@ -278,25 +280,31 @@
         const m = M(g, c.mid);
         if (!m || m.status !== 'active' || m.projectId) return null;
         const interest = S().interestOf(m);
-        const mine = S().memberTopics(g, m);
+        const mine = S().memberSubs(g, m);
         const alloc = S().computeAlloc(g);
         const heatWord = h => (h >= 2.2 ? '很热门' : h >= 1.5 ? '较热门' : h >= 1.1 ? '热度一般' : '冷门');
-        const ch = (c.opts || []).filter(tid => g.topics[tid]).map(tid => {
-          const t = G().topic(g, tid);
-          const gr = S().groupOfTopic(g, tid);
+        const last = c.sub || (c.topic ? G().asSub(g, c.topic) : null);
+        const lastTopic = last ? G().sub(g, last).topic : null;
+        const def = c.def ? G().asSub(g, c.def) : null;
+        const opts = (c.opts || []).map(x => G().asSub(g, x)).filter((x, i, a) => a.indexOf(x) === i);
+        const ch = opts.map(sid => {
+          const s = G().sub(g, sid);
+          const t = G().topic(g, s.topic);
+          const gr = S().groupOfSub(g, sid);
+          const fit = S().interestFit(m, sid);
           const tags = [];
-          if (tid === c.topic) tags.push('接着做');
-          if (tid === interest) tags.push('TA 想做');
+          if (sid === last) tags.push('接着做');
+          if (fit === 1) tags.push('TA 想做');
           if (!gr) tags.push('没有对应小组');
           const r = gr ? alloc.ratio[gr.id] : 9;
           const comp = gr ? (alloc.dem[gr.id] > 0 ? (r >= 1 ? `${S().groupName(g, gr)}算力充足` : `${S().groupName(g, gr)}算力只够 ${Math.round(r * 100)}%`) : `${S().groupName(g, gr)}算力空闲`) : '用共享算力';
           const hint = [
-            `积累 ${(g.expertise[tid] || 0).toFixed(1)} · ${heatWord(g.topics[tid].heat)} · ${comp}`,
-            tid === c.topic ? '构思更快' : null,
-            tid === interest ? '心情 +6 · 信任 +2 · 效率 +5%' : interest ? 'TA 不太想做：心情 -3' : null,
-            gr && !mine.includes(tid) && (m.groups || []).length < 2 ? `顺便加入${S().groupName(g, gr)}` : null,
+            `${t.name}${s.topic === g.policies.coreTopic ? '（核心方向）' : ''} · 积累 ${(g.expertise[s.topic] || 0).toFixed(1)} · ${heatWord(S().heat(g, sid))} · ${comp}`,
+            sid === last ? '构思快很多' : s.topic === lastTopic ? '同一方向，构思稍快' : null,
+            fit === 1 ? '心情 +6 · 信任 +2 · 效率 +5%' : fit ? 'TA 有点兴趣：心情 +2' : interest ? 'TA 不太想做：心情 -3' : null,
+            gr && !mine.includes(sid) && (m.groups || []).length < 2 ? `顺便加入${S().groupName(g, gr)}` : null,
           ].filter(Boolean).join(' · ');
-          return { label: `做「${t.name}」${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: tid === c.def, apply: g => { S().startNext(g, m, tid, 'pi'); } };
+          return { label: `做「${s.name}」${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: sid === def, apply: g => { S().startNext(g, m, sid, 'pi'); } };
         });
         const help = S().helpTarget(g, m);
         if (help) {
@@ -304,14 +312,14 @@
           ch.push({ label: `先帮 ${hl ? sn(hl.name) : '同门'} 做《${S().short(help.title)}》`, hint: `作为合作者加入（${S().PHASE_NAMES[help.phase]}阶段，完成 ${Math.round(S().projectPct(help) * 100)}%），做完再来商量`,
             apply: g => S().helpWith(g, m, help) });
         }
-        const self = interest || c.def;
-        if (self) ch.push({ label: '让 TA 自己决定', hint: `TA 会选「${G().topic(g, self).name}」· 信任 +3 · 心情 +4`, apply: g => { S().startNext(g, m, self, 'self'); } });
+        const self = interest || def;
+        if (self) ch.push({ label: '让 TA 自己决定', hint: `TA 会选「${S().subName(g, self)}」· 信任 +3 · 心情 +4`, apply: g => { S().startNext(g, m, self, 'self'); } });
         if (!ch.length) return null;
         if (!ch.some(x => x.def)) ch[0].def = true;
         const groups = S().memberGroups(g, m).map(gr => S().groupName(g, gr)).join('、') || '未分组';
         return {
           title: `${m.name} 来商量下一个课题`, portrait: { member: m.id },
-          text: `${c.title ? `《${U.esc(c.title)}》写完了，进入投稿流程。<br>` : ''}${U.esc(m.name)} 来办公室找你：“老师，我接下来做什么方向好？”<br><span class="dim">所在小组：${U.esc(groups)} · 最感兴趣：${interest ? U.esc(G().topic(g, interest).name) : '还没想好'} · 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}</span>`,
+          text: `${c.title ? `《${U.esc(c.title)}》写完了，进入投稿流程。<br>` : ''}${U.esc(m.name)} 来办公室找你：“老师，我接下来做什么方向好？”<br><span class="dim">所在小组：${U.esc(groups)} · 最感兴趣：${U.esc(S().dirName(g, interest))} · 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}</span>`,
           choices: ch,
         };
       },
@@ -326,12 +334,13 @@
         const interest = S().interestOf(m);
         const ch = g.groups.map(gr => {
           const lead = M(g, gr.lead);
-          const hint = [gr.topic === interest ? 'TA 感兴趣 · 心情 +4' : null, `${S().groupMembers(g, gr).length} 人`, lead ? `组长 ${lead.name}` : '暂无组长', `积累 ${(g.expertise[gr.topic] || 0).toFixed(1)}`].filter(Boolean).join(' · ');
+          const fit = S().interestFit(m, gr.sub);
+          const hint = [fit === 1 ? 'TA 想做这个 · 心情 +4' : fit ? '同一个方向 · 心情 +2' : null, `${S().groupMembers(g, gr).length} 人`, lead ? `组长 ${lead.name}` : '暂无组长', `积累 ${(g.expertise[gr.topic] || 0).toFixed(1)}`].filter(Boolean).join(' · ');
           return { label: `加入「${S().groupName(g, gr)}」`, hint, def: gr.id === c.def,
             apply: g => { S().setMemberGroup(g, m, gr.id, true); G().log(g, `${m.name} 加入了「${S().groupName(g, gr)}」`, 'info'); } };
         });
-        if (interest && !S().groupOfTopic(g, interest)) {
-          ch.push({ label: `为 TA 成立「${G().topic(g, interest).name}组」`, hint: '新开一个子方向，TA 是第一个成员 · 心情 +4 · 信任 +3', disabled: S().canCreateGroup(g, interest),
+        if (interest && !S().groupOfSub(g, interest)) {
+          ch.push({ label: `为 TA 成立「${S().subName(g, interest)}组」`, hint: '新开一个子方向小组，TA 是第一个成员 · 心情 +4 · 信任 +3', disabled: S().canCreateGroup(g, interest),
             apply: g => {
               if (S().canCreateGroup(g, interest)) return;
               const gr = S().createGroup(g, interest);
@@ -343,7 +352,7 @@
         if (!ch.some(x => x.def && !x.disabled)) ch[0].def = true;
         return {
           title: `${m.name} 加入哪个小组？`, portrait: { member: m.id },
-          text: `新成员 ${U.esc(m.name)}（${S().ROLE_NAMES[m.role]}）进组了，TA 对「<b>${interest ? U.esc(G().topic(g, interest).name) : '还没想好'}</b>」最感兴趣。<br>要把 TA 分到哪个小组？<span class="dim">之后可以在「成员」或「小组」页再加入第二个小组。</span>`,
+          text: `新成员 ${U.esc(m.name)}（${S().ROLE_NAMES[m.role]}）进组了，TA 对「<b>${U.esc(S().dirName(g, interest))}</b>」最感兴趣。<br>要把 TA 分到哪个小组？<span class="dim">之后可以在「成员」或「小组」页再加入第二个小组。</span>`,
           choices: ch,
         };
       },
@@ -430,7 +439,7 @@
       ctx: g => {
         const c = g.projects.filter(p => p.phase === 'exp' || (p.phase === 'idea' && p.prog > p.need.idea * 0.5));
         if (!c.length) return null;
-        return { pid: U.weighted(c, x => g.topics[x.topic].heat).id };
+        return { pid: U.weighted(c, x => S().heat(g, x.sub)).id };
       },
       build: (g, c) => {
         const p = G().project(g, c.pid);
@@ -1097,7 +1106,7 @@
         const c = S().switchCands(g);
         if (!c.length) return null;
         const m = U.pick(c);
-        return { mid: m.id, to: S().groupOfTopic(g, S().interestOf(m)).id };
+        return { mid: m.id, to: S().groupOfSub(g, S().interestOf(m)).id };
       },
       build: (g, c) => {
         const m = M(g, c.mid), to = S().group(g, c.to);
@@ -1125,7 +1134,7 @@
         if (!ch.some(x => x.def)) ch[0].def = true;
         return {
           title: `${m.name} 想换个小组`, portrait: { member: m.id },
-          text: `${U.esc(m.name)} 来找你：“老师，我还是对「${U.esc(G().topic(g, to.topic).name)}」最感兴趣，能不能去${U.esc(toName)}？”<br><span class="dim">TA 现在在：${U.esc(fromName)}</span>`,
+          text: `${U.esc(m.name)} 来找你：“老师，我还是对「${U.esc(S().subName(g, to.sub))}」最感兴趣，能不能去${U.esc(toName)}？”<br><span class="dim">TA 现在在：${U.esc(fromName)}</span>`,
           choices: ch,
         };
       },
@@ -1138,24 +1147,28 @@
         const c = activeOf(g, m => m.role !== 'visit');
         if (!c.length) return null;
         const m = U.pick(c);
-        const t = U.weighted(G().area(g).topics.filter(x => x.id !== S().interestOf(m)), x => Math.pow(g.topics[x.id].heat, 1.5));
-        return t ? { mid: m.id, tid: t.id } : null;
+        // 多半是同一个方向里的相邻子方向，也可能跨到别的方向
+        const it = S().interestOf(m);
+        const cur = it && RS.SUBS[it];
+        const s = U.weighted(G().area(g).subs.filter(x => x.id !== it), x => Math.pow(S().heat(g, x.id), 1.5) * (cur && x.topic === cur.topic ? 3 : 1));
+        return s ? { mid: m.id, sid: s.id } : null;
       },
       build: (g, c) => {
         const m = M(g, c.mid);
-        if (!m || !m.bio || S().interestOf(m) === c.tid) return null;
-        const t = G().topic(g, c.tid);
-        const gr = S().groupOfTopic(g, c.tid);
+        const sid = G().asSub(g, c.sid || c.tid);
+        if (!m || !m.bio || S().interestOf(m) === sid) return null;
+        const t = G().sub(g, sid);
+        const gr = S().groupOfSub(g, sid);
         const ch = [
           { label: '支持 TA 往这个方向发展', hint: `兴趣变成「${t.name}」· 心情 +5 · 信任 +2${gr ? `（可以加入${S().groupName(g, gr)}）` : ''}`, def: true,
-            apply: g => { m.bio.interest = c.tid; S().addMood(m, 5); S().addTrust(m, 2); S().story(g, m, `迷上了「${t.name}」`); } },
+            apply: g => { m.bio.interest = sid; S().addMood(m, 5); S().addTrust(m, 2); S().story(g, m, `迷上了「${t.name}」`); } },
         ];
-        if (!gr && !S().canCreateGroup(g, c.tid)) {
+        if (!gr && !S().canCreateGroup(g, sid)) {
           ch.push({ label: `干脆成立「${t.name}组」`, hint: 'TA 是第一个成员 · 心情 +8 · 信任 +4',
             apply: g => {
-              if (S().canCreateGroup(g, c.tid)) return;
-              m.bio.interest = c.tid;
-              const ng = S().createGroup(g, c.tid);
+              if (S().canCreateGroup(g, sid)) return;
+              m.bio.interest = sid;
+              const ng = S().createGroup(g, sid);
               if ((m.groups || []).length >= S().MAX_MEMBER_GROUPS) S().setMemberGroup(g, m, m.groups[0], false);
               S().setMemberGroup(g, m, ng.id, true);
               S().addMood(m, 8); S().addTrust(m, 4);
@@ -1165,7 +1178,7 @@
         ch.push({ label: '先专注眼前的方向', hint: '兴趣不变 · 心情 -3', apply: () => S().addMood(m, -3) });
         return {
           title: '迷上了新方向', portrait: { member: m.id },
-          text: `${U.esc(m.name)} 最近一口气读了十几篇「${U.esc(t.name)}」的论文，越看越着迷，跑来说想往这个方向发展。<br><span class="dim">TA 原来最想做的是「${U.esc(G().topic(g, S().interestOf(m)).name)}」。</span>`,
+          text: `${U.esc(m.name)} 最近一口气读了十几篇「${U.esc(S().dirName(g, sid))}」的论文，越看越着迷，跑来说想往这个方向发展。<br><span class="dim">TA 原来最想做的是「${U.esc(S().dirName(g, S().interestOf(m)))}」。</span>`,
           choices: ch,
         };
       },
@@ -1460,7 +1473,7 @@
     ug_fair: {
       weight: g => ([9, 10].includes(G().month(g)) && g.members.length < G().desks(g) + 1 ? 2 : 0), cd: 300,
       ctx: g => {
-        const ts = g.groups.map(gr => gr.topic);
+        const ts = g.groups.map(gr => gr.sub);
         const from = g.region === 'cn' ? '在本科生导师双选会上选了你' : '在本科生科研招募会上找到了你';
         const cands = [];
         for (let i = U.int(2, 3); i > 0; i--) cands.push(Object.assign(S().genCandidate(g, 'ug', 2, { own: true, interest: ts.length && U.chance(0.7) ? U.pick(ts) : undefined }), { from }));

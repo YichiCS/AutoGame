@@ -18,19 +18,19 @@
     S.story(g, phd, mt ? `读博时你带过 TA，这次跟着你从 ${F.school} 来了` : '跟着你从原来的学校转了过来');
     const ug = S.createMember(g, 'ug', { q: 58, school: g.school, trust: 60 });
     S.addMember(g, ug, true);
-    // 第一个小组：你的核心方向，转来的博士生本来就做这个
-    const core = S.createGroup(g, g.policies.coreTopic, true);
-    phd.bio.interest = g.policies.coreTopic;
+    // 第一个小组：核心方向下你最拿手的子方向，转来的博士生本来就做这个
+    const core = S.createGroup(g, g.startSub, true);
+    phd.bio.interest = core.sub;
     S.setMemberGroup(g, phd, core.id, true);
     S.setMemberGroup(g, ug, core.id, true);
     // 转来的学生带着一篇快写完的论文；PI 自己也有一篇博后期间的存稿
-    const p1 = S.newProject(g, phd, g.policies.coreTopic);
+    const p1 = S.newProject(g, phd, core.sub);
     p1.phase = 'write';
     p1.sc = { nov: 56 + U.normal(0, 3), sol: 55 + U.normal(0, 3) };
     p1.prog = Math.round(p1.need.write * 0.45);
     p1.acc.write = p1.prog * phd.stats.write;
     p1.wsum.write = p1.prog;
-    const p2 = S.newProject(g, phd, g.policies.coreTopic);
+    const p2 = S.newProject(g, phd, core.sub);
     p2.sc = { nov: 60 + U.normal(0, 3), sol: 58 + U.normal(0, 3), cla: g.pi.stats.writing + U.normal(0, 3) };
     p2.q = S.calcQuality(g, p2);
     p2.phase = 'ready';
@@ -127,7 +127,7 @@
     d += (trust - 50) * 0.0004;
     // 做自己感兴趣的方向更开心；当组长有压力，但也更快成长
     const cur = m.projectId ? G.project(g, m.projectId) : null;
-    if (cur && cur.topic === S.interestOf(m)) d += 0.01;
+    if (cur) d += 0.01 * S.interestFit(m, cur.sub);
     if (S.leadsGroup(g, m)) { d -= 0.004; S.bumpStat(m, 'idea', 0.004); }
     if (m.isPlayer && g.phd) d += S.PACE[g.phd.pace].mood;
     S.addMood(m, d + U.normal(0, 0.15));
@@ -171,7 +171,7 @@
     }
     return Math.min(100, s);
   };
-  S.areaHeat = g => U.avg(G.area(g).topics, t => g.topics[t.id].heat);
+  S.areaHeat = g => U.avg(G.area(g).subs, s => S.heat(g, s.id));
   S.grantScore = function (g, def, effort, avgEnergy, focusShare) {
     const pi = g.pi.stats;
     const effortB = effort === 'full' ? 22 : 10;
@@ -481,7 +481,7 @@
       g.expertise[tid] = Math.min(10, (g.expertise[tid] || 0) + 0.4);
       G.log(g, `准备《${T.name}》让你对「${G.topic(g, tid).name}」的理解更深了（方向积累 +0.4）`, 'info');
       if (room && U.chance(0.3)) {
-        const c = Object.assign(S.genCandidate(g, 'ms', 8, { own: true, interest: tid }), { from: `在你的研究生课《${T.name}》上被发掘` });
+        const c = Object.assign(S.genCandidate(g, 'ms', 8, { own: true, interest: U.pick(G.topic(g, tid).subs).id }), { from: `在你的研究生课《${T.name}》上被发掘` });
         G.queue(g, { type: 'pool', role: 'ms', title: '课堂上的好苗子', text: `《${T.name}》课上有位 ${g.school} 的硕士生对你的方向特别感兴趣，想加入你的实验室。`, cands: [c], max: 1 });
       }
     }
@@ -701,17 +701,22 @@
   };
 
   // ---------- 热点 ----------
+  // 每个子方向的热度慢慢回到自己的常态；偶尔某个子方向突然爆火，或者整个方向一起升温
   S.trendsMonthly = function (g) {
     const A = G.area(g);
-    A.topics.forEach(t => {
-      const s = g.topics[t.id];
-      s.heat = U.clamp(s.heat + (t.heat - s.heat) * 0.03 + U.normal(0, 0.05), 0.3, 4);
+    A.subs.forEach(d => {
+      const s = g.subs[d.id] || (g.subs[d.id] = { heat: d.heat });
+      s.heat = U.clamp(s.heat + (d.heat - s.heat) * 0.03 + U.normal(0, 0.05), 0.3, 4);
     });
     if (U.chance(1 / 20)) {
-      const t = U.weighted(A.topics, x => 1 / g.topics[x.id].heat);
-      const s = g.topics[t.id];
-      s.heat = Math.min(4, Math.max(s.heat, t.heat) * U.range(1.6, 2.1));
-      G.queue(g, { type: 'event', id: 'hot_trend', ctx: { tid: t.id } });
+      const d = U.weighted(A.subs, x => 1 / S.heat(g, x.id));
+      const s = g.subs[d.id];
+      s.heat = Math.min(4, Math.max(s.heat, d.heat) * U.range(1.6, 2.1));
+      G.queue(g, { type: 'event', id: 'hot_trend', ctx: { sid: d.id } });
+    } else if (U.chance(1 / 60)) {
+      const t = U.pick(A.topics);
+      t.subs.forEach(d => { g.subs[d.id].heat = Math.min(4, g.subs[d.id].heat * U.range(1.15, 1.35)); });
+      G.log(g, `「${t.name}」整个方向都在升温，相关子方向的论文越来越多`, 'info');
     }
   };
 
@@ -815,14 +820,18 @@
     S.labMood(g, -5);
     G.log(g, `${m.name} 离开了实验室。大家的心情都有些低落`, 'bad');
   };
-  S.changeTopic = function (g, p, tid) {
+  // 构思阶段换子方向：同一个方向下换，构思进度保留七成；换到别的方向只保留一半
+  S.changeTopic = function (g, p, sid) {
     if (p.phase !== 'idea') return '只有构思阶段的课题可以换方向';
-    p.topic = tid;
-    p.title = S.uniqueTitle(g, tid);
-    p.prog = Math.floor(p.prog * 0.5);
-    p.acc.idea *= 0.5;
-    p.wsum.idea *= 0.5;
-    G.log(g, `课题转向「${G.topic(g, tid).name}」：${short(p.title)}`, 'info');
+    sid = G.asSub(g, sid);
+    const keep = RS.SUBS[sid].topic === p.topic ? 0.7 : 0.5;
+    p.sub = sid;
+    p.topic = RS.SUBS[sid].topic;
+    p.title = S.uniqueTitle(g, sid);
+    p.prog = Math.floor(p.prog * keep);
+    p.acc.idea *= keep;
+    p.wsum.idea *= keep;
+    G.log(g, `课题转向「${G.sub(g, sid).name}」：${short(p.title)}`, 'info');
     return null;
   };
 })();

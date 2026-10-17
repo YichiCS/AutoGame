@@ -103,7 +103,10 @@
     return `<span class="tag grp" style="--gc:${gcolor(gr)}"${tip ? ` data-tip="${esc(tip)}"` : ''}>${esc(S.groupName(g, gr))}</span>`;
   }
   const computeWord = c => (c >= 1.2 ? '很高' : c >= 0.8 ? '较高' : c >= 0.4 ? '中等' : '很低');
-  const topicName = tid => (tid ? G.topic(g, tid).name : '还没想好');
+  // 方向 / 子方向的名字（成员的兴趣、博士论文方向都是子方向）
+  const topicName = id => (!id ? '还没想好' : RS.SUBS[id] ? G.sub(g, id).name : G.topic(g, id).name);
+  const dirName = id => (!id ? '还没想好' : RS.SUBS[id] ? S.dirName(g, id) : G.topic(g, id).name);
+  const fitMark = (m, sid) => { const f = S.interestFit(m, sid); return f === 1 ? '<span class="good" data-tip="TA 最想做这个子方向">♥</span>' : f ? '<span class="good dim" data-tip="和 TA 想做的属于同一个方向">♡</span>' : ''; };
 
   const POLICIES = [
     { k: 'focus', name: 'PI 精力分配', opts: [
@@ -251,7 +254,6 @@
     const pi = g.pi, pol = g.policies;
     const ctx = S.dayContext(g);
     const net = S.income(g).total - S.expenses(g).total;
-    const topics = G.area(g).topics.slice().sort((a, b) => g.topics[b.id].heat - g.topics[a.id].heat);
     const piStat = (k, n) => `<div class="pstat"><label>${n}</label>${mini(pi.stats[k])}</div>`;
     const resting = g.flags.restUntil > g.day;
     return `
@@ -275,9 +277,27 @@
         <div class="kvline"><span>每月净收支</span><b class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}</b></div>
       </div>
       <div class="card"><h3>${ico('calendar')} 近期日程</h3>${upcoming().map(u => `<div class="kvline">${ico(u.icon)}<span class="grow">${esc(u.text)}</span><span class="dim small">${G.mdStr(u.day)} · ${G.daysText(u.day - g.day)}</span></div>`).join('')}</div>
-      <div class="card"><h3>${ico('fire')} 领域热点</h3>
-        ${topics.map(t => { const gr = S.groupOfTopic(g, t.id); return `<div class="kvline"><span class="grow">${esc(t.name)}${t.id === pol.coreTopic ? tag('核心', 'gold') : ''}${gr ? ` <i class="gdot" style="--gc:${gcolor(gr)}" data-tip="${esc(S.groupName(g, gr))}：${S.groupMembers(g, gr).length} 人"></i>` : ''}</span>${heatIcons(g.topics[t.id].heat)}<span class="small dim" data-tip="实验室在这个方向的积累，越高论文质量越好">积累 ${(g.expertise[t.id] || 0).toFixed(1)}</span></div>`; }).join('')}
-      </div>`;
+      ${researchMap()}`;
+  }
+  // 研究版图：领域 → 方向 → 子方向。热度看子方向，积累算在方向上；核心方向默认展开
+  function researchMap() {
+    const A = G.area(g), core = g.policies.coreTopic;
+    if (openState['topic-' + core] == null) openState['topic-' + core] = true;
+    const topics = A.topics.slice().sort((a, b) => (b.id === core) - (a.id === core) || S.heat(g, b.id) - S.heat(g, a.id));
+    const dot = gr => ` <i class="gdot" style="--gc:${gcolor(gr)}" data-tip="${esc(S.groupName(g, gr))}：${S.groupMembers(g, gr).length} 人"></i>`;
+    const subRow = s => {
+      const gr = S.groupOfSub(g, s.id);
+      const n = g.projects.filter(p => p.sub === s.id).length;
+      return `<div class="kvline"><span class="grow">${esc(s.name)}${gr ? dot(gr) : ''}${n ? `<span class="small dim"> · ${n} 个课题</span>` : ''}</span>${heatIcons(S.heat(g, s.id))}<span class="small dim" data-tip="做实验需要的算力">算力${computeWord(s.compute)}</span></div>`;
+    };
+    return `<div class="card"><h3>${ico('fire')} 研究方向</h3>
+      <p class="small dim">${esc(A.name)}：${A.topics.length} 个方向、${A.subs.length} 个子方向。小组按子方向设立；热度看子方向，积累算在方向上。</p>
+      ${topics.map(t => {
+        const hot = t.subs.reduce((a, b) => (S.heat(g, b.id) > S.heat(g, a.id) ? b : a));
+        const head = `<span class="grow">${esc(t.name)}${t.id === core ? tag('核心', 'gold') : ''}${g.groups.filter(gr => gr.topic === t.id).map(dot).join('')}<span class="small dim"> · 最热：${esc(hot.name)}</span></span>${heatIcons(S.heat(g, t.id))}<span class="small dim" data-tip="实验室在这个方向的积累，越高论文质量越好（方向下所有子方向共用）">积累 ${(g.expertise[t.id] || 0).toFixed(1)}</span>`;
+        return fold('topic-' + t.id, head, t.subs.slice().sort((a, b) => S.heat(g, b.id) - S.heat(g, a.id)).map(subRow).join(''), 'line');
+      }).join('')}
+    </div>`;
   }
 
   // ---------- 成员 ----------
@@ -312,7 +332,7 @@
     return `<div class="mdetail">
       <div class="kvline"><span>来自</span><b>${esc([m.school, bio.major].filter(Boolean).join(' · ') || '—')}</b></div>
       <div class="kvline"><span>职业理想</span><b>${esc(RS.GOALS[bio.goal] || '还没想好')}</b></div>
-      <div class="kvline" data-tip="做自己感兴趣的方向：心情更好、效率 +5%。做完一个课题后，兴趣有时会转向刚做的方向。"><span>感兴趣的方向</span><b>${esc(topicName(bio.interest))}</b></div>
+      <div class="kvline" data-tip="做自己最想做的子方向：心情更好、效率 +5%；同一个方向下的其他子方向也有一半的效果。做完一个课题后，兴趣有时会转向刚做的子方向。"><span>感兴趣的方向</span><b>${esc(dirName(bio.interest))}</b></div>
       <div class="kvline"><span>爱好</span><b>${esc((bio.hobbies || []).join('、') || '—')}</b></div>
       <div class="kvline"><span>口头禅</span><b>“${esc(bio.motto || '……')}”</b></div>
       <div class="kvline" data-tip="入组时的能力 → 现在"><span>成长</span><b class="growline">${grow('idea', '想法')}${grow('code', '编程')}${grow('write', '写作')}</b></div>
@@ -378,16 +398,17 @@
   function mchip(m, gr) {
     const it = S.interestOf(m);
     const lead = gr && gr.lead === m.id;
-    const tip = `${m.name}（${S.ROLE_NAMES[m.role]}）\n想做「${topicName(it)}」${lead ? '\n本组组长' : ''}\n点击调整 TA 的小组`;
-    return `<span class="mchip" data-key="${m.id}" data-act="memberGroups" data-arg="${m.id}" data-tip="${esc(tip)}"><img class="portrait mini" src="${SP.portraitURL(m.avatar, m.role, 2)}" alt="">${esc(RS.shortName(m.name))}${lead ? '<b class="gold">★</b>' : ''}${gr && it === gr.topic ? '<span class="good" data-tip="TA 对这个方向最感兴趣">♥</span>' : ''}${gr ? `<button class="x" data-act="groupKick" data-arg="${gr.id}" data-k="${m.id}" data-tip="移出本组">×</button>` : ''}</span>`;
+    const tip = `${m.name}（${S.ROLE_NAMES[m.role]}）\n想做「${dirName(it)}」${lead ? '\n本组组长' : ''}\n点击调整 TA 的小组`;
+    return `<span class="mchip" data-key="${m.id}" data-act="memberGroups" data-arg="${m.id}" data-tip="${esc(tip)}"><img class="portrait mini" src="${SP.portraitURL(m.avatar, m.role, 2)}" alt="">${esc(RS.shortName(m.name))}${lead ? '<b class="gold">★</b>' : ''}${gr ? fitMark(m, gr.sub) : ''}${gr ? `<button class="x" data-act="groupKick" data-arg="${gr.id}" data-k="${m.id}" data-tip="移出本组">×</button>` : ''}</span>`;
   }
   function groupCard(gr, al) {
     const t = G.topic(g, gr.topic);
+    const s = G.sub(g, gr.sub);
     const mem = S.groupMembers(g, gr);
     const lead = G.member(g, gr.lead);
-    const projs = g.projects.filter(p => p.topic === gr.topic);
+    const projs = g.projects.filter(p => p.sub === gr.sub);
     const cnt = (...phs) => projs.filter(p => phs.includes(p.phase)).length;
-    const papers = g.papers.filter(p => p.topic === gr.topic && !p.retracted);
+    const papers = g.papers.filter(p => p.sub === gr.sub && !p.retracted);
     const dem = al.dem[gr.id] || 0, got = al.got[gr.id] || 0, own = al.own[gr.id] || 0;
     const ratio = dem > 0 ? got / dem : 1;
     const f = dem > 0 ? U.clamp(Math.pow(ratio, 0.6), 0.25, 1.15) : 1;
@@ -397,14 +418,14 @@
       ? `需求 ${dem.toFixed(0)} · 可用 ${got.toFixed(0)}（专用 ${own}${got - own >= 0.5 ? ` + 共享 ${(got - own).toFixed(0)}` : ''}）· 实验效率 ×${f.toFixed(2)}`
       : `现在没有课题在做实验${own ? ` · 专用 ${own} 闲置` : ''}`;
     return `<div class="card gcard" data-key="${gr.id}" style="--gc:${gcolor(gr)}">
-      <div class="row"><b class="gname">${esc(S.groupName(g, gr))}</b>${gr.topic === g.policies.coreTopic ? tag('核心', 'gold') : ''}${heatIcons(g.topics[gr.topic].heat)}<span class="small dim" data-tip="实验室在这个方向的积累，越高论文质量越好">积累 ${(g.expertise[gr.topic] || 0).toFixed(1)}</span><span class="grow"></span>
+      <div class="row"><b class="gname">${esc(S.groupName(g, gr))}</b>${tag(t.name, gr.topic === g.policies.coreTopic ? 'gold' : 't-mid', gr.topic === g.policies.coreTopic ? '属于你的核心方向' : '所属方向')}${heatIcons(S.heat(g, gr.sub))}<span class="small dim" data-tip="实验室在「${esc(t.name)}」方向的积累，越高论文质量越好（同一方向的小组共用）">积累 ${(g.expertise[gr.topic] || 0).toFixed(1)}</span><span class="grow"></span>
         <button class="mini-btn danger" data-act="groupDel" data-arg="${gr.id}" data-tip="解散小组：组员改为自由选题，专用服务器回到共享池">${confirmGroupDel === gr.id ? '确定解散？' : '解散'}</button></div>
       <div class="kvline"><span>组长</span><b>${lead ? esc(lead.name) : '<span class="dim">暂无（由你直接管理）</span>'}</b><button class="mini-btn" data-act="groupLead" data-arg="${gr.id}" data-tip="组长帮你带组员：指导容量 +1.5，组员成长 +12%，组里的构思更有把握；组长自己效率 -8%">${lead ? '更换' : '任命'}</button></div>
       <div class="sub">成员（${mem.length}）</div>
       <div class="chips-wrap">${mem.map(m => mchip(m, gr)).join('')}<button class="chip-btn" data-act="groupAdd" data-arg="${gr.id}">+ 添加成员</button></div>
       <div class="kvline small"><span>在研课题</span><b>构思 ${cnt('idea')} · 实验 ${cnt('exp')} · 写作 ${cnt('write')} · 投稿/审稿 ${cnt('ready', 'review')}</b></div>
       <div class="kvline small"><span>已发表</span><b>${papers.length} 篇（A 类 ${papers.filter(p => p.tier === 'A').length}）</b></div>
-      ${G.area(g).compute >= 0.3 || owned.length ? `<div class="sub">算力 <span class="small dim">· 这个方向算力需求${computeWord(t.compute)}</span></div>
+      ${G.area(g).compute >= 0.3 || owned.length ? `<div class="sub">算力 <span class="small dim">· 这个子方向算力需求${computeWord(s.compute)}</span></div>
       ${bar(dem > 0 ? ratio : 1, f < 0.8 ? 'bad' : f < 1 ? 'warn' : 'good', compLabel)}
       ${owned.map(x => {
         const n = a[x.s.id] || 0;
@@ -444,7 +465,7 @@
   // ---------- 研究 ----------
   function projCard(p) {
     const lead = G.member(g, p.lead);
-    const topic = G.topic(g, p.topic);
+    const topic = G.topic(g, p.topic), sub = G.sub(g, p.sub);
     const phases = ['idea', 'exp', 'write', 'ready', 'review'];
     const ci = phases.indexOf(p.phase);
     const helpers = p.helpers.map(id => G.member(g, id)).filter(Boolean).map(m => RS.shortName(m.name));
@@ -461,12 +482,12 @@
       target = `<div class="small">审稿中：<b>${esc(v.name)}</b> ${tierTag(v.tier)} · 预计 ${G.mdStr(p.notifyDay)} 出结果</div>`;
     }
     const work = S.WORK_PHASES.includes(p.phase);
-    const gr = S.groupOfTopic(g, p.topic);
+    const gr = S.groupOfSub(g, p.sub);
     const mine = !!g.phd && (p.lead === g.player || p.authors.includes(g.player));
     const canEdit = !g.phd || p.lead === g.player; // 博士阶段只能动你自己负责的课题
     return `<div class="pcard ${mine ? 'mine' : ''}" data-key="${p.id}">
       <div class="ptitle">${esc(p.title)}</div>
-      <div class="row small">${gr ? groupTag(gr, `方向：${topic.name}`) : tag(topic.name, 't-mid', '这个方向没有对应的小组，用共享算力')}${heatIcons(g.topics[p.topic].heat)}<span class="dim">${lead ? esc(lead.name) : '前成员'}${helpers.length ? ' + ' + esc(helpers.join('、')) : ''}</span></div>
+      <div class="row small">${gr ? groupTag(gr, `${topic.name} · ${sub.name}`) : tag(sub.name, 't-mid', `${topic.name} · ${sub.name}：这个子方向没有对应的小组，用共享算力`)}${heatIcons(S.heat(g, p.sub))}<span class="dim">${lead ? esc(lead.name) : '前成员'}${helpers.length ? ' + ' + esc(helpers.join('、')) : ''}</span></div>
       <div class="pipeline">${phases.map((ph, i) => `<span class="${i === ci ? 'cur' : i < ci ? 'done' : ''}">${S.PHASE_NAMES[ph]}</span>`).join('')}</div>
       ${work ? bar(p.prog / p.need[p.phase], p.rush > 0 ? 'warn' : '', `${S.PHASE_NAMES[p.phase]} ${Math.round((p.prog / p.need[p.phase]) * 100)}%${p.rush > 0 ? ' · DDL 冲刺中！' : ''}`) : ''}
       ${['write', 'ready', 'review'].includes(p.phase) ? (() => { const ao = S.authorOrder(g, p); return `<div class="small authors" data-tip="按目前的实际工作量排序">署名：${authorsHTML(S.authorList(g, { authors: ao.order, co: ao.co, ext: p.collab ? p.collab.who : null, guest: p.guest }))}</div>`; })() : ''}
@@ -728,7 +749,7 @@
       </div>
       <div class="card"><h3>${ico('cap')} 毕业进度</h3>
         <div class="kvline"><span>资格考试</span><b class="${P.qual ? 'good' : ''}">${P.qual ? '✓ 已通过' : yrs < 1.1 ? '第二年进行' : '等待考试'}</b></div>
-        <div class="kvline"><span>开题答辩</span><b class="${P.proposal ? 'good' : ''}">${P.proposal ? `✓ ${esc(topicName(P.thesis))}` : '第三年进行'}</b></div>
+        <div class="kvline"><span>开题答辩</span><b class="${P.proposal ? 'good' : ''}">${P.proposal ? `✓ ${esc(dirName(P.thesis))}` : '第三年进行'}</b></div>
         ${critRow('读博年限', yrs.toFixed(1) + ' 年', '3 年', yrs >= 3, yrs / 3)}
         ${critRow('一作 A 类论文', firstA, 2, firstA >= 2, firstA / 2)}
         ${critRow('或：一作论文', first, 4, first >= 4, first / 4)}
@@ -792,7 +813,7 @@
     const kv = (k, v) => `<div class="kvline"><span>${k}</span><b>${v}</b></div>`;
     return `<div class="card"><h3>${ico('cap')} 读博经历</h3>
       ${kv('博士学校 / 导师', `${esc(r.school)} · ${esc(r.advisor)}`)}${kv('读博年限', r.years + ' 年')}
-      ${kv('读博期间论文', `${r.papers} 篇（一作 ${r.first} · 一作 A 类 ${r.firstA}）`)}${kv('博士论文方向', esc(topicName(r.thesis)))}
+      ${kv('读博期间论文', `${r.papers} 篇（一作 ${r.first} · 一作 A 类 ${r.firstA}）`)}${kv('博士论文方向', esc(dirName(r.thesis)))}
       ${r.path ? kv(r.path === 'postdoc' ? '博士后' : '工业界', esc(r.pathPlace)) : ''}${kv('求职竞争力', r.score)}
     </div>`;
   }
@@ -938,7 +959,7 @@
       <div class="row"><img class="portrait" src="${SP.portraitURL(c.avatar, c.role, 3)}" alt=""><div class="grow"><b>${esc(c.name)}</b><div class="row">${tag(S.ROLE_NAMES[c.role], 'role-' + c.role)}${c.own ? tag('本校', 'gold', `来自你所在的 ${g.school}`) : ''}${c.fellow ? tag('自带奖学金', 'gold', '前三年不用你发工资') : ''}</div><div class="small dim">${esc(c.school)}${c.bio ? ' · ' + esc(c.bio.major) : ''}${c.pubs ? ` · 已有 ${c.pubs} 篇论文` : ''}</div></div></div>
       ${candStats(c, exact)}
       <div class="row small"><span>潜力 <b class="gold">${exact ? potStars(c.pot) : '？？？'}</b></span>${c.bio ? `<span>职业理想 <b>${exact ? esc(RS.GOALS[c.bio.goal]) : '？'}</b></span>` : ''}</div>
-      ${c.bio && c.bio.interest ? `<div class="row small" data-tip="研究计划里写的方向。分到对应的小组、做这个方向时更开心、效率更高"><span>想做 <b>${esc(topicName(c.bio.interest))}</b></span>${S.groupOfTopic(g, c.bio.interest) ? groupTag(S.groupOfTopic(g, c.bio.interest)) : '<span class="dim">（还没有这个方向的小组）</span>'}</div>` : ''}
+      ${c.bio && c.bio.interest ? `<div class="row small" data-tip="研究计划里写的方向。分到对应的小组、做这个子方向时更开心、效率更高"><span>想做 <b>${esc(dirName(c.bio.interest))}</b></span>${S.groupOfSub(g, c.bio.interest) ? groupTag(S.groupOfSub(g, c.bio.interest)) : '<span class="dim">（还没有这个子方向的小组）</span>'}</div>` : ''}
       ${c.bio && exact ? `<div class="small dim">爱好：${esc(c.bio.hobbies.join('、'))} · “${esc(c.bio.motto)}”</div>` : ''}
       <div class="row traits">${traitTags(c, traits)}${hidden ? tag('？', 't-mid', '面试后才能看到全部特质') : ''}</div>
       ${mode === 'recruit' ? `<div class="small">接受 offer 的可能性：<b>${U.probWord(c.accept)}</b>（约 ${pct(c.accept)}）</div>` : ''}
@@ -979,28 +1000,38 @@
         ${local ? '<button class="choice" data-act="closeLocal"><b>先不改</b><small>保持原计划</small></button>' : ''}
       </div>`, 'wide');
   }
+  // 按方向分段列出所有子方向（核心方向排最前），rowFn 渲染每个子方向
+  function subPicker(rowFn) {
+    const core = g.policies.coreTopic;
+    return G.area(g).topics.slice().sort((a, b) => (b.id === core) - (a.id === core))
+      .map(t => `<div class="venue-sec"><b>${esc(t.name)}</b>${t.id === core ? tag('核心', 'gold') : ''}<span class="small dim" data-tip="方向积累：这个方向下所有子方向共用">积累 ${(g.expertise[t.id] || 0).toFixed(1)}</span></div>${t.subs.map(rowFn).join('')}`).join('');
+  }
   function renderTopic(pid) {
     const p = G.project(g, pid);
     if (!p) return null;
-    const A = G.area(g);
+    const row = s => {
+      const gr = S.groupOfSub(g, s.id);
+      const cur = s.id === p.sub;
+      return `<div class="venue-row" data-key="${s.id}"><div class="grow"><b>${esc(s.name)}</b>${gr ? ' ' + groupTag(gr) : ''}<div class="small dim">算力需求${computeWord(s.compute)}${s.topic === p.topic && !cur ? ' · 同一方向' : ''}</div></div>${heatIcons(S.heat(g, s.id))}<button data-act="topicPick" data-arg="${s.id}" ${cur ? 'disabled' : ''}>${cur ? '当前' : '选这个'}</button></div>`;
+    };
     return modalShell(`${head('bulb', '换个研究方向')}
-      <p>《${esc(p.title)}》还在构思阶段，可以换个方向（构思进度减半）。</p>
-      <div class="venue-list">${A.topics.map(t => `<div class="venue-row"><div class="grow"><b>${esc(t.name)}</b>${t.id === g.policies.coreTopic ? tag('核心', 'gold') : ''}<div class="small dim">积累 ${(g.expertise[t.id] || 0).toFixed(1)} · 算力需求 ${t.compute >= 1.2 ? '很高' : t.compute >= 0.8 ? '较高' : t.compute >= 0.4 ? '中等' : '很低'}</div></div>${heatIcons(g.topics[t.id].heat)}<button data-act="topicPick" data-arg="${t.id}" ${t.id === p.topic ? 'disabled' : ''}>${t.id === p.topic ? '当前' : '选这个'}</button></div>`).join('')}</div>
+      <p>《${esc(p.title)}》还在构思阶段，可以换个子方向：同一方向下换，构思进度保留七成；换到别的方向只保留一半。</p>
+      <div class="venue-list">${subPicker(row)}</div>
       <div class="choices"><button class="choice" data-act="closeLocal"><b>算了</b><small>保持原方向</small></button></div>`, 'wide');
   }
   // ---------- 小组相关的弹窗 ----------
   const memberRowHead = m => `<img class="portrait tiny" src="${SP.portraitURL(m.avatar, m.role, 2)}" alt=""><div class="grow"><b>${esc(m.name)}</b> ${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}`;
   function renderGroupNew() {
-    const rows = G.area(g).topics.map(t => {
-      const has = S.groupOfTopic(g, t.id);
-      const fans = g.members.filter(m => S.interestOf(m) === t.id);
-      return `<div class="venue-row" data-key="${t.id}"><div class="grow"><b>${esc(t.name)}</b>${t.id === g.policies.coreTopic ? tag('核心', 'gold') : ''}
-        <div class="small dim">积累 ${(g.expertise[t.id] || 0).toFixed(1)} · 算力需求${computeWord(t.compute)}${fans.length ? ` · <span class="good">${fans.length} 人想做（${esc(fans.map(m => RS.shortName(m.name)).join('、'))}）</span>` : ''}</div></div>
-        ${heatIcons(g.topics[t.id].heat)}<button data-act="groupCreate" data-arg="${t.id}" ${has ? 'disabled' : ''}>${has ? '已有小组' : '成立'}</button></div>`;
-    }).join('');
+    const row = s => {
+      const has = S.groupOfSub(g, s.id);
+      const fans = g.members.filter(m => S.interestOf(m) === s.id);
+      return `<div class="venue-row" data-key="${s.id}"><div class="grow"><b>${esc(s.name)}</b>
+        <div class="small dim">算力需求${computeWord(s.compute)}${fans.length ? ` · <span class="good">${fans.length} 人想做（${esc(fans.map(m => RS.shortName(m.name)).join('、'))}）</span>` : ''}</div></div>
+        ${heatIcons(S.heat(g, s.id))}<button data-act="groupCreate" data-arg="${s.id}" ${has ? 'disabled' : ''}>${has ? '已有小组' : '成立'}</button></div>`;
+    };
     return modalShell(`${head('branch', '成立新小组')}
-      <p class="small">选一个方向成立小组（现有 ${g.groups.length} / ${S.maxGroups(g)}）。成立之后把成员加进来、任命组长、分配服务器。</p>
-      <div class="venue-list">${rows}</div>
+      <p class="small">选一个子方向成立小组（现有 ${g.groups.length} / ${S.maxGroups(g)}）。成立之后把成员加进来、任命组长、分配服务器。同一方向下的小组共用这个方向的积累。</p>
+      <div class="venue-list">${subPicker(row)}</div>
       <div class="choices"><button class="choice" data-act="closeLocal"><b>算了</b></button></div>`, 'wide');
   }
   function renderGroupAdd(gid) {
@@ -1012,11 +1043,11 @@
       const it = S.interestOf(m);
       const full = !inG && (m.groups || []).length >= S.MAX_MEMBER_GROUPS;
       return `<div class="venue-row" data-key="${m.id}">${memberRowHead(m)}
-        <div class="small dim">想做「${esc(topicName(it))}」${it === gr.topic ? ' <span class="good">♥</span>' : ''} · ${others.length ? '已在 ' + others.map(x => esc(S.groupName(g, x))).join('、') : '未分组'}</div></div>
+        <div class="small dim">想做「${esc(topicName(it))}」${fitMark(m, gr.sub)} · ${others.length ? '已在 ' + others.map(x => esc(S.groupName(g, x))).join('、') : '未分组'}</div></div>
         <button class="${inG ? 'on' : ''}" data-act="groupToggle" data-arg="${gid}" data-k="${m.id}" ${full ? 'disabled' : ''}>${inG ? '✓ 在组里' : full ? '已在两个组' : '加入'}</button></div>`;
     }).join('') || '<p class="dim">实验室还没有成员。</p>';
     return modalShell(`${head('people', `「${S.groupName(g, gr)}」的成员`)}
-      <p class="small dim">每人最多同时在两个小组。做自己感兴趣的方向（♥）心情更好、效率更高。</p>
+      <p class="small dim">每人最多同时在两个小组。做自己最想做的子方向（♥）心情更好、效率更高；同一个方向下的（♡）也有一半效果。</p>
       <div class="venue-list">${rows}</div>
       <div class="choices"><button class="choice def" data-act="closeLocal"><b>完成</b></button></div>`, 'wide');
   }
@@ -1044,12 +1075,13 @@
       const inG = S.inGroup(m, gr.id);
       const full = !inG && (m.groups || []).length >= S.MAX_MEMBER_GROUPS;
       const lead = G.member(g, gr.lead);
-      return `<div class="venue-row" data-key="${gr.id}"><div class="grow">${groupTag(gr)}${gr.topic === it ? ' <span class="good small">♥ TA 想做这个</span>' : ''}
+      const fit = S.interestFit(m, gr.sub);
+      return `<div class="venue-row" data-key="${gr.id}"><div class="grow">${groupTag(gr, dirName(gr.sub))}${fit === 1 ? ' <span class="good small">♥ TA 想做这个</span>' : fit ? ' <span class="good small">♡ 同一个方向</span>' : ''}
         <div class="small dim">${S.groupMembers(g, gr).length} 人 · ${lead ? '组长 ' + esc(lead.name) : '暂无组长'} · 积累 ${(g.expertise[gr.topic] || 0).toFixed(1)}</div></div>
         <button class="${inG ? 'on' : ''}" data-act="groupToggle" data-arg="${gr.id}" data-k="${m.id}" ${full ? 'disabled' : ''}>${inG ? '✓ 已加入' : full ? '已满两个' : '加入'}</button></div>`;
     }).join('') || '<p class="dim">还没有小组，去「小组」页成立一个吧。</p>';
     return modalShell(`${head('branch', `${m.name} 的小组`)}
-      <p class="small dim">TA 最想做「<b>${esc(topicName(it))}</b>」。每人最多同时在两个小组；新课题会在所属小组的方向里选。</p>
+      <p class="small dim">TA 最想做「<b>${esc(dirName(it))}</b>」。每人最多同时在两个小组；新课题会在所属小组的子方向里选。</p>
       <div class="venue-list">${rows}</div>
       <div class="choices"><button class="choice def" data-act="closeLocal"><b>完成</b></button></div>`, '');
   }
@@ -1303,12 +1335,15 @@
 
   // ---------- 开始界面 ----------
   function defaultNg() {
-    return { path: 'phd', name: '', lab: U.pick(RS.LAB_NAMES), region: 'us', tier: 1, school: G.defaultSchool('us', 1), customSchool: '', area: 'ml', topic: RS.AREAS.ml.topics[0].id, perk: 'postdoc', advisor: 'solid', ugbg: 'elite', avatar: RS.randomAvatar() };
+    const t = RS.AREAS.ml.topics[0];
+    return { path: 'phd', name: '', lab: U.pick(RS.LAB_NAMES), region: 'us', tier: 1, school: G.defaultSchool('us', 1), customSchool: '', area: 'ml', topic: t.id, sub: t.subs[0].id, perk: 'postdoc', advisor: 'solid', ugbg: 'elite', avatar: RS.randomAvatar() };
   }
   function renderStart(save) {
     if (!ng) ng = defaultNg();
     const R = RS.REGIONS[ng.region];
     const A = RS.AREAS[ng.area];
+    const T = A.topics.find(t => t.id === ng.topic) || A.topics[0];
+    if (!T.subs.some(s => s.id === ng.sub)) ng.sub = T.subs[0].id;
     const perk = RS.PERKS.find(p => p.id === ng.perk);
     const phd = ng.path === 'phd';
     const adv = RS.ADVISORS.find(a => a.id === ng.advisor) || RS.ADVISORS[0];
@@ -1333,9 +1368,11 @@
         <div class="frow"><label>${phd ? '你的博士学校' : '你的学校'}</label><div class="chips-wrap" id="ng-school-list">${(R.tiers[ng.tier].schools || []).map(s => chip('ngSchool', s, s, !ng.customSchool && ng.school === s)).join('')}</div></div>
         <div class="frow"><label></label><input id="ng-school" maxlength="24" placeholder="输入校名：筛选上面的列表，或直接用列表里没有的学校" value="${esc(ng.customSchool)}"><span class="small dim" id="ng-school-none"></span></div>
         <p class="hint">${phd ? '你会在这所学校读博。' : '学校名字会出现在游戏里：你课上和学院群里招到的学生都来自这所学校。档次决定经费、生源和考核标准。'}（${esc(R.tiers[R.tiers.length - 1].name)}用的是虚构校名）</p>
-        <div class="frow"><label>研究方向</label><div class="chips-wrap">${Object.values(RS.AREAS).map(a => chip('ngArea', a.id, a.name, ng.area === a.id)).join('')}</div></div>
+        <div class="frow"><label>研究领域</label><div class="chips-wrap">${Object.values(RS.AREAS).map(a => chip('ngArea', a.id, a.name, ng.area === a.id)).join('')}</div></div>
         <p class="hint">${esc(A.desc)}</p>
-        <div class="frow"><label>核心课题</label><div class="chips-wrap">${A.topics.map(t => chip('ngTopic', t.id, t.name, ng.topic === t.id)).join('')}</div></div>
+        <div class="frow"><label>${phd ? '导师的方向' : '核心方向'}</label><div class="chips-wrap">${A.topics.map(t => chip('ngTopic', t.id, t.name, T.id === t.id, t.subs.map(s => s.name).join(' / '))).join('')}</div></div>
+        <div class="frow"><label>${phd ? '你的子方向' : '第一个小组'}</label><div class="chips-wrap">${T.subs.map(s => chip('ngSub', s.id, s.name, ng.sub === s.id, `热度 ${s.heat.toFixed(1)} · 算力需求${computeWord(s.compute)}`)).join('')}</div></div>
+        <p class="hint">${phd ? `你进组后做「${esc(T.name)}」方向下的这个子方向。读博期间可以换，开题时定下的博士论文方向会成为你将来实验室的核心方向。` : `实验室的核心方向是「${esc(T.name)}」，第一个小组做这个子方向。之后可以按子方向成立更多小组，也可以跨到别的方向。`}</p>
         ${phd
           ? `<div class="frow"><label>导师</label><div class="chips-wrap">${RS.ADVISORS.map(a => chip('ngAdvisor', a.id, a.name, ng.advisor === a.id, a.desc)).join('')}</div></div>
         <p class="hint">${esc(adv.desc)}</p>
@@ -1405,8 +1442,9 @@
       case 'ngRegion': readNgInputs(); ng.region = arg; ng.school = G.defaultSchool(arg, ng.tier); UI.showStart(UI._save); return;
       case 'ngTier': readNgInputs(); ng.tier = +arg; ng.school = G.defaultSchool(ng.region, ng.tier); UI.showStart(UI._save); return;
       case 'ngSchool': readNgInputs(); ng.school = arg; ng.customSchool = ''; UI.showStart(UI._save); return;
-      case 'ngArea': readNgInputs(); ng.area = arg; ng.topic = RS.AREAS[arg].topics[0].id; UI.showStart(UI._save); return;
-      case 'ngTopic': readNgInputs(); ng.topic = arg; UI.showStart(UI._save); return;
+      case 'ngArea': readNgInputs(); ng.area = arg; ng.topic = RS.AREAS[arg].topics[0].id; ng.sub = RS.AREAS[arg].topics[0].subs[0].id; UI.showStart(UI._save); return;
+      case 'ngTopic': readNgInputs(); ng.topic = arg; ng.sub = null; UI.showStart(UI._save); return;
+      case 'ngSub': readNgInputs(); ng.sub = arg; UI.showStart(UI._save); return;
       case 'ngPerk': readNgInputs(); ng.perk = arg; UI.showStart(UI._save); return;
       case 'ngPath': readNgInputs(); ng.path = arg; UI.showStart(UI._save); return;
       case 'ngAdvisor': readNgInputs(); ng.advisor = arg; UI.showStart(UI._save); return;
@@ -1417,12 +1455,12 @@
         const school = typedSchool() || ng.school;
         if (ng.path === 'phd') {
           const name = (ng.name || '').trim() || RS.randomName(ng.region);
-          const game = G.newPhdGame({ name, avatar: ng.avatar, region: ng.region, tier: ng.tier, school, areaId: ng.area, coreTopic: ng.topic, advisor: ng.advisor, ugbg: ng.ugbg });
+          const game = G.newPhdGame({ name, avatar: ng.avatar, region: ng.region, tier: ng.tier, school, areaId: ng.area, coreTopic: ng.topic, coreSub: ng.sub, advisor: ng.advisor, ugbg: ng.ugbg });
           hideStart();
           M.start(game, true);
           return;
         }
-        const game = G.newGame({ piName: (ng.name || '').trim() || (ng.region === 'cn' ? '张老师' : 'Prof. Zhang'), labName: lab, school, region: ng.region, tier: ng.tier, areaId: ng.area, coreTopic: ng.topic, perk: ng.perk, avatar: ng.avatar });
+        const game = G.newGame({ piName: (ng.name || '').trim() || (ng.region === 'cn' ? '张老师' : 'Prof. Zhang'), labName: lab, school, region: ng.region, tier: ng.tier, areaId: ng.area, coreTopic: ng.topic, coreSub: ng.sub, perk: ng.perk, avatar: ng.avatar });
         hideStart();
         M.start(game, true);
         return;

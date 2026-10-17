@@ -39,6 +39,15 @@
   G.tierCfg = g => G.region(g).tiers[g.tier];
   G.money = (g, v) => G.region(g).money(v);
   G.topic = (g, id) => G.area(g).topics.find(t => t.id === id) || G.area(g).topics[0];
+  // 子方向：id 可以是子方向，也可以是方向（取它的第一个子方向，读旧存档时用）
+  G.asSub = (g, id) => {
+    const A = G.area(g);
+    if (id && RS.SUBS[id] && RS.SUBS[id].area === A.id) return id;
+    const t = A.topics.find(x => x.id === id) || A.topics.find(x => x.id === g.policies.coreTopic) || A.topics[0];
+    return t.subs[0].id;
+  };
+  G.sub = (g, id) => RS.SUBS[G.asSub(g, id)];
+  G.topicOf = (g, sid) => G.topic(g, G.sub(g, sid).topic);
   G.titleName = g => G.region(g).titles[g.pi.title];
   G.perk = g => RS.PERKS.find(p => p.id === g.perk) || RS.PERKS[0];
   G.grantDef = (g, id) => G.region(g).grants.find(x => x.id === id);
@@ -145,7 +154,7 @@
         focus: 'mentor', intensity: 'normal', meeting: 'weekly', topic: 'core',
         coreTopic: o.coreTopic || A.topics[0].id, submit: 'balanced', rebuttal: 'auto', travel: 'student', auto: 'off', consult: 'ask',
       },
-      topics: {}, expertise: {},
+      subs: {}, expertise: {},
       queue: [], schedule: [], cooldowns: {}, flags: {},
       stats: { cites: 0, h: 0, pubs: { A: 0, B: 0, C: 0, W: 0, P: 0 }, bestPapers: 0, submissions: 0, rejects: 0, grantsWon: 0, grantTotal: 0, phdGrads: 0, msGrads: 0, profGrads: 0, peak: 0 },
       year: null,
@@ -159,11 +168,12 @@
     g.year = G.freshYear(g);
     for (const k in perk.stats || {}) g.pi.stats[k] += perk.stats[k];
     if (perk.gpu) g.gpus[perk.gpu] = 1;
-    A.topics.forEach(t => {
-      g.topics[t.id] = { heat: U.clamp(t.heat * U.range(0.85, 1.15), 0.3, 4) };
-      g.expertise[t.id] = 0;
-    });
+    // 热度记在子方向上；方向积累（论文质量加成）记在方向上
+    A.subs.forEach(s => { g.subs[s.id] = { heat: U.clamp(s.heat * U.range(0.85, 1.15), 0.3, 4) }; });
+    A.topics.forEach(t => { g.expertise[t.id] = 0; });
     g.expertise[g.policies.coreTopic] = 2;
+    // 实验室的第一个小组做哪个子方向（开局时选的）
+    g.startSub = o.coreSub && RS.SUBS[o.coreSub] && RS.SUBS[o.coreSub].topic === g.policies.coreTopic ? o.coreSub : G.asSub(g, g.policies.coreTopic);
     return g;
   };
   G.freshYear = g => ({ papersA: 0, papers: 0, cites0: g.stats.cites, grants: 0, income: 0, expense: 0, rejects: 0, subs: 0, joined: 0, grads: 0 });
@@ -202,7 +212,34 @@
       g.teaching.ug = Math.floor(g.teaching.count / 2);
       g.teaching.grad = g.teaching.count - g.teaching.ug;
     }
+    G.migrateSubs(g);
     return g;
+  };
+  // 旧存档只有“方向”，没有子方向：热度按方向的热度折算，课题、小组、兴趣都落到该方向的第一个子方向
+  G.migrateSubs = g => {
+    const A = RS.AREAS[g.areaId];
+    if (!g.subs) {
+      g.subs = {};
+      A.subs.forEach(s => {
+        const old = g.topics && g.topics[s.topic];
+        const t = A.topics.find(x => x.id === s.topic);
+        g.subs[s.id] = { heat: U.clamp(s.heat * (old ? old.heat / t.heat : 1), 0.3, 4) };
+      });
+    }
+    A.subs.forEach(s => { if (!g.subs[s.id]) g.subs[s.id] = { heat: s.heat }; });
+    A.topics.forEach(t => { if (g.expertise[t.id] == null) g.expertise[t.id] = 0; });
+    delete g.topics;
+    const fix = id => G.asSub(g, id);
+    g.projects.forEach(p => { if (!g.subs[p.sub]) p.sub = fix(p.topic); p.topic = RS.SUBS[p.sub].topic; });
+    g.papers.forEach(pa => { if (pa.topic && !pa.sub) pa.sub = fix(pa.topic); });
+    (g.groups || []).forEach(gr => { if (!g.subs[gr.sub]) gr.sub = fix(gr.topic); gr.topic = RS.SUBS[gr.sub].topic; });
+    g.members.forEach(m => {
+      if (m.bio && m.bio.interest && !g.subs[m.bio.interest]) m.bio.interest = fix(m.bio.interest);
+      if (m.lastDone && !g.subs[m.lastDone.sub]) m.lastDone.sub = fix(m.lastDone.topic);
+    });
+    if (g.flags.trendTopic && !g.subs[g.flags.trendTopic]) g.flags.trendTopic = fix(g.flags.trendTopic);
+    if (g.phd && g.phd.thesis && !g.subs[g.phd.thesis]) g.phd.thesis = fix(g.phd.thesis);
+    if (!g.subs[g.startSub]) g.startSub = fix(g.policies.coreTopic);
   };
   G.clearSave = () => {
     try { localStorage.removeItem(G.SAVE_KEY); } catch (e) { /* ignore */ }
