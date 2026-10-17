@@ -88,13 +88,17 @@
         const heatWord = h => (h >= 2.2 ? '很热门' : h >= 1.5 ? '较热门' : h >= 1.1 ? '热度一般' : '冷门');
         const last = c.sub || (c.topic ? G().asSub(g, c.topic) : null);
         const lastTopic = last ? G().sub(g, last).topic : null;
-        const def = c.def ? G().asSub(g, c.def) : null;
-        const opts = (c.opts || []).map(x => G().asSub(g, x)).filter((x, i, a) => a.indexOf(x) === i);
+        const mine = S().memberSubs(g, m);
+        let opts = (c.opts || []).map(x => G().asSub(g, x)).filter((x, i, a) => a.indexOf(x) === i);
+        // 在小组里只能做小组的方向
+        if (mine.length) { opts = opts.filter(s => mine.includes(s)); if (!opts.length) opts = mine.slice(); }
+        const def = c.def && opts.includes(G().asSub(g, c.def)) ? G().asSub(g, c.def) : opts[0];
         const ch = opts.map(sid => {
           const s = G().sub(g, sid);
           const t = G().topic(g, s.topic);
           const gr = S().groupOfSub(g, sid);
           const fit = S().interestFit(m, sid);
+          const join = gr && !mine.includes(sid) && (m.groups || []).length < S().MAX_MEMBER_GROUPS;
           const tags = [];
           if (sid === def) tags.push('导师建议');
           if (sid === last) tags.push('接着做');
@@ -103,13 +107,32 @@
           const comp = gr ? (alloc.dem[gr.id] > 0 ? (r >= 1 ? '组里算力充足' : `组里算力只够 ${Math.round(r * 100)}%`) : '组里算力空闲') : '组里没人做，用共享算力';
           const hint = [
             `${t.name} · 实验室积累 ${(g.expertise[s.topic] || 0).toFixed(1)} · ${heatWord(S().heat(g, sid))} · ${comp}`,
+            S().teamPreview(g, m, sid),
             sid === last ? '构思快很多' : s.topic === lastTopic ? '同一方向，构思稍快' : null,
             fit === 1 ? '心情 +6 · 效率 +5%' : fit ? '你有点兴趣：心情 +2' : '不是你想做的：心情 -3',
             sid === def ? '导师信任 +3' : null,
           ].filter(Boolean).join(' · ');
-          return { label: `做「${s.name}」${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: sid === def,
+          const label = join ? `加入「${S().groupName(g, gr)}」，做「${s.name}」` : mine.length || gr ? `做「${s.name}」` : `单干做「${s.name}」`;
+          return { label: `${label}${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: sid === def,
             apply: g => { S().startNext(g, m, sid, 'pi'); if (sid === def) S().addTrust(m, 3); } };
         });
+        // 单干时：也可以申请加入最合适的小组
+        if (!mine.length && g.groups.length) {
+          const best = g.groups.filter(gr => !opts.includes(gr.sub)).sort((a, b) => S().interestFit(m, b.sub) - S().interestFit(m, a.sub) || S().groupMembers(g, b).length - S().groupMembers(g, a).length)[0];
+          if (best) ch.push({ label: `申请加入「${S().groupName(g, best)}」，做「${S().subName(g, best.sub)}」`, hint: `${S().teamPreview(g, m, best.sub)} · 导师信任 +2`,
+            apply: g => { S().startNext(g, m, best.sub, 'pi'); S().addTrust(m, 2); } });
+        }
+        // 在小组里想做组外的方向：那个方向有小组就申请也加入；没有就只能退出小组单干
+        if (mine.length && interest && !mine.includes(interest)) {
+          const gi = S().groupOfSub(g, interest);
+          if (gi && (m.groups || []).length < S().MAX_MEMBER_GROUPS) {
+            ch.push({ label: `申请也加入「${S().groupName(g, gi)}」，做「${S().subName(g, interest)}」`, hint: `你最想做的方向：心情 +6 · ${S().teamPreview(g, m, interest)} · 同时在两个小组`,
+              apply: g => { S().startNext(g, m, interest, 'pi'); } });
+          } else if (!gi) {
+            ch.push({ label: `退出小组，单干做「${S().subName(g, interest)}」`, hint: `你最想做的方向：心情 +6 · 但没有组内互助和组长指导：效率 -${Math.round((1 - S().SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S().SOLO_GROW) * 100)}% · 导师信任 -2`,
+              apply: g => { S().goSolo(g, m); S().startNext(g, m, interest, 'pi'); S().addTrust(m, -2); } });
+          }
+        }
         const help = S().helpTarget(g, m);
         if (help) {
           const hl = M(g, help.lead);
@@ -121,7 +144,7 @@
         const defT = def ? S().subName(g, def) : '';
         return {
           title: '下一个课题做什么？', portrait: { member: m.id },
-          text: `${c.title ? `《${U.esc(c.title)}》写完了，交给导师去投稿了。<br>` : ''}你在想下一个课题做什么。${defT ? `${U.esc(g.pi.name)} 的意见是做「${U.esc(defT)}」。` : ''}<br><span class="dim">你最感兴趣的是「${U.esc(S().dirName(g, interest))}」· 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}</span>`,
+          text: `${c.title ? `《${U.esc(c.title)}》写完了，交给导师去投稿了。<br>` : ''}你在想下一个课题做什么。${defT ? `${U.esc(g.pi.name)} 的意见是做「${U.esc(defT)}」。` : ''}<br><span class="dim">你最感兴趣的是「${U.esc(S().dirName(g, interest))}」· 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}<br>${mine.length ? `你在${U.esc(S().memberGroups(g, m).map(gr => S().groupName(g, gr)).join('、'))}：只能做小组的方向，但有组里的人互相帮忙。` : '你在单干：可以做自己想做的方向，但没有组内互助和组长指导。'}</span>`,
           choices: ch,
         };
       },

@@ -824,6 +824,7 @@
   S.changeTopic = function (g, p, sid) {
     if (p.phase !== 'idea') return '只有构思阶段的课题可以换方向';
     sid = G.asSub(g, sid);
+    if (!S.canDoSub(g, G.member(g, p.lead), sid)) return '小组成员只能做小组的子方向（想做别的，先让 TA 退出小组单干）';
     const keep = RS.SUBS[sid].topic === p.topic ? 0.7 : 0.5;
     p.sub = sid;
     p.topic = RS.SUBS[sid].topic;

@@ -321,6 +321,7 @@ button.mini-btn { padding: 0 6px; }
 .ccard.sel { box-shadow: inset 0 0 0 2px var(--good); background: #24392f; }
 .grant-pick { background: var(--card); padding: 8px; margin-bottom: 6px; clip-path: var(--notch); }
 .grant-pick.off { opacity: 0.6; }
+.venue-row.off { opacity: 0.55; }
 .grant-pick .seg { margin-top: 4px; }
 .venue-list { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
 .venue-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; background: var(--card); }

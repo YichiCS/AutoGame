@@ -100,12 +100,79 @@
   // ---------- 小组带来的效果 ----------
   // 组长帮你分担指导工作（博士后本来就能分担，额外加得少一些）
   S.leaderCap = g => U.sum(g.groups, gr => { const l = G.member(g, gr.lead); return l ? (l.role === 'postdoc' ? 1 : 1.5) : 0; });
-  // 有组长带的组员成长更快
-  S.groupGrowth = (g, m) => (g.groups.some(gr => gr.lead && gr.lead !== m.id && S.inGroup(m, gr.id)) ? 1.12 : 1);
-  // 同组的人多，讨论起来想法更多；组长也会帮着把关
+  // 单干：不在任何小组、自己负责课题的研究生 / 博士后。可以做自己想做的方向，但没人讨论、也没有组长带
+  S.isSolo = m => !!m && !(m.groups || []).length && S.CONSULT_ROLES.includes(m.role);
+  S.SOLO_WORK = 0.88;
+  S.SOLO_GROW = 0.85;
+  // 成长：在小组里有人讨论 +5%，有组长带再 +7%；单干少了指导 -15%
+  S.groupGrowth = (g, m) => {
+    if (S.isSolo(m)) return S.SOLO_GROW;
+    const gs = S.memberGroups(g, m);
+    if (!gs.length) return 1;
+    return 1.05 + (gs.some(gr => gr.lead && gr.lead !== m.id) ? 0.07 : 0);
+  };
+  // 组内互助：在小组的方向上做课题时，组里其他在岗的人帮着讨论、调代码、跑实验——
+  // 研究生 / 博士后每人 +5%，本科生 / 访问学生每人 +2.5%，最多 +20%；有组长（不是自己）再 +5%
+  S.teamHelpers = (g, m, p) => {
+    const gr = S.groupOfSub(g, p.sub);
+    if (!gr || !S.inGroup(m, gr.id)) return [];
+    return S.groupMembers(g, gr).filter(x => x.id !== m.id && x.status === 'active');
+  };
+  S.teamMult = function (g, m, p) {
+    const gr = S.groupOfSub(g, p.sub);
+    if (gr && S.inGroup(m, gr.id)) {
+      const n = U.sum(S.teamHelpers(g, m, p), x => (S.CONSULT_ROLES.includes(x.role) ? 1 : 0.5));
+      return 1 + Math.min(0.2, 0.05 * n) + (gr.lead && gr.lead !== m.id ? 0.05 : 0);
+    }
+    // 单干的学生做自己的课题：效率打折
+    if (S.isSolo(m) && p.lead === m.id) return S.SOLO_WORK;
+    return 1;
+  };
+  // 每个课题在组里有一两位主要帮忙的人（固定下来，人走了再换）：互助多出来的工作量记在他们头上
+  S.teamMates = function (g, m, p) {
+    const hs = S.teamHelpers(g, m, p);
+    if (!hs.length) return [];
+    let mates = (p.mates || []).map(id => hs.find(x => x.id === id)).filter(Boolean);
+    if (!mates.length) {
+      mates = U.shuffle(hs.slice()).sort((a, b) => S.CONSULT_ROLES.includes(b.role) - S.CONSULT_ROLES.includes(a.role)).slice(0, 2);
+      p.mates = mates.map(x => x.id);
+    }
+    return mates;
+  };
+  // 帮得多的组员会挂上名字（按工作量排在后面，每篇最多加两位）
+  S.teamAuthors = function (g, p) {
+    if (!p.contrib) return;
+    const total = U.sum(Object.keys(p.contrib), id => p.contrib[id]);
+    Object.keys(p.contrib)
+      .filter(id => !p.authors.includes(id) && G.member(g, id) && p.contrib[id] >= total * 0.04)
+      .sort((a, b) => p.contrib[b] - p.contrib[a]).slice(0, 2)
+      .forEach(id => p.authors.push(id));
+  };
+  // 小组成员只能做小组的子方向；单干的什么方向都能做
+  S.canDoSub = (g, m, sid) => !m || !(m.groups || []).length || S.memberSubs(g, m).includes(sid);
+  // 选某个子方向会带来的组内互助 / 单干效果（给选项的提示用）
+  S.teamPreview = function (g, m, sid) {
+    const gr = S.groupOfSub(g, sid);
+    const inIt = gr && (S.inGroup(m, gr.id) || (m.groups || []).length < S.MAX_MEMBER_GROUPS);
+    if (inIt) {
+      const others = S.groupMembers(g, gr).filter(x => x.id !== m.id && x.status === 'active');
+      const n = U.sum(others, x => (S.CONSULT_ROLES.includes(x.role) ? 1 : 0.5));
+      const pct = Math.round((Math.min(0.2, 0.05 * n) + (gr.lead && gr.lead !== m.id ? 0.05 : 0)) * 100);
+      return pct ? `组内互助：效率 +${pct}%` : '组里暂时没有别人，还没有互助';
+    }
+    return `单干：效率 -${Math.round((1 - S.SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S.SOLO_GROW) * 100)}%`;
+  };
+  // 退出所有小组，开始单干
+  S.goSolo = function (g, m) {
+    if (!(m.groups || []).length) return;
+    S.memberGroups(g, m).forEach(gr => S.setMemberGroup(g, m, gr.id, false));
+    S.story(g, m, '退出小组，开始单干');
+    G.log(g, `${m.name} 退出了小组，开始单干`, 'info');
+  };
+  // 同组的人多，讨论起来想法更多；组长也会帮着把关。单干的课题少了讨论
   S.groupSynergy = function (g, p) {
     const gr = S.groupOfSub(g, p.sub);
-    if (!gr) return 0;
+    if (!gr) return S.isSolo(G.member(g, p.lead)) ? -1.5 : 0;
     const others = g.members.filter(m => m.id !== p.lead && m.status === 'active' && S.inGroup(m, gr.id)).length;
     return Math.min(2, others * 0.6) + (gr.lead && gr.lead !== p.lead ? 1 : 0);
   };
@@ -210,24 +277,28 @@
     else if (fit) w *= pol === 'free' ? 2 : 1.2;
     return w;
   };
+  // 新课题的子方向：小组成员只在小组的方向里选；单干的多半做自己感兴趣的
   S.pickSubFor = function (g, m) {
-    if (g.flags.trendTopic && g.flags.trendUntil > g.day && U.chance(0.35)) return G.asSub(g, g.flags.trendTopic);
     const ss = m ? S.memberSubs(g, m) : [];
-    if (!ss.length) {
-      const it = S.interestOf(m);
-      if (it && g.policies.topic === 'free' && U.chance(0.7)) return it;
-      return S.pickSub(g);
-    }
-    return U.weighted(ss, s => S.subScore(g, m, s)) || ss[0];
+    if (ss.length) return U.weighted(ss, s => S.subScore(g, m, s)) || ss[0];
+    if (g.flags.trendTopic && g.flags.trendUntil > g.day && U.chance(0.35)) return G.asSub(g, g.flags.trendTopic);
+    const it = S.interestOf(m);
+    if (it && U.chance({ free: 0.9, core: 0.7, hot: 0.6 }[g.policies.topic] || 0.7)) return it;
+    return S.pickSub(g);
   };
   const argmax = (list, f) => list.reduce((a, b) => (f(b) > f(a) ? b : a));
-  // 商量时给出的几个子方向：所在小组的、上一个课题的、TA 感兴趣的、核心方向里最热的、整个领域最热的
+  // 商量时给出的几个子方向：小组成员只能在所属小组的方向里选；
+  // 单干的可以选 TA 感兴趣的、上一个课题的、核心方向里最热的、整个领域最热的
   S.subOptions = function (g, m, last) {
     const out = [];
     const add = s => { if (s && g.subs[s] && !out.includes(s)) out.push(s); };
-    S.memberSubs(g, m).sort((a, b) => S.subScore(g, m, b) - S.subScore(g, m, a)).forEach(add);
-    add(last);
+    const mine = S.memberSubs(g, m);
+    if (mine.length) {
+      mine.sort((a, b) => S.subScore(g, m, b) - S.subScore(g, m, a)).forEach(add);
+      return out;
+    }
     add(S.interestOf(m));
+    add(last);
     add(argmax(G.topic(g, g.policies.coreTopic).subs, s => S.heat(g, s.id)).id);
     add(argmax(G.area(g).subs, s => S.heat(g, s.id)).id);
     return out.slice(0, 4);
@@ -243,7 +314,9 @@
     const lastSub = last.sub || (last.topic ? G.asSub(g, last.topic) : null);
     const opts = S.subOptions(g, m, lastSub);
     const mine = S.memberSubs(g, m).filter(s => opts.includes(s));
-    const def = argmax(mine.length ? mine : opts, s => S.subScore(g, m, s));
+    const it = S.interestOf(m);
+    // 默认：小组成员做小组里最合适的；单干的做自己感兴趣的
+    const def = mine.length ? argmax(mine, s => S.subScore(g, m, s)) : it && opts.includes(it) ? it : argmax(opts, s => S.subScore(g, m, s));
     G.queue(g, { type: 'event', id: m.isPlayer ? 'phd_next' : 'next_topic', ctx: { mid: m.id, title: last.title || '', sub: lastSub, opts, def } });
   };
   // 延续上一个课题：同一个子方向代码和数据都是现成的，构思快很多；同一个方向也能快一点
@@ -313,7 +386,8 @@
     if (!g.groups.length) return;
     const it = S.interestOf(m);
     const canNew = it && !S.groupOfSub(g, it) && !S.canCreateGroup(g, it);
-    if (g.groups.length === 1 && !canNew) {
+    // 只有一个小组、TA 也愿意做这个方向，就直接进组；否则问你（进组 / 单干 / 新开一组）
+    if (g.groups.length === 1 && !canNew && (S.interestFit(m, g.groups[0].sub) > 0 || !S.CONSULT_ROLES.includes(m.role))) {
       S.setMemberGroup(g, m, g.groups[0].id, true);
       return;
     }

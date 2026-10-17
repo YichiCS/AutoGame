@@ -117,6 +117,7 @@
   // 方向 / 子方向的名字（成员的兴趣、博士论文方向都是子方向）
   const topicName = id => (!id ? '还没想好' : RS.SUBS[id] ? G.sub(g, id).name : G.topic(g, id).name);
   const dirName = id => (!id ? '还没想好' : RS.SUBS[id] ? S.dirName(g, id) : G.topic(g, id).name);
+  const soloTip = `单干：不在任何小组，可以做自己想做的方向；但没有组内互助和组长指导，效率 -${Math.round((1 - S.SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S.SOLO_GROW) * 100)}%`;
   const fitMark = (m, sid) => { const f = S.interestFit(m, sid); return f === 1 ? '<span class="good" data-tip="TA 最想做这个子方向">♥</span>' : f ? '<span class="good dim" data-tip="和 TA 想做的属于同一个方向">♡</span>' : ''; };
 
   const POLICIES = [
@@ -372,7 +373,7 @@
       <div class="grow">
         <div class="row"><b class="name">${esc(m.name)}</b>${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}${fund}${bio.goal ? tag('想' + RS.GOALS[bio.goal].replace('还没想好', '再看看'), 't-mid', '职业理想：会影响 TA 对实习、跳槽和毕业去向的选择') : ''}</div>
         <div class="row traits">${traitTags(m)}</div>
-        <div class="row small">${S.memberGroups(g, m).map(gr => groupTag(gr) + (gr.lead === m.id ? tag('组长', 'gold') : '')).join('') || '<span class="dim">未分组</span>'}<span class="dim">想做「${esc(topicName(bio.interest))}」</span></div>
+        <div class="row small">${S.memberGroups(g, m).map(gr => groupTag(gr) + (gr.lead === m.id ? tag('组长', 'gold') : '')).join('') || (S.isSolo(m) ? tag('单干', 'dim', soloTip) : '<span class="dim">未分组</span>')}<span class="dim">想做「${esc(topicName(bio.interest))}」</span></div>
         ${bio.motto ? `<div class="motto small">“${esc(bio.motto)}”</div>` : ''}
         <div class="stats3"><label>想法</label>${mini(m.stats.idea)}<label>编程</label>${mini(m.stats.code)}<label>写作</label>${mini(m.stats.write)}</div>
         <div class="row"><label class="small">心情</label>${bar(m.mood / 100, moodCls(m.mood))}<b class="num">${Math.round(m.mood)}</b></div>
@@ -436,6 +437,12 @@
         <button class="mini-btn danger" data-act="groupDel" data-arg="${gr.id}" data-tip="解散小组：组员改为自由选题，专用服务器回到共享池">${confirmGroupDel === gr.id ? '确定解散？' : '解散'}</button></div>
       <div class="kvline"><span>组长</span><b>${lead ? esc(lead.name) : '<span class="dim">暂无（由你直接管理）</span>'}</b><button class="mini-btn" data-act="groupLead" data-arg="${gr.id}" data-tip="组长帮你带组员：指导容量 +1.5，组员成长 +12%，组里的构思更有把握；组长自己效率 -8%">${lead ? '更换' : '任命'}</button></div>
       <div class="sub">成员（${mem.length}）</div>
+      ${(() => {
+        // 组内互助：按一位普通组员（不是组长）算
+        const w = U.sum(mem.filter(m => m.status === 'active'), m => (S.CONSULT_ROLES.includes(m.role) ? 1 : 0.5));
+        const pct = Math.round((Math.min(0.2, 0.05 * Math.max(0, w - 1)) + (lead ? 0.05 : 0)) * 100);
+        return `<div class="kvline small" data-tip="组员做本组子方向的课题时，组里其他在岗的人帮着讨论、调代码：研究生每人 +5%，本科生 / 访问学生每人 +2.5%，最多 +20%；有组长再 +5%。帮得多的组员会在论文上挂名。"><span>组内互助</span><b class="${pct ? 'good' : 'dim'}">${pct ? `组员做本组课题效率 +${pct}%` : '组里人太少，还没有互助'}</b></div>`;
+      })()}
       <div class="chips-wrap">${mem.map(m => mchip(m, gr)).join('')}<button class="chip-btn" data-act="groupAdd" data-arg="${gr.id}">+ 添加成员</button></div>
       <div class="kvline small"><span>在研课题</span><b>构思 ${cnt('idea')} · 实验 ${cnt('exp')} · 写作 ${cnt('write')} · 改稿 ${cnt('revise')} · 投稿/审稿 ${cnt('ready', 'review')}</b></div>
       <div class="kvline small"><span>已发表</span><b>${papers.length} 篇（A 类 ${papers.filter(p => p.tier === 'A').length}）</b></div>
@@ -457,7 +464,7 @@
     const noLead = g.groups.filter(gr => !G.member(g, gr.lead)).length;
     return `
       <div class="card"><h3>${ico('branch')} 课题组 · 子方向（${g.groups.length} / ${max}）</h3>
-        <p class="small dim">把实验室分成几个子方向：每个学生可以加入一两个小组，新课题在所属小组的方向里选；同组的人越多，讨论越充分。服务器可以专门分给某个小组。小组太多方向就分散了，而且没有组长的小组要你亲自协调。</p>
+        <p class="small dim">把实验室分成几个子方向：每个学生可以加入一两个小组，<b>小组成员只做小组的方向</b>。组员之间互相帮忙——做小组方向的课题时，组里每多一位研究生效率 +5%（本科生 / 访问学生 +2.5%，最多 +20%），有组长再 +5%，帮得多的组员会挂名。不在任何小组的学生<b>单干</b>：可以做自己想做的方向，但没有互助和组长指导（效率 -${Math.round((1 - S.SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S.SOLO_GROW) * 100)}%）。服务器可以专门分给某个小组。小组太多方向就分散了，而且没有组长的小组要你亲自协调。</p>
         ${noLead > 1 ? `<p class="small warn">有 ${noLead} 个小组没有组长，你每天要多花 ${(S.groupEnergyCost(g)).toFixed(2)} 精力协调。</p>` : ''}
         <div class="sub">学生做完课题后</div>${seg('consult', pol.opts, g.policies.consult)}<p class="hint">${esc(policyDesc('consult', g.policies.consult))}</p>
         <div class="sub">选题倾向</div>${seg('topic', tpol.opts, g.policies.topic)}<p class="hint">${esc(policyDesc('topic', g.policies.topic))}</p>
@@ -470,9 +477,9 @@
         ${al.idle >= 0.5 ? `<div class="kvline" data-tip="专用服务器只给本组用，本组用不完也不会借给别人"><span>专用但闲置</span><b class="warn">${al.idle.toFixed(0)}</b></div>` : ''}
         <p class="small dim">专用服务器保证本组的实验不被别的组挤占，但闲着也不外借；共享池按各组的缺口分配。云算力始终共享。</p>
       </div>
-      <div class="card"><h3>${ico('people')} 未分组的成员（${free.length}）</h3>
+      <div class="card"><h3>${ico('people')} 单干的成员（${free.length}）</h3>
         <div class="chips-wrap">${free.map(m => mchip(m, null)).join('') || '<span class="dim small">所有人都有小组了。</span>'}</div>
-        ${free.length ? '<p class="small dim">未分组的成员按「选题倾向」自由选题，用共享算力。点击可以给 TA 分组。</p>' : ''}
+        ${free.length ? `<p class="small dim">单干的研究生多半做自己最想做的方向，用共享算力；没有组内互助和组长指导，效率 -${Math.round((1 - S.SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S.SOLO_GROW) * 100)}%。本科生、访问学生没有小组时去给别人打下手。点击可以给 TA 分组。</p>` : ''}
       </div>`;
   }
 
@@ -508,7 +515,11 @@
     const canEdit = !g.phd || p.lead === g.player; // 博士阶段只能动你自己负责的课题
     return `<div class="pcard ${mine ? 'mine' : ''}" data-key="${p.id}">
       <div class="ptitle">${esc(p.title)}</div>
-      <div class="row small">${gr ? groupTag(gr, `${topic.name} · ${sub.name}`) : tag(sub.name, 't-mid', `${topic.name} · ${sub.name}：这个子方向没有对应的小组，用共享算力`)}${heatIcons(S.heat(g, p.sub))}<span class="dim">${lead ? esc(lead.name) : '前成员'}${helpers.length ? ' + ' + esc(helpers.join('、')) : ''}</span></div>
+      <div class="row small">${gr ? groupTag(gr, `${topic.name} · ${sub.name}`) : tag(sub.name, 't-mid', `${topic.name} · ${sub.name}：这个子方向没有对应的小组，用共享算力`)}${heatIcons(S.heat(g, p.sub))}<span class="dim">${lead ? esc(lead.name) : '前成员'}${helpers.length ? ' + ' + esc(helpers.join('、')) : ''}</span>${work && lead ? (() => {
+        // 组内互助 / 单干对这个课题的影响
+        const tm = S.teamMult(g, lead, p);
+        return tm > 1 ? `<span class="good" data-tip="组里的人在帮忙：${esc(S.teamHelpers(g, lead, p).map(x => RS.shortName(x.name)).join('、'))}">组内互助 +${Math.round((tm - 1) * 100)}%</span>` : tm < 1 ? `<span class="warn" data-tip="${esc(soloTip)}">单干 -${Math.round((1 - tm) * 100)}%</span>` : '';
+      })() : ''}</div>
       <div class="pipeline">${phases.map((ph, i) => `<span class="${i === ci ? 'cur' : i < ci ? 'done' : ''}">${S.PHASE_NAMES[ph]}</span>`).join('')}</div>
       ${work ? bar(p.prog / p.need[p.phase], p.rush > 0 ? 'warn' : '', `${S.PHASE_NAMES[p.phase]} ${Math.round((p.prog / p.need[p.phase]) * 100)}%${p.rush > 0 ? ' · DDL 冲刺中！' : ''}`) : ''}
       ${p.phase === 'revise' ? bar((p.revProg || 0) / p.revNeed, 'warn', `按审稿意见修改 ${Math.round(((p.revProg || 0) / p.revNeed) * 100)}%`) : ''}
@@ -776,7 +787,7 @@
           <div class="row"><b class="name">${esc(m.name)}</b>${tag('博士生', 'role-phd')}${tag(`第 ${Math.floor(yrs) + 1} 年`, 'dim')}</div>
           <div class="small dim">${esc(g.school)} · 导师 ${esc(g.pi.name)}（${esc(S.advisorType(g).name)}）</div>
           <div class="row traits">${traitTags(m)}</div>
-          <div class="row small">${S.memberGroups(g, m).map(gr => groupTag(gr)).join('')}<span class="dim">最想做「${esc(topicName(S.interestOf(m)))}」</span></div>
+          <div class="row small">${S.memberGroups(g, m).map(gr => groupTag(gr)).join('') || tag('单干', 'dim', soloTip)}<span class="dim">最想做「${esc(topicName(S.interestOf(m)))}」</span></div>
         </div>
       </div>
       <div class="card">
@@ -1058,13 +1069,16 @@
   function renderTopic(pid) {
     const p = G.project(g, pid);
     if (!p) return null;
+    const lead = G.member(g, p.lead);
+    const grouped = !!lead && (lead.groups || []).length > 0;
     const row = s => {
       const gr = S.groupOfSub(g, s.id);
       const cur = s.id === p.sub;
-      return `<div class="venue-row" data-key="${s.id}"><div class="grow"><b>${esc(s.name)}</b>${gr ? ' ' + groupTag(gr) : ''}<div class="small dim">算力需求${computeWord(s.compute)}${s.topic === p.topic && !cur ? ' · 同一方向' : ''}</div></div>${heatIcons(S.heat(g, s.id))}<button data-act="topicPick" data-arg="${s.id}" ${cur ? 'disabled' : ''}>${cur ? '当前' : '选这个'}</button></div>`;
+      const ok = S.canDoSub(g, lead, s.id);
+      return `<div class="venue-row ${ok ? '' : 'off'}" data-key="${s.id}"><div class="grow"><b>${esc(s.name)}</b>${gr ? ' ' + groupTag(gr) : ''}<div class="small dim">算力需求${computeWord(s.compute)}${s.topic === p.topic && !cur ? ' · 同一方向' : ''}</div></div>${heatIcons(S.heat(g, s.id))}<button data-act="topicPick" data-arg="${s.id}" ${cur || !ok ? 'disabled' : ''}${ok ? '' : ' data-tip="小组成员只能做小组的子方向"'}>${cur ? '当前' : ok ? '选这个' : '组外'}</button></div>`;
     };
     return modalShell(`${head('bulb', '换个研究方向')}
-      <p>《${esc(p.title)}》还在构思阶段，可以换个子方向：同一方向下换，构思进度保留七成；换到别的方向只保留一半。</p>
+      <p>《${esc(p.title)}》还在构思阶段，可以换个子方向：同一方向下换，构思进度保留七成；换到别的方向只保留一半。${grouped ? `<br><span class="small dim">${esc(lead.name)} 在${esc(S.memberGroups(g, lead).map(x => S.groupName(g, x)).join('、'))}，只能换到小组的子方向；想做别的，先在「成员」页让 TA 退出小组单干。</span>` : ''}</p>
       <div class="venue-list">${subPicker(row)}</div>
       <div class="choices"><button class="choice" data-act="closeLocal"><b>算了</b><small>保持原方向</small></button></div>`, 'wide');
   }
@@ -1130,7 +1144,7 @@
         <button class="${inG ? 'on' : ''}" data-act="groupToggle" data-arg="${gr.id}" data-k="${m.id}" ${full ? 'disabled' : ''}>${inG ? '✓ 已加入' : full ? '已满两个' : '加入'}</button></div>`;
     }).join('') || '<p class="dim">还没有小组，去「小组」页成立一个吧。</p>';
     return modalShell(`${head('branch', `${m.name} 的小组`)}
-      <p class="small dim">TA 最想做「<b>${esc(dirName(it))}</b>」。每人最多同时在两个小组；新课题会在所属小组的子方向里选。</p>
+      <p class="small dim">TA 最想做「<b>${esc(dirName(it))}</b>」。每人最多同时在两个小组；在小组里只做小组的子方向，组员互相帮忙（效率最多 +25%）。一个组都不加就是单干：做自己想做的方向，但效率 -${Math.round((1 - S.SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S.SOLO_GROW) * 100)}%。</p>
       <div class="venue-list">${rows}</div>
       <div class="choices"><button class="choice def" data-act="closeLocal"><b>完成</b></button></div>`, '');
   }

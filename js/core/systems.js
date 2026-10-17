@@ -290,8 +290,9 @@
   S.assignWork = function (g, m) {
     if (m.role === 'ug' || m.role === 'visit') {
       const mine = S.memberSubs(g, m);
+      // 小组里的本科生 / 访问学生只帮本组的课题
       const cands = g.projects.filter(p => S.WORK_PHASES.includes(p.phase) && p.helpers.length < 2 && p.lead !== m.id &&
-        (G.member(g, p.lead) || {}).role !== 'ug');
+        (G.member(g, p.lead) || {}).role !== 'ug' && (!mine.length || mine.includes(p.sub)));
       if (cands.length) {
         const cost = p => p.helpers.length * 2 - (mine.includes(p.sub) ? 1 : 0);
         const p = cands.reduce((a, b) => (cost(a) <= cost(b) ? a : b));
@@ -417,10 +418,20 @@
       p.cf.sum += cf; p.cf.n++;
     }
     if (p.rush > 0) w *= 1.6 * tMul(m, 'ddl');
-    p.prog += w;
-    p.acc[ph] += w * S.phaseStat(m, ph);
-    p.wsum[ph] += w;
-    if (p.contrib) p.contrib[m.id] = (p.contrib[m.id] || 0) + w;
+    // 组内互助：组员帮忙多出来的那部分记在他们头上；单干：效率打折
+    const team = S.teamMult(g, m, p);
+    const extra = team > 1 ? w * (team - 1) : 0;
+    if (team < 1) w *= team;
+    p.prog += w + extra;
+    p.acc[ph] += (w + extra) * S.phaseStat(m, ph);
+    p.wsum[ph] += w + extra;
+    if (p.contrib) {
+      p.contrib[m.id] = (p.contrib[m.id] || 0) + w;
+      if (extra) {
+        const hs = S.teamMates(g, m, p);
+        hs.forEach(x => { p.contrib[x.id] = (p.contrib[x.id] || 0) + extra / hs.length; });
+      }
+    }
     S.grow(g, m, ph, effort(m, ph, w));
     if (p.prog >= p.need[ph]) S.completePhase(g, p);
   };
@@ -546,6 +557,7 @@
   };
 
   S.completePhase = function (g, p) {
+    S.teamAuthors(g, p); // 组里帮得多的人挂上名字
     const pi = g.pi.stats;
     const lead = G.member(g, p.lead);
     const avg = ph => (p.wsum[ph] > 0 ? p.acc[ph] / p.wsum[ph] : 40);

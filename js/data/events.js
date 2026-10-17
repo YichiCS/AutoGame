@@ -253,11 +253,12 @@
         const sid = G().asSub(g, c.sid || c.tid);
         const s = G().sub(g, sid);
         const t = G().topic(g, s.topic);
-        const ideas = g.projects.filter(p => p.phase === 'idea' && p.sub !== sid);
+        // 小组成员只做小组的方向：能转的只有单干学生的课题，以及本来就在这个子方向小组里的人
+        const ideas = g.projects.filter(p => p.phase === 'idea' && p.sub !== sid && S().canDoSub(g, M(g, p.lead), sid));
         const ch = [
-          { label: '构思中的课题全部转向', hint: `${ideas.length} 个构思中的课题转向（同一方向的保留七成构思进度，其他的减半）`, disabled: ideas.length ? null : '目前没有构思中的课题',
+          { label: '构思中能转的课题都转过去', hint: `${ideas.length} 个构思中的课题转向（小组成员只做小组的方向，转不了；同一方向的保留七成构思进度，其他的减半）`, disabled: ideas.length ? null : '目前没有能转的构思中的课题',
             apply: g => { ideas.forEach(p => S().changeTopic(g, p, sid)); } },
-          { label: '新课题优先做这个子方向', hint: '一年内约三分之一的新课题会选它', def: true, apply: g => { g.flags.trendTopic = sid; g.flags.trendUntil = g.day + 360; } },
+          { label: '单干的学生优先做这个子方向', hint: '一年内单干学生约三分之一的新课题会选它（小组成员还是做小组的方向）', def: true, apply: g => { g.flags.trendTopic = sid; g.flags.trendUntil = g.day + 360; } },
         ];
         if (!S().groupOfSub(g, sid)) {
           ch.push({ label: `成立「${s.name}组」专门做`, hint: '新开一个子方向小组，之后去「小组」页把人加进来、分服务器', disabled: S().canCreateGroup(g, sid),
@@ -284,41 +285,68 @@
         const heatWord = h => (h >= 2.2 ? '很热门' : h >= 1.5 ? '较热门' : h >= 1.1 ? '热度一般' : '冷门');
         const last = c.sub || (c.topic ? G().asSub(g, c.topic) : null);
         const lastTopic = last ? G().sub(g, last).topic : null;
-        const def = c.def ? G().asSub(g, c.def) : null;
-        const opts = (c.opts || []).map(x => G().asSub(g, x)).filter((x, i, a) => a.indexOf(x) === i);
+        let opts = (c.opts || []).map(x => G().asSub(g, x)).filter((x, i, a) => a.indexOf(x) === i);
+        // 小组成员只能在小组的方向里选
+        if (mine.length) { opts = opts.filter(s => mine.includes(s)); if (!opts.length) opts = mine.slice(); }
+        const def = c.def && opts.includes(G().asSub(g, c.def)) ? G().asSub(g, c.def) : opts[0];
         const ch = opts.map(sid => {
           const s = G().sub(g, sid);
           const t = G().topic(g, s.topic);
           const gr = S().groupOfSub(g, sid);
           const fit = S().interestFit(m, sid);
+          const join = gr && !mine.includes(sid) && (m.groups || []).length < S().MAX_MEMBER_GROUPS;
           const tags = [];
           if (sid === last) tags.push('接着做');
           if (fit === 1) tags.push('TA 想做');
-          if (!gr) tags.push('没有对应小组');
           const r = gr ? alloc.ratio[gr.id] : 9;
           const comp = gr ? (alloc.dem[gr.id] > 0 ? (r >= 1 ? `${S().groupName(g, gr)}算力充足` : `${S().groupName(g, gr)}算力只够 ${Math.round(r * 100)}%`) : `${S().groupName(g, gr)}算力空闲`) : '用共享算力';
           const hint = [
             `${t.name}${s.topic === g.policies.coreTopic ? '（核心方向）' : ''} · 积累 ${(g.expertise[s.topic] || 0).toFixed(1)} · ${heatWord(S().heat(g, sid))} · ${comp}`,
+            S().teamPreview(g, m, sid),
             sid === last ? '构思快很多' : s.topic === lastTopic ? '同一方向，构思稍快' : null,
             fit === 1 ? '心情 +6 · 信任 +2 · 效率 +5%' : fit ? 'TA 有点兴趣：心情 +2' : interest ? 'TA 不太想做：心情 -3' : null,
-            gr && !mine.includes(sid) && (m.groups || []).length < 2 ? `顺便加入${S().groupName(g, gr)}` : null,
           ].filter(Boolean).join(' · ');
-          return { label: `做「${s.name}」${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: sid === def, apply: g => { S().startNext(g, m, sid, 'pi'); } };
+          const label = join ? `加入「${S().groupName(g, gr)}」，做「${s.name}」` : mine.length || gr ? `做「${s.name}」` : `单干做「${s.name}」`;
+          return { label: `${label}${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: sid === def, apply: g => { S().startNext(g, m, sid, 'pi'); } };
         });
+        // 单干的学生：也可以劝 TA 加入最合适的小组
+        if (!mine.length && g.groups.length) {
+          const best = g.groups.filter(gr => !opts.includes(gr.sub)).sort((a, b) => S().interestFit(m, b.sub) - S().interestFit(m, a.sub) || S().groupMembers(g, b).length - S().groupMembers(g, a).length)[0];
+          if (best) {
+            const fit = S().interestFit(m, best.sub);
+            ch.push({ label: `加入「${S().groupName(g, best)}」，做「${S().subName(g, best.sub)}」`,
+              hint: [S().teamPreview(g, m, best.sub), fit === 1 ? 'TA 想做：心情 +6' : fit ? 'TA 有点兴趣：心情 +2' : 'TA 不太想做：心情 -3'].join(' · '),
+              apply: g => { S().startNext(g, m, best.sub, 'pi'); } });
+          }
+        }
+        // 小组成员想做组外的方向：那个方向有小组、TA 还能再进一个组，就加入；否则只能退出小组单干
+        if (mine.length && interest && !mine.includes(interest)) {
+          const gi = S().groupOfSub(g, interest);
+          if (gi && (m.groups || []).length < S().MAX_MEMBER_GROUPS) {
+            ch.push({ label: `让 TA 也加入「${S().groupName(g, gi)}」，做「${S().subName(g, interest)}」`,
+              hint: `TA 最想做的方向：心情 +6 · 信任 +2 · ${S().teamPreview(g, m, interest)} · 同时在两个小组`,
+              apply: g => { S().startNext(g, m, interest, 'pi'); } });
+          } else if (!gi) {
+            ch.push({ label: `让 TA 退出小组，单干做「${S().subName(g, interest)}」`,
+              hint: `TA 最想做的方向：心情 +6 · 信任 +2 · 但没有组内互助和组长指导：效率 -${Math.round((1 - S().SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S().SOLO_GROW) * 100)}%`,
+              apply: g => { S().goSolo(g, m); S().startNext(g, m, interest, 'pi'); } });
+          }
+        }
         const help = S().helpTarget(g, m);
         if (help) {
           const hl = M(g, help.lead);
           ch.push({ label: `先帮 ${hl ? sn(hl.name) : '同门'} 做《${S().short(help.title)}》`, hint: `作为合作者加入（${S().PHASE_NAMES[help.phase]}阶段，完成 ${Math.round(S().projectPct(help) * 100)}%），做完再来商量`,
             apply: g => S().helpWith(g, m, help) });
         }
-        const self = interest || def;
+        // 让 TA 自己决定：小组成员在组里挑自己最喜欢的，单干的做自己最想做的
+        const self = mine.length ? mine.slice().sort((a, b) => S().interestFit(m, b) - S().interestFit(m, a))[0] : interest || def;
         if (self) ch.push({ label: '让 TA 自己决定', hint: `TA 会选「${S().subName(g, self)}」· 信任 +3 · 心情 +4`, apply: g => { S().startNext(g, m, self, 'self'); } });
         if (!ch.length) return null;
         if (!ch.some(x => x.def)) ch[0].def = true;
-        const groups = S().memberGroups(g, m).map(gr => S().groupName(g, gr)).join('、') || '未分组';
+        const groups = S().memberGroups(g, m).map(gr => S().groupName(g, gr)).join('、') || '单干';
         return {
           title: `${m.name} 来商量下一个课题`, portrait: { member: m.id },
-          text: `${c.title ? `《${U.esc(c.title)}》写完了，进入投稿流程。<br>` : ''}${U.esc(m.name)} 来办公室找你：“老师，我接下来做什么方向好？”<br><span class="dim">所在小组：${U.esc(groups)} · 最感兴趣：${U.esc(S().dirName(g, interest))} · 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}</span>`,
+          text: `${c.title ? `《${U.esc(c.title)}》写完了，进入投稿流程。<br>` : ''}${U.esc(m.name)} 来办公室找你：“老师，我接下来做什么方向好？”<br><span class="dim">所在小组：${U.esc(groups)} · 最感兴趣：${U.esc(S().dirName(g, interest))} · 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}${mine.length ? '<br>小组成员只做小组的方向；想做别的，只能退出小组单干。' : '<br>单干可以做自己想做的方向，但没有组内互助和组长指导。'}</span>`,
           choices: ch,
         };
       },
@@ -347,7 +375,7 @@
               S().addTrust(m, 3);
             } });
         }
-        ch.push({ label: '先不分组', hint: '按「选题倾向」自由选题，用共享算力；以后可以随时在成员卡片上分组', apply: nop });
+        ch.push({ label: '先让 TA 单干', hint: `可以做自己想做的方向（用共享算力），但没有组内互助和组长指导：效率 -${Math.round((1 - S().SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S().SOLO_GROW) * 100)}% · 以后可以随时在成员卡片上分组`, apply: nop });
         if (!ch.some(x => x.def && !x.disabled)) ch[0].def = true;
         return {
           title: `${m.name} 加入哪个小组？`, portrait: { member: m.id },
