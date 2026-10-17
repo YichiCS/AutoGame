@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>科研模拟器 · Research Simulator</title>
+  <link rel="icon" id="favicon" href="data:,">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app" style="visibility:hidden">
+    <header id="topbar"></header>
+    <main id="main">
+      <section id="left">
+        <div id="sceneWrap"><canvas id="scene" width="480" height="240"></canvas></div>
+        <div id="logPanel" class="panel">
+          <div class="panel-title">实验室动态</div>
+          <div id="log"></div>
+        </div>
+      </section>
+      <aside id="side" class="panel">
+        <nav id="tabs"></nav>
+        <div id="tabBody"></div>
+      </aside>
+    </main>
+  </div>
+  <div id="startScreen"></div>
+  <div id="modalLayer"></div>
+  <div id="toasts"></div>
+  <div id="tooltip"></div>
+  <input type="file" id="importFile" accept=".json,application/json" hidden>
+
+  <script src="js/core/util.js"></script>
+  <script src="js/data/areas.js"></script>
+  <script src="js/data/regions.js"></script>
+  <script src="js/data/content.js"></script>
+  <script src="js/data/events.js"></script>
+  <script src="js/core/state.js"></script>
+  <script src="js/core/systems.js"></script>
+  <script src="js/core/career.js"></script>
+  <script src="js/core/sim.js"></script>
+  <script src="js/ui/sprites.js"></script>
+  <script src="js/ui/scene.js"></script>
+  <script src="js/ui/sfx.js"></script>
+  <script src="js/ui/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
