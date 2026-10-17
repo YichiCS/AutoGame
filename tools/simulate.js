@@ -8,7 +8,7 @@ const vm = require('vm');
 global.window = global;
 global.localStorage = { _d: {}, getItem(k) { return k in this._d ? this._d[k] : null; }, setItem(k, v) { this._d[k] = String(v); }, removeItem(k) { delete this._d[k]; } };
 const root = path.join(__dirname, '..');
-['js/core/util.js', 'js/data/areas.js', 'js/data/regions.js', 'js/data/content.js', 'js/data/events.js', 'js/data/phd.js', 'js/core/state.js', 'js/core/systems.js', 'js/core/career.js', 'js/core/groups.js', 'js/core/phd.js', 'js/core/sim.js']
+['js/core/util.js', 'js/data/areas.js', 'js/data/venues.js', 'js/data/regions.js', 'js/data/content.js', 'js/data/events.js', 'js/data/phd.js', 'js/core/state.js', 'js/core/systems.js', 'js/core/career.js', 'js/core/groups.js', 'js/core/phd.js', 'js/core/sim.js']
   .forEach(f => vm.runInThisContext(fs.readFileSync(path.join(root, f), 'utf8'), { filename: f }));
 const { G, Sys: S, Sim } = global.RS;
 

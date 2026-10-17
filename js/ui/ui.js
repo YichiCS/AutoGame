@@ -14,6 +14,7 @@
   let confirmDismiss = null;
   let confirmGroupDel = null;
   let paperFilter = 'all';
+  let venueFilter = 'all';
   let paperLimit = 30;
   let selMember = null;
   let ng = null;
@@ -78,6 +79,15 @@
   }
   function tierTag(t) {
     return `<span class="tier t${t}">${t === 'P' ? 'arXiv' : t === 'W' ? 'WS' : t}</span>`;
+  }
+  // 会议的全称、CCF 等级，鼠标悬停时显示
+  const venueTip = v => [v.full, v.ccf ? `CCF-${v.ccf}` : v.tier !== 'P' && v.id !== 'cross' ? '不在 CCF 目录' : ''].filter(Boolean).join(' · ');
+  function venueTags(v) {
+    const ccf = v.ccf ? tag(`CCF-${v.ccf}`, v.ccf === 'A' ? 'gold' : 't-mid', 'CCF 推荐目录的等级') : tag('非 CCF', 'dim', '不在 CCF 推荐目录里，游戏里按业内认可度定级');
+    const home = RS.AREAS[v.home];
+    const cross = S.crossVenue(g, v) ? tag('跨方向', 'fund', `属于「${home ? home.name : '交叉学科'}」，也收你这个方向的论文`) : '';
+    const kind = v.type === 'jour' ? tag('期刊', 'dim') : v.type === 'ws' ? tag('Workshop', 'dim') : '';
+    return ccf + cross + kind;
   }
   function portraitHTML(p, size) {
     const cls = `portrait ${size || ''}`;
@@ -207,7 +217,7 @@
   function upcoming() {
     const out = [];
     const add = (day, text, icon) => { if (day >= g.day) out.push({ day, text, icon }); };
-    S.venuesFor(g).filter(v => v.tier === 'A' && v.dl).map(v => ({ v, d: S.nextDeadline(v, g.day) }))
+    S.labVenues(g).filter(v => v.tier === 'A' && v.dl).map(v => ({ v, d: S.nextDeadline(v, g.day) })).filter(x => x.d != null)
       .sort((a, b) => a.d - b.d).slice(0, 3).forEach(x => add(x.d, `${x.v.name} 截稿`, 'paper'));
     g.proposals.forEach(p => add(p.status === 'writing' ? p.deadline : p.resultDay, p.status === 'writing' ? `${p.name} 申请截止` : `${p.name} 公布结果`, 'money'));
     const R = G.region(g);
@@ -509,8 +519,28 @@
       ${tierTag(pa.tier)}
       <div class="grow"><div class="ptitle">${esc(pa.title)}${pa.phd ? ' <span class="tag dim" data-tip="读博期间发表的论文：算进引用和 h-index，不算进考核">博士期间</span>' : ''}</div>
       <div class="small authors">${authorsHTML(S.authorList(g, pa))}</div>
-      <div class="small dim">${esc(v.name)} ${pa.year}${pa.best ? ` · <span class="gold">${ico('trophy')}最佳论文</span>` : ''}${pa.oral ? ' · Oral' : ''}${pa.viral ? ' · <span class="good">出圈</span>' : ''}${pa.retracted ? ' · <span class="bad">已撤稿</span>' : ''} · 引用 ${pa.cites}</div></div>
+      <div class="small dim"><span${venueTip(v) ? ` data-tip="${esc(venueTip(v))}"` : ''}>${esc(v.name)}</span> ${pa.year}${pa.best ?` · <span class="gold">${ico('trophy')}最佳论文</span>` : ''}${pa.oral ? ' · Oral' : ''}${pa.viral ? ' · <span class="good">出圈</span>' : ''}${pa.retracted ? ' · <span class="bad">已撤稿</span>' : ''} · 引用 ${pa.cites}</div></div>
     </div>`;
+  }
+  // 投稿日历：接下来一年里，在研课题和各个小组的子方向能投的 A / B 类会议截稿
+  function calendarCard() {
+    const subs = [...new Set(g.projects.filter(p => p.phase !== 'review').map(p => p.sub).concat(g.groups.map(gr => gr.sub)).filter(Boolean))];
+    if (!subs.length) return '';
+    if (openState.cal == null) openState.cal = true;
+    const rows = [];
+    Object.values(RS.VENUES).forEach(v => {
+      if (!v.dl || (v.tier !== 'A' && v.tier !== 'B')) return;
+      const fit = subs.filter(s => RS.venueFits(v, s));
+      if (!fit.length) return;
+      const d = S.nextDeadline(v, g.day + 1);
+      if (d != null && d - g.day <= 360) rows.push({ v, d, fit });
+    });
+    rows.sort((a, b) => a.d - b.d);
+    const who = fit => { const names = fit.map(s => S.subName(g, s)); return names.length > 3 ? `${names.slice(0, 3).join('、')} 等 ${names.length} 个子方向` : names.join('、'); };
+    const body = rows.slice(0, 14).map(r => `<div class="kvline cal"><span class="grow">${tierTag(r.v.tier)} <b${r.v.full ? ` data-tip="${esc(r.v.full)}"` : ''}>${esc(r.v.name)}</b> ${venueTags(r.v)}<span class="small dim"> · 适合：${esc(who(r.fit))}</span></span><span class="small dim nowrap">${G.mdStr(r.d)} · ${G.daysText(r.d - g.day)}</span></div>`).join('')
+      + (rows.length > 14 ? `<p class="small dim">……一年内还有 ${rows.length - 14} 个 A / B 类截稿</p>` : '')
+      + '<p class="small dim">按实验室在做的子方向筛出来的；「跨方向」是别的领域的会议，但也收这些子方向的论文。</p>';
+    return fold('cal', `${ico('calendar')}<span class="grow">投稿日历：接下来一年 ${rows.length} 个 A / B 类截稿</span>`, body, 'card');
   }
   function tabResearch() {
     const order = { idea: 0, exp: 1, write: 2, ready: 3, review: 4 };
@@ -534,6 +564,7 @@
         <span>引用 <b>${U.fmtInt(g.stats.cites)}</b></span><span>h-index <b>${g.stats.h}</b></span><span>审稿中 <b>${inReview}</b></span>
         <span>投稿 ${g.stats.submissions} · 被拒 ${g.stats.rejects}</span>
       </div>
+      ${calendarCard()}
       <h3 class="sec">${ico('bulb')} 进行中的课题（${projs.length}）</h3>
       ${projs.map(projCard).join('') || '<p class="dim">还没有课题。</p>'}
       <h3 class="sec">${ico('paper')} 已发表论文（${g.papers.length}）</h3>
@@ -986,14 +1017,20 @@
       <div class="cgrid">${item.cands.map(c => candCard(c, 'pool', item.pick.includes(c.cid))).join('')}</div>
       <div class="mfoot"><span>最多录用 ${item.max} 人 · 空余工位 ${G.desks(g) - g.members.length}</span><button class="primary" data-act="poolOk">${item.pick.length ? `录用 ${item.pick.length} 人` : '都不要'}</button></div>`, 'wide');
   }
+  // 投稿目标的筛选：全部 / A / B / C 和 Workshop / 期刊 / 跨方向
+  const VENUE_FILTERS = [['all', '全部'], ['A', 'A 类'], ['B', 'B 类'], ['C', 'C 类 / WS'], ['jour', '期刊'], ['cross', '跨方向']];
+  const venueMatch = (k, v) => k === 'all' || (k === 'jour' ? v.type === 'jour' : k === 'cross' ? S.crossVenue(g, v) : k === 'C' ? v.tier === 'C' || v.tier === 'W' : v.tier === k);
   function renderVenue(pid, local) {
     const p = G.project(g, pid);
     if (!p) return null;
-    const opts = S.venueOptions(g, p);
+    const all = S.venueOptions(g, p);
+    const opts = all.filter(o => venueMatch(venueFilter, o.v));
     const q = S.estQuality(g, p);
+    const row = o => `<div class="venue-row">${tierTag(o.v.tier)}<div class="grow"><b${o.v.full ? ` data-tip="${esc(o.v.full)}"` : ''}>${esc(o.v.name)}</b> ${venueTags(o.v)}<div class="small dim">${o.v.type === 'jour' ? '随时可投' : `截稿 ${G.mdStr(o.day)}（${G.daysText(o.day - g.day)}）`} · 审稿约 ${o.v.review} 天${o.v.rebuttal ? ' · 有 Rebuttal' : ''}</div></div><span class="small">录用率约 <b>${pct(o.prob)}</b></span><button data-act="venuePick" data-arg="${o.v.id}" data-k="${o.day}">投这个</button></div>`;
     return modalShell(`${head('paper', '选择投稿目标')}
-      <p>《${esc(p.title)}》${p.attempts ? `（已被拒 ${p.attempts} 次）` : ''}<br>预估质量 <b>${Math.round(q)}</b>。要投到哪里？</p>
-      <div class="venue-list">${opts.map(o => `<div class="venue-row">${tierTag(o.v.tier)}<div class="grow"><b>${esc(o.v.name)}</b>${o.v.type === 'jour' ? '<span class="small dim"> 期刊</span>' : ''}<div class="small dim">${o.v.type === 'jour' ? '随时可投' : `截稿 ${G.mdStr(o.day)}（${G.daysText(o.day - g.day)}）`} · 审稿约 ${o.v.review} 天</div></div><span class="small">录用率约 <b>${pct(o.prob)}</b></span><button data-act="venuePick" data-arg="${o.v.id}" data-k="${o.day}">投这个</button></div>`).join('')}</div>
+      <p>《${esc(p.title)}》${p.attempts ? `（已被拒 ${p.attempts} 次）` : ''}<br><span class="dim">${esc(S.dirName(g, p.sub))}</span> · 预估质量 <b>${Math.round(q)}</b>。要投到哪里？<span class="small dim">（列出的是接下来一年里这个子方向能投的地方：本领域的会议期刊，以及也收这个方向的跨方向会议）</span></p>
+      <div class="chips-wrap">${VENUE_FILTERS.map(([k, n]) => { const c = all.filter(o => venueMatch(k, o.v)).length; return `<button class="chip-btn ${venueFilter === k ? 'on' : ''}" data-act="venueFilter" data-arg="${k}" ${c || k === 'all' ? '' : 'disabled'}>${n} ${c}</button>`; }).join('')}</div>
+      <div class="venue-list">${opts.map(row).join('') || '<p class="dim small">这一类里最近没有能投的地方。</p>'}</div>
       <div class="choices row">
         <button class="choice" data-act="venuePick" data-arg="arxiv"><b>直接挂 arXiv</b><small>不经审稿，马上公开（预印本，价值很低）</small></button>
         <button class="choice def" data-act="venueAuto"><b>交给自动策略</b><small>按「方针 → 投稿策略」自动选择</small></button>
@@ -1601,6 +1638,7 @@
       case 'big': fail(S.doBig(g, arg)); break;
       case 'seek': fail(S.seekContract(g)); setTimeout(openNextQueue, 50); break;
       case 'paperFilter': paperFilter = v; paperLimit = 30; break;
+      case 'venueFilter': venueFilter = arg; break;
       case 'paperMore': paperLimit += 30; break;
       // 队列弹窗
       case 'choose': resolveCurrent(+arg); return;

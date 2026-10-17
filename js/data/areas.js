@@ -1,4 +1,4 @@
-/* 研究领域 → 方向 → 子方向，会议期刊，论文标题素材（截稿日期为近似值，每月按 30 天计） */
+/* 研究领域 → 方向 → 子方向、论文等级、论文标题素材（会议期刊在 venues.js） */
 (function () {
   'use strict';
   const RS = (window.RS = window.RS || {});
@@ -11,145 +11,6 @@
     W: { name: 'Workshop', thr: 34, rep: 0.4, cite: 1.2, value: 0.8 },
     P: { name: '预印本', thr: 0, rep: 0.15, cite: 1.5, value: 0.3 },
   };
-
-  const VENUES = (RS.VENUES = {});
-  // dl: [[月, 日], ...]  review: 审稿天数  parity: 'odd'/'even' 仅奇/偶数年举办
-  function V(id, name, tier, dl, review, o) {
-    o = o || {};
-    VENUES[id] = { id, name, tier, dl, review, type: tier === 'W' ? 'ws' : 'conf', parity: o.parity || null, rebuttal: !!o.rebuttal };
-  }
-  function J(id, name, tier, review) {
-    VENUES[id] = { id, name, tier, dl: null, review, type: 'jour', parity: null, rebuttal: false };
-  }
-  VENUES.arxiv = { id: 'arxiv', name: 'arXiv', tier: 'P', dl: null, review: 0, type: 'pre', parity: null, rebuttal: false };
-  // 跨学科合作发的论文（不在任何方向的投稿列表里）
-  VENUES.cross = { id: 'cross', name: '交叉学科期刊', tier: 'B', dl: null, review: 0, type: 'jour', parity: null, rebuttal: false };
-
-  // —— 人工智能 / 机器学习 ——
-  V('neurips', 'NeurIPS', 'A', [[5, 15]], 130, { rebuttal: true });
-  V('icml', 'ICML', 'A', [[1, 28]], 95, { rebuttal: true });
-  V('iclr', 'ICLR', 'A', [[9, 28]], 115, { rebuttal: true });
-  V('aaai', 'AAAI', 'A', [[8, 10]], 110, { rebuttal: true });
-  V('ijcai', 'IJCAI', 'A', [[1, 18]], 95, { rebuttal: true });
-  V('aistats', 'AISTATS', 'B', [[10, 10]], 100);
-  V('uai', 'UAI', 'B', [[2, 15]], 90);
-  V('colt', 'COLT', 'A', [[2, 8]], 85);
-  J('jmlr', 'JMLR', 'A', 240);
-  J('tmlr', 'TMLR', 'B', 120);
-  V('ml_ws', 'NeurIPS Workshop', 'W', [[9, 5]], 30);
-  // —— 计算机视觉 ——
-  V('cvpr', 'CVPR', 'A', [[11, 10]], 105, { rebuttal: true });
-  V('iccv', 'ICCV', 'A', [[3, 7]], 125, { parity: 'odd', rebuttal: true });
-  V('eccv', 'ECCV', 'A', [[3, 7]], 125, { parity: 'even', rebuttal: true });
-  V('bmvc', 'BMVC', 'C', [[5, 1]], 90);
-  V('wacv', 'WACV', 'C', [[7, 15]], 90);
-  J('tpami', 'TPAMI', 'A', 270);
-  J('ijcv', 'IJCV', 'A', 240);
-  V('cv_ws', 'CVPR Workshop', 'W', [[3, 10]], 30);
-  // —— 自然语言处理 ——
-  V('acl', 'ACL', 'A', [[2, 15]], 90, { rebuttal: true });
-  V('emnlp', 'EMNLP', 'A', [[5, 20]], 95, { rebuttal: true });
-  V('naacl', 'NAACL', 'B', [[10, 15]], 95);
-  V('coling', 'COLING', 'B', [[9, 15]], 100);
-  V('eacl', 'EACL', 'C', [[10, 10]], 90);
-  J('tacl', 'TACL', 'B', 150);
-  V('nlp_ws', 'ACL Workshop', 'W', [[4, 20]], 30);
-  // —— 计算机系统 ——
-  V('osdi', 'OSDI', 'A', [[12, 5]], 95);
-  V('sosp', 'SOSP', 'A', [[4, 15]], 105, { parity: 'odd' });
-  V('atc', 'USENIX ATC', 'A', [[1, 10]], 100);
-  V('nsdi', 'NSDI', 'A', [[4, 25], [9, 18]], 100);
-  V('eurosys', 'EuroSys', 'B', [[5, 15], [10, 15]], 100);
-  V('asplos', 'ASPLOS', 'A', [[2, 25], [6, 5], [10, 10]], 110);
-  V('fast', 'FAST', 'A', [[9, 20]], 85);
-  V('mlsys', 'MLSys', 'B', [[10, 25]], 100);
-  V('socc', 'SoCC', 'B', [[5, 1]], 90);
-  J('tocs', 'TOCS', 'A', 270);
-  V('sys_ws', 'HotOS Workshop', 'W', [[5, 5]], 40);
-  // —— 网络与安全 ——
-  V('sp', 'IEEE S&P', 'A', [[6, 5], [11, 14]], 100);
-  V('ccs', 'CCS', 'A', [[1, 10], [4, 29]], 100);
-  V('usenixsec', 'USENIX Security', 'A', [[2, 5], [6, 4], [9, 10]], 100);
-  V('ndss', 'NDSS', 'A', [[4, 20], [7, 10]], 95);
-  V('raid', 'RAID', 'B', [[4, 1]], 90);
-  V('acsac', 'ACSAC', 'B', [[6, 1]], 100);
-  V('esorics', 'ESORICS', 'B', [[4, 10]], 90);
-  J('tdsc', 'TDSC', 'A', 240);
-  V('sec_ws', 'Security Workshop', 'W', [[8, 1]], 35);
-  // —— 理论计算机 ——
-  V('stoc', 'STOC', 'A', [[11, 4]], 90);
-  V('focs', 'FOCS', 'A', [[4, 4]], 85);
-  V('soda', 'SODA', 'A', [[7, 8]], 85);
-  V('icalp', 'ICALP', 'B', [[2, 10]], 65);
-  V('ccc', 'CCC', 'B', [[2, 15]], 75);
-  V('itcs', 'ITCS', 'B', [[9, 5]], 60);
-  V('esa', 'ESA', 'B', [[4, 20]], 65);
-  J('jacm', 'JACM', 'A', 360);
-  J('sicomp', 'SICOMP', 'A', 300);
-  V('th_ws', 'Theory Workshop', 'W', [[6, 1]], 30);
-  // —— 人机交互 ——
-  V('chi', 'CHI', 'A', [[9, 10]], 105, { rebuttal: true });
-  V('uist', 'UIST', 'A', [[4, 5]], 90);
-  V('cscw', 'CSCW', 'A', [[1, 15], [7, 15]], 110);
-  V('ubicomp', 'UbiComp', 'A', [[2, 15], [5, 15], [8, 15], [11, 15]], 100);
-  V('iui', 'IUI', 'B', [[10, 10]], 80);
-  V('dis', 'DIS', 'B', [[1, 20]], 80);
-  J('tochi', 'TOCHI', 'A', 240);
-  V('hci_ws', 'CHI Late-Breaking Work', 'W', [[1, 25]], 35);
-  // —— 机器人 ——
-  V('rss', 'RSS', 'A', [[1, 30]], 75);
-  V('corl', 'CoRL', 'A', [[6, 5]], 90, { rebuttal: true });
-  V('icra', 'ICRA', 'A', [[9, 15]], 130);
-  V('iros', 'IROS', 'B', [[3, 1]], 120);
-  V('humanoids', 'Humanoids', 'C', [[7, 1]], 75);
-  J('tro', 'T-RO', 'A', 270);
-  V('rob_ws', 'Robotics Workshop', 'W', [[4, 1]], 30);
-  // —— 数据库与数据挖掘 ——
-  V('sigmod', 'SIGMOD', 'A', [[1, 15], [4, 15], [7, 15], [10, 15]], 75);
-  V('vldb', 'VLDB', 'A', [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 1], [8, 1], [9, 1], [10, 1], [11, 1], [12, 1]], 70);
-  V('icde', 'ICDE', 'A', [[6, 15], [10, 15]], 90);
-  V('kdd', 'KDD', 'A', [[2, 8], [8, 3]], 95, { rebuttal: true });
-  V('www', 'WWW', 'A', [[10, 10]], 95, { rebuttal: true });
-  V('cikm', 'CIKM', 'B', [[5, 20]], 75);
-  V('wsdm', 'WSDM', 'B', [[8, 10]], 70);
-  J('tkde', 'TKDE', 'A', 240);
-  V('db_ws', 'DB Workshop', 'W', [[3, 1]], 30);
-  // —— 体系结构 ——
-  V('isca', 'ISCA', 'A', [[11, 20]], 100);
-  V('micro', 'MICRO', 'A', [[4, 10]], 95);
-  V('hpca', 'HPCA', 'A', [[7, 28]], 90);
-  V('dac', 'DAC', 'A', [[11, 15]], 95);
-  V('date', 'DATE', 'B', [[9, 15]], 90);
-  V('iccad', 'ICCAD', 'B', [[4, 15]], 90);
-  J('tc', 'IEEE TC', 'A', 240);
-  V('arch_ws', 'Arch Workshop', 'W', [[2, 1]], 30);
-  // —— 软件工程 ——
-  V('icse', 'ICSE', 'A', [[3, 15], [8, 1]], 120);
-  V('fse', 'FSE', 'A', [[9, 10]], 100);
-  V('ase', 'ASE', 'A', [[5, 30]], 80);
-  V('issta', 'ISSTA', 'A', [[1, 25]], 80);
-  V('saner', 'SANER', 'B', [[10, 15]], 70);
-  V('icsme', 'ICSME', 'B', [[3, 20]], 75);
-  J('tse', 'TSE', 'A', 270);
-  V('se_ws', 'SE Workshop', 'W', [[2, 20]], 30);
-  // —— 图形学 ——
-  V('siggraph', 'SIGGRAPH', 'A', [[1, 22]], 75);
-  V('sigasia', 'SIGGRAPH Asia', 'A', [[5, 20]], 85);
-  V('vis', 'IEEE VIS', 'A', [[3, 30]], 95);
-  V('eg', 'Eurographics', 'B', [[10, 5]], 75);
-  V('pg', 'Pacific Graphics', 'B', [[6, 1]], 75);
-  J('tog', 'ACM TOG', 'A', 240);
-  V('gr_ws', 'Graphics Workshop', 'W', [[8, 15]], 30);
-  // —— 计算机网络 ——
-  V('sigcomm', 'SIGCOMM', 'A', [[2, 6]], 105);
-  V('mobicom', 'MobiCom', 'A', [[3, 15], [9, 2]], 110);
-  V('infocom', 'INFOCOM', 'A', [[7, 31]], 130);
-  V('mobisys', 'MobiSys', 'B', [[12, 4]], 90);
-  V('sensys', 'SenSys', 'B', [[6, 5], [11, 5]], 90);
-  V('conext', 'CoNEXT', 'B', [[6, 4], [12, 4]], 75);
-  V('imc', 'IMC', 'B', [[4, 29], [11, 20]], 80);
-  J('ton', 'IEEE/ACM ToN', 'A', 260);
-  V('net_ws', 'HotNets', 'W', [[7, 16]], 45);
 
   // ---------- 研究方向：领域 → 方向 → 子方向 ----------
   // 子方向：[id, 名称, 初始热度, 算力系数（相对所属方向）, 英文研究任务（论文标题里的 {Task}）]
@@ -164,7 +25,6 @@
       id: 'ml', name: '机器学习', short: 'ML', compute: 1.0, citeMult: 1.4, grantMult: 1.05,
       need: { idea: 35, exp: 90, write: 35 },
       desc: '当下最热门的方向。引用高、基金多，但竞争激烈，而且非常烧显卡。',
-      venues: ['neurips', 'icml', 'iclr', 'aaai', 'ijcai', 'colt', 'aistats', 'uai', 'jmlr', 'tmlr', 'ml_ws'],
       topics: [
         T('llm', '大语言模型', 1.4, [
           ['llm_long', '长上下文', 2.3, 1, ['Long-Context Language Modeling', 'Context Length Extrapolation', 'KV-Cache Compression']],
@@ -230,7 +90,6 @@
       id: 'cv', name: '计算机视觉', short: 'CV', compute: 1.0, citeMult: 1.35, grantMult: 1.0,
       need: { idea: 35, exp: 95, write: 32 },
       desc: '顶会论文数量巨大，引用可观；数据和显卡都很重要。',
-      venues: ['cvpr', 'iccv', 'eccv', 'neurips', 'iclr', 'aaai', 'bmvc', 'wacv', 'tpami', 'ijcv', 'cv_ws'],
       topics: [
         T('3d', '三维视觉', 1.0, [
           ['3d_gs', '高斯溅射', 1.9, 1, ['Gaussian Splatting', 'Real-Time Radiance Fields']],
@@ -291,7 +150,6 @@
       id: 'nlp', name: '自然语言处理', short: 'NLP', compute: 1.1, citeMult: 1.35, grantMult: 1.05,
       need: { idea: 35, exp: 85, write: 38 },
       desc: '大模型时代的风口浪尖，热点切换极快，一不小心就被撞车。',
-      venues: ['acl', 'emnlp', 'neurips', 'iclr', 'aaai', 'naacl', 'coling', 'eacl', 'tacl', 'nlp_ws'],
       topics: [
         T('reason', '大模型推理', 1.3, [
           ['re_math', '数学推理', 2.2, 1, ['Mathematical Reasoning', 'Theorem Proving with LLMs']],
@@ -349,7 +207,6 @@
       id: 'sys', name: '计算机系统', short: 'Systems', compute: 0.45, citeMult: 0.8, grantMult: 1.05,
       need: { idea: 30, exp: 125, write: 35 },
       desc: '工程量巨大，一篇顶会要写很多代码；论文少而精，工业界认可度高。',
-      venues: ['osdi', 'sosp', 'atc', 'nsdi', 'asplos', 'fast', 'eurosys', 'mlsys', 'socc', 'tocs', 'sys_ws'],
       topics: [
         T('serving', 'LLM 推理服务', 1.4, [
           ['sv_kv', 'KV 缓存管理', 2, 1, ['KV-Cache Management', 'Prefix Caching']],
@@ -409,7 +266,6 @@
       id: 'sec', name: '网络与信息安全', short: 'Security', compute: 0.3, citeMult: 0.85, grantMult: 1.1,
       need: { idea: 35, exp: 95, write: 38 },
       desc: '四大顶会一年多轮投稿，攻防对抗永不过时，政府基金偏爱。',
-      venues: ['sp', 'ccs', 'usenixsec', 'ndss', 'raid', 'acsac', 'esorics', 'tdsc', 'sec_ws'],
       topics: [
         T('fuzz', '模糊测试', 0.4, [
           ['fz_kernel', '内核模糊测试', 1.1, 1, ['Kernel Fuzzing', 'Hypervisor Fuzzing']],
@@ -461,7 +317,6 @@
       id: 'theory', name: '理论计算机', short: 'Theory', compute: 0.0, citeMult: 0.45, grantMult: 0.9,
       need: { idea: 70, exp: 45, write: 50 },
       desc: '不需要显卡，只需要纸和笔（和咖啡）。证明一个定理可能要好几年。',
-      venues: ['stoc', 'focs', 'soda', 'colt', 'icalp', 'ccc', 'itcs', 'esa', 'jacm', 'sicomp', 'th_ws'],
       topics: [
         T('approx', '近似算法', 0, [
           ['ap_cluster', '聚类', 1, 1, ['k-Means Clustering', 'Facility Location']],
@@ -525,7 +380,6 @@
       id: 'hci', name: '人机交互', short: 'HCI', compute: 0.1, citeMult: 0.75, grantMult: 1.0,
       need: { idea: 45, exp: 80, write: 45 },
       desc: '要做用户实验、招募被试，写作要求高；CHI 一年一度的大狂欢。',
-      venues: ['chi', 'uist', 'cscw', 'ubicomp', 'iui', 'dis', 'tochi', 'hci_ws'],
       topics: [
         T('xr', 'AR/VR 交互', 0.2, [
           ['xr_input', '交互技术', 1.3, 1, ['Mixed Reality Interaction', 'Gaze-Based Input']],
@@ -577,7 +431,6 @@
       id: 'robo', name: '机器人', short: 'Robotics', compute: 0.6, citeMult: 0.95, grantMult: 1.1,
       need: { idea: 35, exp: 115, write: 32 },
       desc: '具身智能正当红。需要真机实验，硬件经常坏，Demo 视频决定一切。',
-      venues: ['rss', 'corl', 'icra', 'iros', 'neurips', 'iclr', 'humanoids', 'tro', 'rob_ws'],
       topics: [
         T('embodied', '具身智能', 1.2, [
           ['em_vla', 'VLA 模型', 2.3, 1, ['Vision-Language-Action Models', 'Generalist Robot Policies']],
@@ -629,7 +482,6 @@
       id: 'db', name: '数据库与数据挖掘', short: 'DB/DM', compute: 0.4, citeMult: 0.95, grantMult: 1.0,
       need: { idea: 32, exp: 100, write: 35 },
       desc: 'SIGMOD/VLDB 一年多轮投稿，节奏稳定；工业界合作机会多。',
-      venues: ['sigmod', 'vldb', 'icde', 'kdd', 'www', 'cikm', 'wsdm', 'tkde', 'db_ws'],
       topics: [
         T('vecdb', '向量数据库', 0.5, [
           ['vd_ann', '近似最近邻搜索', 1.6, 1, ['Approximate Nearest Neighbor Search', 'Graph-Based Vector Indexes']],
@@ -680,7 +532,6 @@
       id: 'arch', name: '体系结构', short: 'Arch', compute: 0.3, citeMult: 0.7, grantMult: 1.1,
       need: { idea: 35, exp: 120, write: 35 },
       desc: '芯片是国之重器。仿真要跑很久，流片要花很多钱，产业界非常需要。',
-      venues: ['isca', 'micro', 'hpca', 'asplos', 'dac', 'date', 'iccad', 'tc', 'arch_ws'],
       topics: [
         T('accel', 'AI 加速器', 0.6, [
           ['xl_llm', '大模型推理加速器', 1.9, 1, ['LLM Inference Accelerators', 'Transformer Accelerators']],
@@ -737,7 +588,6 @@
       id: 'se', name: '软件工程', short: 'SE', compute: 0.4, citeMult: 0.85, grantMult: 1.0,
       need: { idea: 32, exp: 100, write: 38 },
       desc: '代码大模型让这个领域焕发新生。ICSE 两轮投稿，评审以严格著称。',
-      venues: ['icse', 'fse', 'ase', 'issta', 'saner', 'icsme', 'tse', 'se_ws'],
       topics: [
         T('codellm', '代码大模型', 0.9, [
           ['cg_gen', '代码生成', 2.1, 1, ['Code Generation', 'Repository-Level Code Completion']],
@@ -785,7 +635,6 @@
       id: 'graphics', name: '图形学', short: 'Graphics', compute: 0.6, citeMult: 0.75, grantMult: 0.95,
       need: { idea: 38, exp: 110, write: 40 },
       desc: 'SIGGRAPH 的 Fast Forward 是一年中最快乐的时光。好看的 Demo 就是一切。',
-      venues: ['siggraph', 'sigasia', 'vis', 'cvpr', 'iccv', 'eccv', 'eg', 'pg', 'tog', 'gr_ws'],
       topics: [
         T('nrender', '渲染', 1.0, [
           ['nr_neural', '神经渲染', 1.8, 1, ['Neural Rendering', 'Neural Radiance Caching']],
@@ -830,7 +679,6 @@
       id: 'net', name: '计算机网络', short: 'Networking', compute: 0.3, citeMult: 0.8, grantMult: 1.05,
       need: { idea: 32, exp: 110, write: 36 },
       desc: '从数据中心到低轨卫星，网络无处不在。SIGCOMM 一年一度，MobiCom 的 Demo 必须真能跑。',
-      venues: ['sigcomm', 'nsdi', 'mobicom', 'infocom', 'mobisys', 'sensys', 'conext', 'imc', 'ton', 'net_ws'],
       topics: [
         T('dcn', '数据中心网络', 0.4, [
           ['dc_cc', '拥塞控制', 1.1, 1, ['Congestion Control', 'Datacenter Transport']],

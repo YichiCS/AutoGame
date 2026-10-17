@@ -573,7 +573,18 @@
   };
 
   // ---------- 投稿 ----------
-  S.venuesFor = g => G.area(g).venues.map(id => RS.VENUES[id]).filter(Boolean);
+  // 能投的地方：给了课题就按它的子方向算（本领域的会议期刊 + 收这个方向 / 子方向的跨方向会议）；没给就是本领域的
+  S.venuesFor = (g, p) => {
+    if (p && p.sub) return Object.values(RS.VENUES).filter(v => RS.venueFits(v, p.sub));
+    return Object.values(RS.VENUES).filter(v => v.areas && v.areas.includes(g.areaId));
+  };
+  // 跨方向投稿：会议属于别的领域，但也收我们这个方向的论文（比如视觉的论文投 NeurIPS）
+  S.crossVenue = (g, v) => !!v.home && v.home !== g.areaId;
+  // 实验室眼下关心的会议：在研课题、各个小组、开局子方向能投的地方
+  S.labVenues = g => {
+    const subs = [...new Set(g.projects.map(p => p.sub).concat(g.groups.map(gr => gr.sub), [g.startSub]).filter(Boolean))];
+    return Object.values(RS.VENUES).filter(v => subs.some(s => RS.venueFits(v, s)));
+  };
   S.nextDeadline = function (v, from) {
     if (!v.dl) return null;
     let best = null;
@@ -591,7 +602,7 @@
     return best;
   };
   S.venueThr = (g, v, p) => {
-    let thr = RS.TIERS[v.tier].thr + (v.type === 'jour' ? 2 : 0) + S.fieldBar(g);
+    let thr = RS.TIERS[v.tier].thr + (v.type === 'jour' ? 2 : 0) + (v.bar || 0) + S.fieldBar(g);
     if (p && p.sub) thr += (S.heat(g, p.sub) - 1) * 1.5; // 越热的子方向，同行投稿越多，越难中
     return thr;
   };
@@ -604,7 +615,7 @@
   S.venueOptions = function (g, p) {
     const out = [];
     const q = S.estQuality(g, p);
-    for (const v of S.venuesFor(g)) {
+    for (const v of S.venuesFor(g, p)) {
       const day = v.type === 'jour' ? g.day + 1 : S.nextDeadline(v, g.day + 2);
       if (day == null || day - g.day > 330) continue;
       out.push({ v, day, prob: S.acceptProb(g, p, v, q), value: RS.TIERS[v.tier].value });
@@ -620,7 +631,8 @@
       if (pol === 'top') return p.attempts < 4 ? t === 'A' : t !== 'W';
       if (pol === 'volume') return t !== 'A' || o.prob > 0.55;
       // balanced
-      if (p.attempts < 2) return t === 'A' || (t === 'B' && o.prob > 0.45);
+      // 先冲 A 类；只有录用把握很大的 B 类（比如业内公认的顶会）才会提前考虑
+      if (p.attempts < 2) return t === 'A' || (t === 'B' && o.prob > 0.6);
       if (p.attempts < 4) return t !== 'W';
       return true;
     };
@@ -720,7 +732,7 @@
     const A = G.area(g);
     const heat = p.sub ? S.heat(g, p.sub) : 1;
     const lead = G.member(g, p.lead);
-    let r = RS.TIERS[v.tier].cite * Math.pow(Math.max(25, p.q) / 72, 3) * Math.pow(heat, 0.5) * A.citeMult;
+    let r = RS.TIERS[v.tier].cite * (v.cm || 1) * Math.pow(Math.max(25, p.q) / 72, 3) * Math.pow(heat, 0.5) * A.citeMult;
     r *= lead ? tMul(lead, 'cite') : 1;
     r *= Math.exp(U.normal(-0.3, 1.0));
     r *= 1 + Math.min(0.5, g.rep / 1000);
@@ -888,7 +900,7 @@
     const cands = g.projects.filter(p => p.phase === 'write' && p.prog / p.need.write >= 0.6 && !p.rushTarget);
     if (!cands.length) return;
     for (const p of cands) {
-      for (const v of S.venuesFor(g)) {
+      for (const v of S.venuesFor(g, p)) {
         if (v.tier !== 'A' || !v.dl) continue;
         const day = S.nextDeadline(v, g.day + 1);
         const left = day - g.day;
