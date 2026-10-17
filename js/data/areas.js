@@ -4,12 +4,13 @@
   const RS = (window.RS = window.RS || {});
 
   // 论文等级：thr=录用门槛（论文质量分），rep=声望，cite=年引用基数，value=投稿策略中的价值权重
+  // 一篇论文要做大半年，所以每篇的分量也重一些
   RS.TIERS = {
-    A: { name: 'A类', thr: 66, rep: 4.5, cite: 11, value: 10 },
-    B: { name: 'B类', thr: 56, rep: 2, cite: 4.5, value: 4 },
-    C: { name: 'C类', thr: 46, rep: 1, cite: 2.2, value: 2 },
-    W: { name: 'Workshop', thr: 34, rep: 0.4, cite: 1.2, value: 0.8 },
-    P: { name: '预印本', thr: 0, rep: 0.15, cite: 1.5, value: 0.3 },
+    A: { name: 'A类', thr: 66, rep: 6.5, cite: 15, value: 10 },
+    B: { name: 'B类', thr: 56, rep: 3, cite: 6, value: 4 },
+    C: { name: 'C类', thr: 46, rep: 1.5, cite: 3, value: 2 },
+    W: { name: 'Workshop', thr: 34, rep: 0.6, cite: 1.6, value: 0.8 },
+    P: { name: '预印本', thr: 0, rep: 0.2, cite: 2, value: 0.3 },
   };
 
   // ---------- 研究方向：领域 → 方向 → 子方向 ----------

@@ -167,7 +167,7 @@
     let s = 0;
     for (const p of g.papers) {
       if (p.day < since) break;
-      s += { A: 14, B: 6, C: 3, W: 1, P: 0.5 }[p.tier] || 0;
+      s += { A: 21, B: 9, C: 4.5, W: 1.5, P: 0.75 }[p.tier] || 0;
     }
     return Math.min(100, s);
   };
@@ -509,7 +509,7 @@
       if (m.isPlayer) continue; // 你自己什么时候毕业，由求职决定
       const yrs = S.memberYears(g, m);
       if (m.role === 'phd') {
-        const ready = (yrs >= 3.8 && ((m.firstA || 0) >= 3 || (m.first || 0) >= 5)) || yrs >= 5.6;
+        const ready = (yrs >= 3.8 && ((m.firstA || 0) >= 2 || (m.first || 0) >= 4)) || yrs >= 5.6;
         if (ready) G.queue(g, { type: 'event', id: 'phd_grad', ctx: { mid: m.id } });
       } else if (m.role === 'ms' && yrs >= 1.7) {
         const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
@@ -685,8 +685,8 @@
     const cites = g.stats.cites - y.cites0;
     const score = y.papersA * 3 + y.papers + y.grants / (g.startup * 0.2) + cites / 200 + y.grads * 2;
     const first = g.day - g.startDay < 200;
-    const grade = first ? '新' : score >= 18 ? 'S' : score >= 10 ? 'A' : score >= 5 ? 'B' : 'C';
-    if (y.papersA >= 5) g.flags.harvest = true;
+    const grade = first ? '新' : score >= 12 ? 'S' : score >= 7 ? 'A' : score >= 3.5 ? 'B' : 'C';
+    if (y.papersA >= 4) g.flags.harvest = true;
     if (grade === 'S') { S.addEnergy(g, 10); S.addRep(g, 3); }
     else if (grade === 'A') S.addEnergy(g, 5);
     const L = (g.ledger || {})[G.calYear(g)];

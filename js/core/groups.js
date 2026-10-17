@@ -325,8 +325,8 @@
     const yrs = S.memberYears(g, m);
     if (m.preUntil && g.day < m.preUntil) return { ok: false, text: '还没正式入学呢' };
     if (m.role === 'phd') {
-      const ok = (yrs >= 3 && ((m.firstA || 0) >= 2 || (m.first || 0) >= 4)) || yrs >= 5.5;
-      return { ok, text: ok ? '已经达到博士毕业要求' : '博士毕业要求：读满 3 年，并且有 2 篇一作 A 类或 4 篇一作论文', early: !ok && yrs >= 1.5 };
+      const ok = (yrs >= 3 && ((m.firstA || 0) >= 2 || (m.first || 0) >= 3)) || yrs >= 5.5;
+      return { ok, text: ok ? '已经达到博士毕业要求' : '博士毕业要求：读满 3 年，并且有 2 篇一作 A 类或 3 篇一作论文', early: !ok && yrs >= 1.5 };
     }
     if (m.role === 'ms') {
       const ok = yrs >= 1.4;
@@ -341,7 +341,8 @@
     const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
     const trust = m.trust == null ? 55 : m.trust;
     const first = m.first || 0, firstA = m.firstA || 0;
-    const papers = firstA * 3 + Math.max(0, m.pubsA - firstA) * 1.5 + first + Math.max(0, m.pubs - first) * 0.5;
+    // 一篇论文要做大半年，每篇都很有分量
+    const papers = firstA * 4.5 + Math.max(0, m.pubsA - firstA) * 2.25 + first * 1.5 + Math.max(0, m.pubs - first) * 0.75;
     return papers + (avg - 50) / 5 + g.rep / 80 + (trust - 50) / 12 + (m.ledGroup ? 2 : 0);
   };
   S.placementOutlook = function (g, m) {

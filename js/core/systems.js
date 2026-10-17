@@ -9,11 +9,11 @@
   const ROLE_OFFSET = { phd: 0, ms: -8, ug: -16, postdoc: 14, visit: -4 };
   const ROLE_WORK = { phd: 1, ms: 0.9, ug: 0.6, postdoc: 1.1, visit: 0.85 };
   const ROLE_YEARS = { ms: 2, ug: 1.5, postdoc: 2, visit: 1 };
-  S.PHASE_NAMES = { idea: '构思', exp: '实验', write: '写作', ready: '待投稿', review: '审稿中' };
+  S.PHASE_NAMES = { idea: '构思', exp: '实验', write: '写作', revise: '修改', ready: '待投稿', review: '审稿中' };
   S.WORK_PHASES = ['idea', 'exp', 'write'];
-  const STAT_OF = { idea: 'idea', exp: 'code', write: 'write' };
-  const GROW = { idea: 0.04, exp: 0.016, write: 0.035 };
-  const NEED_MULT = 1.7;
+  const STAT_OF = { idea: 'idea', exp: 'code', write: 'write', revise: 'write' };
+  const GROW = { idea: 0.04, exp: 0.016, write: 0.035, revise: 0.035 };
+  const NEED_MULT = 1.3;
   S.soft = s => Math.max(0.03, Math.pow(Math.max(0, (100 - s) / 50), 1.5));
 
   S.fundName = (g, f) => (g.region === 'cn' ? { ra: '助研补贴', ta: '助教', fellow: '奖学金', self: '无需资助' } : { ra: 'RA', ta: 'TA', fellow: 'Fellowship', self: '无需资助' })[f] || f;
@@ -353,8 +353,12 @@
     return { load, cap, leaders, factor: load > cap ? Math.sqrt(cap / load) : 1 };
   };
 
+  // 能力越强干得越快，而且越往上越明显：在管理得好的组里，顶尖的学生三四个月出一篇，普通学生要八九个月，能力差的一年多
+  S.statSpeed = s => 0.1 + 0.9 * Math.pow(Math.max(0, s) / 80, 3);
+  // 成长看投入的功夫，不看产出：能力差的学生虽然做得慢，但一样在进步
+  const effort = (m, ph, w) => (w * 0.88) / S.statSpeed(S.phaseStat(m, ph));
   S.workRate = function (g, m, ph, ctx) {
-    let w = 0.4 + S.phaseStat(m, ph) / 125;
+    let w = S.statSpeed(S.phaseStat(m, ph));
     w *= 0.6 + (0.6 * m.mood) / 100;
     w *= ctx.labMult * (1 + (ctx.phaseBonus[ph] || 0));
     w *= tMul(m, 'prod') * tPhase(m, ph) * ROLE_WORK[m.role];
@@ -388,6 +392,8 @@
 
   S.memberWork = function (g, m, ctx) {
     if (m.status !== 'active') return;
+    // 被拒的论文要按审稿意见改完才能再投：改稿会占掉一部分精力，堆得越多，手上的新课题做得越慢
+    const revs = S.revisionsOf(g, m);
     let p = m.projectId ? G.project(g, m.projectId) : null;
     if (!p || !S.WORK_PHASES.includes(p.phase)) {
       m.projectId = null;
@@ -395,10 +401,12 @@
       if (S.wantsConsult(g, m)) { S.queueConsult(g, m); return; }
       p = S.assignWork(g, m);
     }
+    const share = S.reviseShare(revs.length, !!p);
+    if (share > 0) S.reviseWork(g, m, revs[0], ctx, share);
     if (!p) return;
     const ph = p.phase;
     const lead = p.lead === m.id;
-    let w = S.workRate(g, m, ph, ctx);
+    let w = S.workRate(g, m, ph, ctx) * (1 - share);
     if (!lead) w *= 0.5 * tMul(m, 'helper');
     else if (!p.helpers.length) w *= tMul(m, 'solo');
     w *= 1 + 0.05 * S.interestFit(m, p.sub); // 做自己感兴趣的方向，更有干劲
@@ -413,8 +421,57 @@
     p.acc[ph] += w * S.phaseStat(m, ph);
     p.wsum[ph] += w;
     if (p.contrib) p.contrib[m.id] = (p.contrib[m.id] || 0) + w;
-    S.grow(g, m, ph, w);
+    S.grow(g, m, ph, effort(m, ph, w));
     if (p.prog >= p.need[ph]) S.completePhase(g, p);
+  };
+
+  // ---------- 改稿 ----------
+  // 谁来改：负责人还在就是负责人，否则是还在组里的其他作者（本科生除外）；都不在了就是 PI 自己改
+  S.reviser = function (g, p) {
+    const lead = G.member(g, p.lead);
+    if (lead) return lead;
+    for (const id of p.authors || []) { const m = G.member(g, id); if (m && m.role !== 'ug') return m; }
+    return null;
+  };
+  S.revisionsOf = (g, m) => g.projects.filter(p => p.phase === 'revise' && S.reviser(g, p) === m).sort((a, b) => (a.revSince || 0) - (b.revSince || 0));
+  // 改稿占用的精力：手上还有新课题时，1 篇约 3 成、2 篇一半多、3 篇六成多……没有新课题就全力改
+  S.reviseShare = (n, busy) => (!n ? 0 : busy ? 1 - 1 / (1 + 0.6 * n) : 1);
+  S.reviseWork = function (g, m, p, ctx, share) {
+    const w = S.workRate(g, m, 'revise', ctx) * share * (p.rush > 0 ? 1.4 : 1);
+    p.revProg = (p.revProg || 0) + w;
+    if (p.contrib) p.contrib[m.id] = (p.contrib[m.id] || 0) + w;
+    S.grow(g, m, 'revise', effort(m, 'revise', w));
+    if (p.revProg >= p.revNeed) S.finishRevision(g, p, 1);
+  };
+  // 被拒（或撤稿）之后先按审稿意见改，工作量是写作量的三到四成半；投太多次的直接挂 arXiv
+  S.startRevision = function (g, p) {
+    p.venue = null;
+    p.target = null;
+    const maxTry = g.policies.submit === 'top' ? 6 : 5;
+    if (p.attempts >= maxTry) { p.phase = 'ready'; S.retarget(g, p); return; }
+    p.phase = 'revise';
+    p.revNeed = Math.round(p.need.write * U.range(0.3, 0.45));
+    p.revProg = 0;
+    p.revSince = g.day;
+  };
+  // 改完了：论文变好一些，进入待投稿，挑下一个会议
+  S.finishRevision = function (g, p, k) {
+    const gain = U.range(2, 4.5) * k;
+    p.q += gain;
+    p.phase = 'ready';
+    p.revNeed = 0;
+    p.revProg = 0;
+    const who = S.reviser(g, p);
+    G.log(g, `${who ? who.name : '你'}按审稿意见改完了《${short(p.title)}》，准备重新投稿`, 'info');
+    S.retarget(g, p);
+  };
+  // 不改了：直接挂到 arXiv
+  S.giveUpPaper = function (g, p) {
+    if (!['revise', 'ready'].includes(p.phase)) return '只有待投稿或修改中的论文可以直接挂 arXiv';
+    p.asking = false;
+    G.log(g, `《${short(p.title)}》不再改投，直接挂到了 arXiv 上`, 'info');
+    S.publish(g, p, RS.VENUES.arxiv, {});
+    return null;
   };
 
   // PI 亲自下场做科研
@@ -424,7 +481,7 @@
     const p = cands.reduce((a, b) => (a.prog / a.need[a.phase] <= b.prog / b.need[b.phase] ? a : b));
     const pi = g.pi.stats;
     const stat = p.phase === 'idea' ? pi.research : p.phase === 'exp' ? pi.research * 0.8 : pi.writing;
-    let w = 0.65 * (0.5 + stat / 100);
+    let w = 0.5 * (0.5 + stat / 100);
     if (p.phase === 'exp') w *= S.computeFactor(g, p, ctx);
     p.prog += w;
     p.acc[p.phase] += w * stat;
@@ -555,7 +612,7 @@
 
   // 给玩家看的质量估计（带一点误差）
   S.estQuality = function (g, p) {
-    if (p.phase === 'ready' || p.phase === 'review') return p.q + p.est;
+    if (p.phase === 'ready' || p.phase === 'review' || p.phase === 'revise') return p.q + p.est;
     const pi = g.pi.stats;
     const lead = G.member(g, p.lead);
     const st = lead ? lead.stats : { idea: 45, code: 45, write: 45 };
@@ -859,10 +916,6 @@
   S.reject = function (g, p, v, scores) {
     p.attempts++;
     p.history.push({ v: v.id, d: g.day, scores });
-    p.q += U.range(2, 4.5);
-    p.phase = 'ready';
-    p.venue = null;
-    p.target = null;
     g.stats.rejects++;
     g.year.rejects++;
     const lead = G.member(g, p.lead);
@@ -871,7 +924,7 @@
     G.log(g, `《${short(p.title)}》被 ${v.name} 拒稿（评分 ${scores.join('/')}）。Reviewer 2：“${quote}”`, 'bad');
     if (lead && lead.bio && U.chance(0.35)) G.log(g, `${lead.name} 叹了口气：“${lead.bio.motto}”`, 'info');
     RS.bus.emit('reject', { p, lead: p.lead });
-    S.retarget(g, p);
+    S.startRevision(g, p);
   };
 
   S.projectsDaily = function (g) {
@@ -891,6 +944,11 @@
         p.q -= 0.003;
         if (p.rebuttalDay && p.rebuttalDay === g.day) S.rebuttal(g, p);
         if (p.notifyDay <= g.day) S.decide(g, p);
+      } else if (p.phase === 'revise' && !S.reviser(g, p)) {
+        // 作者都离开了：你自己抽空改，改得慢一些、也没那么用心
+        p.revProg = (p.revProg || 0) + 0.6;
+        S.addEnergy(g, -0.04);
+        if (p.revProg >= p.revNeed) S.finishRevision(g, p, 0.6);
       }
     }
   };
@@ -1074,6 +1132,17 @@
       g.cooldowns.deficit = g.day + 90;
       G.queue(g, { type: 'event', id: 'deficit', ctx: {} });
     }
+    if (g.policies.auto === 'all' && !g.phd) S.autoCompute(g);
+  };
+  // 全部托管时，算力明显不够、经费又宽裕，就添一台性价比最高的服务器
+  S.autoCompute = function (g) {
+    if (G.area(g).compute < 0.3) return;
+    const ctx = S.dayContext(g);
+    if (ctx.demand <= 0 || ctx.ratio >= 0.8 || S.runway(g) < 18) return;
+    const av = S.gpuAvailable(g).filter(x => x.id !== 'ws' && S.gpuPrice(g, x) < g.funds * 0.2);
+    if (!av.length) return;
+    const best = av.reduce((a, b) => (b.units / S.gpuPrice(g, b) > a.units / S.gpuPrice(g, a) ? b : a));
+    S.buyGpu(g, best.id);
   };
   S.runway = g => {
     const net = S.income(g).total - S.expenses(g).total;

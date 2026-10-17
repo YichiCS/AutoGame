@@ -226,7 +226,7 @@
     { id: 'broke', name: '入不敷出', desc: '经费出现赤字', check: g => g.funds < 0 },
     { id: 'burnout', name: '燃尽了', desc: 'PI 精力耗尽', check: g => !!g.flags.burnout },
     { id: 'scooped', name: '撞车了', desc: '课题被别人抢先发表', check: g => !!g.flags.scooped },
-    { id: 'harvest', name: '丰收年', desc: '一个自然年内发表 5 篇以上 A 类论文', check: g => !!g.flags.harvest },
+    { id: 'harvest', name: '丰收年', desc: '一个自然年内发表 4 篇以上 A 类论文', check: g => !!g.flags.harvest },
     { id: 'hat', name: '戴上帽子', desc: '获得 CAREER / Sloan / 优青 / 杰青等人才称号', check: g => g.titles.length >= 1 },
     { id: 'fellow', name: 'Fellow', desc: '当选 IEEE / ACM / CCF Fellow', check: g => g.honors.some(h => /fellow/.test(h.id)) },
     { id: 'academician', name: '院士', desc: '当选院士', check: g => g.honors.some(h => h.id === 'nae' || h.id === 'cas') },

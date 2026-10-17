@@ -13,6 +13,7 @@
   let lastRender = 0;
   let confirmDismiss = null;
   let confirmGroupDel = null;
+  let confirmGiveUp = null;
   let paperFilter = 'all';
   let venueFilter = 'all';
   let paperLimit = 30;
@@ -315,11 +316,14 @@
     if (m.status === 'intern') return `${ico('mail')}在 ${esc(m.awayWhy)}（${G.daysText(m.awayUntil - g.day)}回来）`;
     if (m.status === 'away') return `${ico('zz')}${esc(m.awayWhy || '请假')}中（${G.daysText(m.awayUntil - g.day)}回来）`;
     const p = m.projectId ? G.project(g, m.projectId) : null;
-    if (!p) return `${ico('bulb')}正在构思新课题…`;
+    // 被拒的论文还没改完：会分走一部分精力
+    const revs = S.revisionsOf(g, m);
+    const revText = revs.length ? `<span class="warn" data-tip="改稿会占掉一部分精力：${revs.map(r => `《${S.short(r.title)}》${Math.round(((r.revProg || 0) / r.revNeed) * 100)}%`).join('、')}"> · 还在改 ${revs.length} 篇被拒的论文（占 ${Math.round(S.reviseShare(revs.length, !!p) * 100)}% 精力）</span>` : '';
+    if (!p) return revs.length ? `${ico('pen')}全力改被拒的论文《${esc(S.short(revs[0].title))}》${revs.length > 1 ? `等 ${revs.length} 篇` : ''}` : `${ico('bulb')}正在构思新课题…`;
     const lead = p.lead === m.id;
     const ph = p.phase;
     const prog = S.WORK_PHASES.includes(ph) ? ` ${Math.round((p.prog / p.need[ph]) * 100)}%` : '';
-    return `${ico({ idea: 'bulb', exp: 'gear', write: 'pen' }[ph] || 'paper')}${lead ? '负责' : '协助'}《${esc(S.short(p.title))}》· ${S.PHASE_NAMES[ph]}${prog}`;
+    return `${ico({ idea: 'bulb', exp: 'gear', write: 'pen' }[ph] || 'paper')}${lead ? '负责' : '协助'}《${esc(S.short(p.title))}》· ${S.PHASE_NAMES[ph]}${prog}${revText}`;
   }
   // 可折叠区块：用按钮切换、状态记在 openState 里，界面刷新时不会被自动收起
   function fold(key, head, body, cls) {
@@ -433,7 +437,7 @@
       <div class="kvline"><span>组长</span><b>${lead ? esc(lead.name) : '<span class="dim">暂无（由你直接管理）</span>'}</b><button class="mini-btn" data-act="groupLead" data-arg="${gr.id}" data-tip="组长帮你带组员：指导容量 +1.5，组员成长 +12%，组里的构思更有把握；组长自己效率 -8%">${lead ? '更换' : '任命'}</button></div>
       <div class="sub">成员（${mem.length}）</div>
       <div class="chips-wrap">${mem.map(m => mchip(m, gr)).join('')}<button class="chip-btn" data-act="groupAdd" data-arg="${gr.id}">+ 添加成员</button></div>
-      <div class="kvline small"><span>在研课题</span><b>构思 ${cnt('idea')} · 实验 ${cnt('exp')} · 写作 ${cnt('write')} · 投稿/审稿 ${cnt('ready', 'review')}</b></div>
+      <div class="kvline small"><span>在研课题</span><b>构思 ${cnt('idea')} · 实验 ${cnt('exp')} · 写作 ${cnt('write')} · 改稿 ${cnt('revise')} · 投稿/审稿 ${cnt('ready', 'review')}</b></div>
       <div class="kvline small"><span>已发表</span><b>${papers.length} 篇（A 类 ${papers.filter(p => p.tier === 'A').length}）</b></div>
       ${G.area(g).compute >= 0.3 || owned.length ? `<div class="sub">算力 <span class="small dim">· 这个子方向算力需求${computeWord(s.compute)}</span></div>
       ${bar(dem > 0 ? ratio : 1, f < 0.8 ? 'bad' : f < 1 ? 'warn' : 'good', compLabel)}
@@ -476,7 +480,8 @@
   function projCard(p) {
     const lead = G.member(g, p.lead);
     const topic = G.topic(g, p.topic), sub = G.sub(g, p.sub);
-    const phases = ['idea', 'exp', 'write', 'ready', 'review'];
+    // 被拒过的论文多一步「修改」
+    const phases = ['idea', 'exp', 'write'].concat(p.attempts || p.phase === 'revise' ? ['revise'] : [], ['ready', 'review']);
     const ci = phases.indexOf(p.phase);
     const helpers = p.helpers.map(id => G.member(g, id)).filter(Boolean).map(m => RS.shortName(m.name));
     const est = S.estQuality(g, p);
@@ -490,6 +495,12 @@
     } else if (p.phase === 'review') {
       const v = RS.VENUES[p.venue];
       target = `<div class="small">审稿中：<b>${esc(v.name)}</b> ${tierTag(v.tier)} · 预计 ${G.mdStr(p.notifyDay)} 出结果</div>`;
+    } else if (p.phase === 'revise') {
+      const last = p.history[p.history.length - 1];
+      const lv = last && RS.VENUES[last.v];
+      const who = S.reviser(g, p);
+      const share = who ? S.reviseShare(S.revisionsOf(g, who).length, !!who.projectId) : 0;
+      target = `<div class="small">${lv ? `被 <b>${esc(lv.name)}</b> ${last.withdrawn ? '撤稿' : '拒稿'}，` : ''}正在按审稿意见修改 · ${who ? `${esc(who.name)} 改（占 TA 约 ${Math.round(share * 100)}% 的精力）` : '作者都离开了，你抽空自己改'}</div>`;
     }
     const work = S.WORK_PHASES.includes(p.phase);
     const gr = S.groupOfSub(g, p.sub);
@@ -500,10 +511,11 @@
       <div class="row small">${gr ? groupTag(gr, `${topic.name} · ${sub.name}`) : tag(sub.name, 't-mid', `${topic.name} · ${sub.name}：这个子方向没有对应的小组，用共享算力`)}${heatIcons(S.heat(g, p.sub))}<span class="dim">${lead ? esc(lead.name) : '前成员'}${helpers.length ? ' + ' + esc(helpers.join('、')) : ''}</span></div>
       <div class="pipeline">${phases.map((ph, i) => `<span class="${i === ci ? 'cur' : i < ci ? 'done' : ''}">${S.PHASE_NAMES[ph]}</span>`).join('')}</div>
       ${work ? bar(p.prog / p.need[p.phase], p.rush > 0 ? 'warn' : '', `${S.PHASE_NAMES[p.phase]} ${Math.round((p.prog / p.need[p.phase]) * 100)}%${p.rush > 0 ? ' · DDL 冲刺中！' : ''}`) : ''}
-      ${['write', 'ready', 'review'].includes(p.phase) ? (() => { const ao = S.authorOrder(g, p); return `<div class="small authors" data-tip="按目前的实际工作量排序">署名：${authorsHTML(S.authorList(g, { authors: ao.order, co: ao.co, ext: p.collab ? p.collab.who : null, guest: p.guest }))}</div>`; })() : ''}
+      ${p.phase === 'revise' ? bar((p.revProg || 0) / p.revNeed, 'warn', `按审稿意见修改 ${Math.round(((p.revProg || 0) / p.revNeed) * 100)}%`) : ''}
+      ${['write', 'revise', 'ready', 'review'].includes(p.phase) ? (() => { const ao = S.authorOrder(g, p); return `<div class="small authors" data-tip="按目前的实际工作量排序">署名：${authorsHTML(S.authorList(g, { authors: ao.order, co: ao.co, ext: p.collab ? p.collab.who : null, guest: p.guest }))}</div>`; })() : ''}
       <div class="row small"><span data-tip="基于当前进度的估计，有误差">预估质量 <b>${Math.round(est)}</b></span>${p.attempts ? `<span class="bad">已被拒 ${p.attempts} 次</span>` : ''}${p.collab ? `<span class="good">合作：${esc(p.collab.who)}</span>` : ''}${p.bold ? '<span class="gold">大胆的想法</span>' : ''}</div>
       ${target}
-      <div class="actions">${canEdit && p.phase === 'ready' ? `<button data-act="venue" data-arg="${p.id}">选择投稿目标</button>` : ''}${canEdit && p.phase === 'idea' ? `<button data-act="topic" data-arg="${p.id}">换方向</button>` : ''}${mine ? '<span class="tag gold">我的</span>' : ''}</div>
+      <div class="actions">${canEdit && p.phase === 'ready' ? `<button data-act="venue" data-arg="${p.id}">选择投稿目标</button>` : ''}${canEdit && p.phase === 'revise' ? `<button data-act="giveUp" data-arg="${p.id}" data-tip="不再修改和改投，直接挂到 arXiv（预印本价值很低），把负责人的精力腾出来做新课题">${confirmGiveUp === p.id ? '确定不改了？' : '不改了，挂 arXiv'}</button>` : ''}${canEdit && p.phase === 'idea' ? `<button data-act="topic" data-arg="${p.id}">换方向</button>` : ''}${mine ? '<span class="tag gold">我的</span>' : ''}</div>
     </div>`;
   }
   // 署名：* 共同一作，✉ 通讯作者；你自己的名字金色，外单位的合作者灰色
@@ -543,7 +555,7 @@
     return fold('cal', `${ico('calendar')}<span class="grow">投稿日历：接下来一年 ${rows.length} 个 A / B 类截稿</span>`, body, 'card');
   }
   function tabResearch() {
-    const order = { idea: 0, exp: 1, write: 2, ready: 3, review: 4 };
+    const order = { idea: 0, exp: 1, write: 2, revise: 3, ready: 4, review: 5 };
     const phd = !!g.phd;
     // 博士阶段：你参与的课题排在最前面
     const mineP = p => p.lead === g.player || p.helpers.includes(g.player) || p.authors.includes(g.player);
@@ -1522,7 +1534,7 @@
       case 'restoreModal': if (modal && modal.kind === 'queue') { modal.min = false; modalOpenedAt = performance.now(); } break;
       case 'fold': openState[arg] = !openState[arg]; break;
       case 'ledgerYear': ledgerYear = +arg; break;
-      case 'tab': tab = arg; confirmDismiss = null; confirmGroupDel = null; $('tabBody').scrollTop = 0; break;
+      case 'tab': tab = arg; confirmDismiss = null; confirmGroupDel = null; confirmGiveUp = null; $('tabBody').scrollTop = 0; break;
       case 'compact': UI.setCompact(!document.body.classList.contains('compact')); break;
       case 'settings': modal = { kind: 'local', type: 'settings' }; break;
       case 'help': modal = { kind: 'local', type: 'help' }; break;
@@ -1572,6 +1584,14 @@
       }
       case 'ugPool': fail(S.ugPool(g)); setTimeout(openNextQueue, 50); break;
       case 'postdoc': fail(S.postdocSearch(g)); break;
+      case 'giveUp': {
+        const p = G.project(g, arg);
+        if (!p) break;
+        if (confirmGiveUp !== arg) { confirmGiveUp = arg; break; }
+        confirmGiveUp = null;
+        fail(S.giveUpPaper(g, p));
+        break;
+      }
       case 'venue': modal = { kind: 'local', type: 'venue', data: arg }; break;
       case 'topic': modal = { kind: 'local', type: 'topic', data: arg }; break;
       case 'topicPick': { const p = G.project(g, modal && modal.data); if (p) fail(S.changeTopic(g, p, arg)); closeModal(); return; }

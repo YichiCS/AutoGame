@@ -81,12 +81,11 @@
         if (!p || p.phase !== 'review') return null;
         const v = RS.VENUES[p.venue];
         const lead = M(g, p.lead);
-        const withdraw = { label: '撤稿，改投别处', hint: '论文退回待投稿状态', apply: g => {
+        const withdraw = { label: '撤稿，改投别处', hint: '按审稿意见改完再投（要占用负责人一段时间）', apply: g => {
           p.attempts++;
           p.history.push({ v: v.id, d: g.day, scores: c.scores, withdrawn: true });
-          p.phase = 'ready'; p.venue = null; p.target = null;
           G().log(g, `《${S().short(p.title)}》从 ${v.name} 撤稿`, 'info');
-          S().retarget(g, p);
+          S().startRevision(g, p);
         } };
         return {
           title: 'Rebuttal 时间', portrait: lead ? { member: lead.id } : { icon: 'paper' },
@@ -785,8 +784,8 @@
           title: '代码里有 Bug！', portrait: lead ? { member: lead.id } : { icon: 'warn' },
           text: `${lead ? U.esc(lead.name) : '学生'}紧张地告诉你：已经投出去的《${U.esc(p.title)}》实验代码里有个 bug，修复之后效果会变差不少……`,
           choices: [
-            { label: '撤稿，修好再投', hint: '论文质量 -3 · 学生心情 -5 · 问心无愧', def: true,
-              apply: g => { p.q -= 3; p.phase = 'ready'; p.venue = null; p.target = null; S().addMood(lead, -5); G().log(g, `《${S().short(p.title)}》撤稿修复 bug`, 'info'); S().retarget(g, p); } },
+            { label: '撤稿，修好再投', hint: '论文质量 -3 · 学生心情 -5 · 要花时间修改 · 问心无愧', def: true,
+              apply: g => { p.q -= 3; S().addMood(lead, -5); G().log(g, `《${S().short(p.title)}》撤稿修复 bug`, 'info'); S().startRevision(g, p); } },
             { label: '装作没看见', hint: '暂时没有影响……', apply: () => { p.fake = true; } },
           ],
         };
