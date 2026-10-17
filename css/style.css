@@ -142,6 +142,8 @@ button.mini-btn { padding: 0 6px; }
 #topbar .speed button.on { background: var(--orange); }
 #topbar .speed button .ico { margin: 0; }
 #topbar .speed button.alert { background: var(--warn); animation: blink 0.8s steps(2) infinite; }
+/* 没有待决定的事时也占着位置，免得出现 / 消失时顶栏跟着挪动 */
+#topbar .speed button.alert.idle { visibility: hidden; animation: none; }
 #topbar .chips { display: flex; flex-wrap: wrap; gap: 6px 12px; flex: 1; }
 #topbar .chip { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 #topbar .chip small { color: var(--dim); }
@@ -387,6 +389,23 @@ body.compact #topbar .brand, body.compact #topbar .chip:nth-child(n+4) { display
 @media (max-width: 900px) {
   #main { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   #left { min-height: auto; }
+  /* 窄屏顶栏：每样东西放在固定的格子里（12 列 × 3 行），日期、经费等数字变长变短时不再换行挪位 */
+  #topbar { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px 6px; padding: 4px 8px; }
+  #topbar .chips { display: contents; }
+  #topbar > *, #topbar .chip { min-width: 0; overflow: hidden; white-space: nowrap; }
+  #topbar .brand { grid-area: 1 / 1 / 2 / 5; max-width: none; }
+  #topbar .date { grid-area: 1 / 5 / 2 / 11; }
+  #topbar .sys { grid-area: 1 / 11 / 2 / 13; justify-self: end; }
+  #topbar .sys [data-act="compact"] { display: none; }
+  #topbar .speed { grid-area: 2 / 1 / 3 / 8; gap: 2px; }
+  #topbar .speed button { padding: 3px 4px; }
+  #topbar .c-funds, #topbar .c-mood { grid-area: 2 / 8 / 3 / 13; }
+  #topbar .c-energy, #topbar .c-trust { grid-area: 3 / 1 / 4 / 4; }
+  #topbar .c-rep { grid-area: 3 / 4 / 4 / 6; }
+  #topbar .c-papers { grid-area: 3 / 6 / 4 / 9; }
+  #topbar .c-cites { grid-area: 3 / 9 / 4 / 13; }
+  #topbar .c-mypapers { grid-area: 3 / 4 / 4 / 10; }
+  #topbar .c-mycites { grid-area: 3 / 10 / 4 / 13; }
   /* 手机上：实验室动态放在画面下面，平时只露出最新几条，可以展开 */
   #logPanel { flex: 0 0 auto; min-height: 0; }
   #log { max-height: 100px; }

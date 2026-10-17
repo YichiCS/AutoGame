@@ -181,19 +181,19 @@
     const blocked = g.queue.length > 0;
     const moneyTip = `经费余额与每月净收支\n收入：基金拨款 +${money(incD.grants)}${incD.dept ? `，学院补贴 +${money(incD.dept)}` : ''}\n支出：工资 -${money(exD.salaries)}，算力 -${money(exD.compute)}，设施 -${money(exD.facilities)}，杂费 -${money(exD.supplies)}\n（「经费」页有逐项明细和年度账本）`;
     return `
-      ${g.phd ? `<div class="brand" data-tip="${esc(g.school)} · ${esc(g.pi.name)} 的 ${esc(g.labName)}">${ico('cap')}<b>博士生 · 第 ${S.phdYear(g)} 年</b></div>` : `<div class="brand" data-tip="${esc(g.labName)} · ${esc(g.school)} · ${esc(G.titleName(g))}">${ico('flask')}<b>${esc(g.labName)}</b></div>`}
+      ${g.phd ? `<div class="brand" data-tip="${esc(g.school)} · ${esc(g.pi.name)} 的 ${esc(g.labName)}">${ico('cap')}<b>博士 · 第 ${S.phdYear(g)} 年</b></div>` : `<div class="brand" data-tip="${esc(g.labName)} · ${esc(g.school)} · ${esc(G.titleName(g))}">${ico('flask')}<b>${esc(g.labName)}</b></div>`}
       <div class="date">${ico('calendar')}<b>${G.dateStr(g.day)}</b><span class="dim">${hol ? '假期' : sem ? sem.name : '假期'}</span></div>
       <div class="speed">
         <button class="${M.paused ? 'on' : ''}" data-act="pause" data-tip="暂停 / 继续（空格键）">${ico(M.paused ? 'play' : 'pause')}</button>
         ${speeds.map((s, i) => `<button class="${!M.paused && M.speedIdx === i ? 'on' : ''}" data-act="speed" data-arg="${i}" data-tip="${['每天 1.5 秒', '每天 0.75 秒', '每天 0.4 秒', '每天 0.15 秒'][i]}（数字键 ${i + 1}）">${s}</button>`).join('')}
-        ${blocked ? `<button class="alert" data-act="openQueue" data-tip="有事情等待你决定">${ico('exclam')}</button>` : ''}
+        <button class="alert ${blocked ? '' : 'idle'}" data-act="openQueue" data-tip="有事情等待你决定" ${blocked ? '' : 'disabled'}>${ico('exclam')}</button>
       </div>
       <div class="chips">${g.phd ? phdChips() : `
-        <span class="chip" data-tip="${esc(moneyTip)}">${ico('money')}<b class="${g.funds < 0 ? 'bad' : ''}">${money(g.funds)}</b><small class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}/月</small></span>
-        <span class="chip" data-tip="PI 精力：太低会病倒，还会影响学生">${ico('energy')}<span class="mini ${g.pi.energy < 25 ? 'bad' : g.pi.energy < 50 ? 'warn' : 'good'}"><i style="width:${g.pi.energy.toFixed(0)}%"></i></span><b>${Math.round(g.pi.energy)}</b></span>
-        <span class="chip" data-tip="学术声望：${repTitle(g.rep)}">${ico('star')}<b>${Math.floor(g.rep)}</b></span>
-        <span class="chip" data-tip="已发表论文（A 类）">${ico('paper')}<b>${g.papers.filter(p => !p.retracted && !p.phd).length}</b><small>A ${g.stats.pubs.A}</small></span>
-        <span class="chip" data-tip="总引用 · h-index">${ico('quote')}<b>${U.compact(g.stats.cites)}</b><small>h ${g.stats.h}</small></span>`}
+        <span class="chip c-funds" data-tip="${esc(moneyTip)}">${ico('money')}<b class="${g.funds < 0 ? 'bad' : ''}">${money(g.funds)}</b><small class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}/月</small></span>
+        <span class="chip c-energy" data-tip="PI 精力：太低会病倒，还会影响学生">${ico('energy')}<span class="mini ${g.pi.energy < 25 ? 'bad' : g.pi.energy < 50 ? 'warn' : 'good'}"><i style="width:${g.pi.energy.toFixed(0)}%"></i></span><b>${Math.round(g.pi.energy)}</b></span>
+        <span class="chip c-rep" data-tip="学术声望：${repTitle(g.rep)}">${ico('star')}<b>${Math.floor(g.rep)}</b></span>
+        <span class="chip c-papers" data-tip="已发表论文（A 类）">${ico('paper')}<b>${g.papers.filter(p => !p.retracted && !p.phd).length}</b><small>A ${g.stats.pubs.A}</small></span>
+        <span class="chip c-cites" data-tip="总引用 · h-index">${ico('quote')}<b>${U.compact(g.stats.cites)}</b><small>h ${g.stats.h}</small></span>`}
       </div>
       <div class="sys">
         <button data-act="compact" data-tip="迷你模式：只保留实验室画面，适合挂在桌面角落">迷你</button>
@@ -209,10 +209,10 @@
     const mine = S.myPapers(g);
     const trust = Math.round(m.trust == null ? 55 : m.trust);
     return `
-        <span class="chip" data-tip="你的心情：长期太低会陷入读博的低谷">${ico('heart')}<span class="mini ${moodCls(m.mood)}"><i style="width:${m.mood.toFixed(0)}%"></i></span><b>${Math.round(m.mood)}</b></span>
-        <span class="chip" data-tip="导师对你的信任：决定推荐信的分量">${ico('star')}<b>${trust}</b><small>信任</small></span>
-        <span class="chip" data-tip="我的论文（一作 · 一作 A 类）">${ico('paper')}<b>${m.pubs}</b><small>一作 ${m.first || 0} · A ${m.firstA || 0}</small></span>
-        <span class="chip" data-tip="我的论文总引用">${ico('quote')}<b>${U.compact(U.sum(mine, p => p.cites))}</b></span>`;
+        <span class="chip c-mood" data-tip="你的心情：长期太低会陷入读博的低谷">${ico('heart')}<span class="mini ${moodCls(m.mood)}"><i style="width:${m.mood.toFixed(0)}%"></i></span><b>${Math.round(m.mood)}</b></span>
+        <span class="chip c-trust" data-tip="导师对你的信任：决定推荐信的分量">${ico('star')}<b>${trust}</b><small>信任</small></span>
+        <span class="chip c-mypapers" data-tip="我的论文（一作 · 一作 A 类）">${ico('paper')}<b>${m.pubs}</b><small>一作 ${m.first || 0} · A ${m.firstA || 0}</small></span>
+        <span class="chip c-mycites" data-tip="我的论文总引用">${ico('quote')}<b>${U.compact(U.sum(mine, p => p.cites))}</b></span>`;
   }
 
   // ---------- 概览 ----------
