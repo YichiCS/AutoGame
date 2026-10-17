@@ -157,11 +157,15 @@ button.mini-btn { padding: 0 6px; }
 #sceneWrap { flex: 0 0 auto; display: flex; justify-content: center; align-items: center; padding: 4px; background: #08091a; }
 #scene { display: block; image-rendering: pixelated; image-rendering: crisp-edges; box-shadow: 0 0 0 2px #000; }
 .panel { background: var(--panel); }
-.panel-title { padding: 4px 8px; background: #0d0e22; color: var(--warn); border-top: 2px solid #000; border-bottom: 2px solid #000; }
+.panel-title { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: #0d0e22; color: var(--warn); border-top: 2px solid #000; border-bottom: 2px solid #000; }
+.log-toggle { display: none; margin-left: auto; padding: 0 8px; }
 #logPanel { flex: 1 1 auto; min-height: 60px; display: flex; flex-direction: column; }
 #log { flex: 1; overflow-y: auto; padding: 4px 8px; }
-.log { padding: 1px 0; color: #d4d9e6; }
-.log .d { color: #6f7aa3; margin-right: 8px; }
+/* 日期一列、固定宽度，换行的文字和正文对齐 */
+.log { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; padding: 1px 0; color: #d4d9e6; }
+.log .d { color: #6f7aa3; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.log-year { color: var(--warn); padding: 4px 0 1px; margin-bottom: 2px; border-bottom: 1px dashed #333b66; }
+.log-year:first-child { padding-top: 0; }
 .log.good { color: var(--good); }
 .log.bad { color: var(--bad); }
 .log.gold { color: var(--gold); }
@@ -383,7 +387,11 @@ body.compact #topbar .brand, body.compact #topbar .chip:nth-child(n+4) { display
 @media (max-width: 900px) {
   #main { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   #left { min-height: auto; }
-  #logPanel { display: none; }
+  /* 手机上：实验室动态放在画面下面，平时只露出最新几条，可以展开 */
+  #logPanel { flex: 0 0 auto; min-height: 0; }
+  #log { max-height: 100px; }
+  #logPanel.open #log { max-height: 38vh; }
+  .log-toggle { display: inline-block; }
   #side { border-left: 0; border-top: 2px solid #000; }
   .form .hint { margin-left: 0; }
   .crit { grid-template-columns: 100px 1fr auto; }

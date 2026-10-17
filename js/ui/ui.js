@@ -938,8 +938,16 @@
   function renderTabs() {
     return curTabs().map(t => `<button class="${tab === t[0] ? 'on' : ''}" data-act="tab" data-arg="${t[0]}">${ico(t[2])}<span>${t[1]}</span></button>`).join('');
   }
+  // 实验室动态：日期统一写成「08-05」（宽度一致），换年的地方插一行年份
+  const logDate = d => `${String(Math.floor(G.mod(d, 360) / 30) + 1).padStart(2, '0')}-${String(G.mod(d, 30) + 1).padStart(2, '0')}`;
   function renderLog() {
-    return g.logs.slice(0, 80).map((l, i) => `<div class="log ${l.k}" data-key="${l.d}-${g.logs.length - i}"><span class="d">${G.mdStr(l.d)}</span>${esc(l.t)}</div>`).join('');
+    let year = null;
+    return g.logs.slice(0, 80).map((l, i) => {
+      const y = G.yearOfDay(l.d);
+      const head = y !== year ? `<div class="log-year" data-key="y${y}">${y} 年</div>` : '';
+      year = y;
+      return `${head}<div class="log ${l.k}" data-key="${l.d}-${g.logs.length - i}"><span class="d">${logDate(l.d)}</span><span>${esc(l.t)}</span></div>`;
+    }).join('');
   }
 
   // ---------- 弹窗 ----------
@@ -1528,6 +1536,13 @@
         M.start(game, true);
         return;
       }
+      // 手机上展开 / 收起实验室动态（记住选择）
+      case 'logToggle': {
+        RS.settings.logOpen = !RS.settings.logOpen;
+        G.saveSettings(RS.settings);
+        applyLogOpen();
+        return;
+      }
       case 'continue': {
         const save = G.load();
         if (!save) return fail('存档读取失败');
@@ -1766,7 +1781,14 @@
   }
 
   // ---------- 公共接口 ----------
+  function applyLogOpen() {
+    const open = !!RS.settings.logOpen;
+    $('logPanel').classList.toggle('open', open);
+    const b = document.querySelector('#logPanel .log-toggle');
+    if (b) b.textContent = open ? '收起 ▴' : '展开 ▾';
+  }
   UI.init = function () {
+    applyLogOpen();
     document.addEventListener('click', e => {
       const el = e.target.closest('[data-act]');
       if (!el || el.disabled) return;

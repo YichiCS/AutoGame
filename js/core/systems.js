@@ -473,7 +473,7 @@
     p.revNeed = 0;
     p.revProg = 0;
     const who = S.reviser(g, p);
-    G.log(g, `${who ? who.name : '你'}按审稿意见改完了《${short(p.title)}》，准备重新投稿`, 'info');
+    G.log(g, `${who ? who.name + ' ' : '你'}按审稿意见改完了《${short(p.title)}》，准备重新投稿`, 'info');
     S.retarget(g, p);
   };
   // 不改了：直接挂到 arXiv
