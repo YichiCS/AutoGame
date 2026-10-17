@@ -39,14 +39,14 @@
   // 生源学校按层次分组（只用来让能力和出身大致相关；最低一档用泛称，避免给真实学校贴标签）
   RS.SCHOOLS = {
     cn: [
-      ['某双非一本', '某省属高校', '某理工学院', '某师范大学', '某外省 211'],
-      ['哈尔滨工业大学', '华中科技大学', '西安交通大学', '北京航空航天大学', '武汉大学', '中山大学', '东南大学', '同济大学', '电子科技大学', '北京邮电大学', '西安电子科技大学', '四川大学', '山东大学', '厦门大学', '天津大学', '大连理工大学', '华南理工大学'],
-      ['清华大学', '北京大学', '浙江大学', '上海交通大学', '中国科学技术大学', '南京大学', '复旦大学'],
+      ['某双非一本', '某省属高校', '某理工学院', '某师范大学', '某外省 211', '某财经大学', '某邮电学院', '某工业大学', '某中外合办大学', '某农林大学', '某民族大学', '某海外本科', '江海理工大学', '南山科技大学', '东湖信息工程大学', '北岭工业大学', '临江大学', '云岭科技大学', '青石理工学院', '海川信息科技大学', '松原工业大学', '西陵师范大学', '滨海科技大学', '长河电子科技大学'],
+      ['华中科技大学', '北京航空航天大学', '武汉大学', '中山大学', '东南大学', '同济大学', '电子科技大学', '北京邮电大学', '西安电子科技大学', '四川大学', '山东大学', '厦门大学', '天津大学', '大连理工大学', '华南理工大学', '北京理工大学', '南开大学', '吉林大学', '湖南大学', '中南大学', '重庆大学', '西北工业大学', '中国人民大学', '华东师范大学', '南京航空航天大学', '南京理工大学', '苏州大学', '北京交通大学', '东北大学', '哈尔滨工程大学', '南方科技大学', '上海科技大学', '深圳大学', '杭州电子科技大学'],
+      ['清华大学', '北京大学', '浙江大学', '上海交通大学', '中国科学技术大学', '南京大学', '复旦大学', '哈尔滨工业大学', '西安交通大学', '中国科学院大学', '香港科技大学', '香港中文大学', '新加坡国立大学'],
     ],
     us: [
-      ['某州立大学', '某文理学院', '某海外高校', '某理工学院', '某国内双非'],
-      ['武汉大学', '华中科技大学', '北京邮电大学', '南京大学', '复旦大学', 'IIT Madras', 'BITS Pilani', 'UIUC', 'Georgia Tech', 'UW', 'UCLA', 'UMich', 'Purdue', 'Penn State', 'NUS', 'NTU'],
-      ['清华大学', '北京大学', '浙江大学', '上海交通大学', '中国科学技术大学', 'IIT Bombay', 'IIT Delhi', 'MIT', 'Stanford', 'UC Berkeley', 'CMU', 'KAIST', 'Seoul National University', 'University of Toronto', 'ETH Zurich'],
+      ['某州立大学', '某文理学院', '某海外高校', '某理工学院', '某国内双非', '某私立大学', '某工程学院', 'Lakeside State University', 'Desert Tech', 'New Harbor University', 'Maple Valley College', 'Pine Ridge University', 'Riverbend State University', 'Coastal Plains University', 'Silver Lake Institute of Technology', 'Granite Peak University', 'Prairie State University', 'Red Rock University', 'Bayview Institute of Technology'],
+      ['武汉大学', '华中科技大学', '北京邮电大学', '北京航空航天大学', '同济大学', '中山大学', '电子科技大学', '东南大学', '哈尔滨工业大学', '西安交通大学', '天津大学', '山东大学', '四川大学', 'IIT Madras', 'IIT Kharagpur', 'IIT Kanpur', 'IIIT Hyderabad', 'BITS Pilani', 'POSTECH', 'Yonsei University', 'Korea University', 'National Taiwan University', 'NTU Singapore', 'University of Waterloo', 'UBC', 'McGill', 'TU Munich', 'Sharif University of Technology', 'University of Tehran', 'Technion', 'UCLA', 'Purdue', 'Penn State', 'UMD', 'USC', 'Rice', 'Duke', 'Ohio State', 'Rutgers', 'Virginia Tech', 'UC Irvine', 'UC Davis', 'Texas A&M', 'Northeastern'],
+      ['清华大学', '北京大学', '浙江大学', '上海交通大学', '中国科学技术大学', '南京大学', '复旦大学', 'IIT Bombay', 'IIT Delhi', 'MIT', 'Stanford', 'UC Berkeley', 'CMU', 'Harvard', 'Princeton', 'Cornell', 'Caltech', 'UIUC', 'Georgia Tech', 'UW', 'UMich', 'KAIST', 'Seoul National University', 'University of Tokyo', 'University of Toronto', 'ETH Zurich', 'EPFL', 'University of Oxford', 'University of Cambridge', 'NUS', 'HKUST'],
     ],
   };
 
@@ -63,6 +63,18 @@
     '这个 idea 一定能中', '代码在我机器上是能跑的', '再给我两周', '结果太好了，有点可疑', '我可能需要一杯咖啡', '要不换个数据集试试？',
     '先挂 arXiv 占个坑', 'Reviewer 2 又来了', '我想毕业', '这个公式推不动了', '让我先看看 related work', '实验跑完我就去睡觉'];
   RS.GOALS = { academia: '当教授', industry: '进大厂', startup: '自己创业', quant: '去做量化', undecided: '还没想好' };
+
+  // 跨学科合作：对方单位和合作论文的题目
+  RS.CROSS = [
+    { who: '医学院', titles: ['Deep Learning for Early Detection of Rare Diseases', 'AI-Assisted Triage in Emergency Departments', 'Predicting Sepsis Onset from Electronic Health Records'] },
+    { who: '附属医院', titles: ['Automated Screening of Diabetic Retinopathy in Primary Care', 'Machine Learning for Postoperative Risk Prediction', 'A Multimodal Model for Lung Nodule Diagnosis'] },
+    { who: '生命科学学院', titles: ['Predicting Protein Function with Geometric Deep Learning', 'Learning the Language of Single-Cell Transcriptomics', 'AI-Guided Design of Novel Enzymes'] },
+    { who: '物理系', titles: ['Machine Learning Discovers Exotic Phases of Matter', 'Neural Surrogates for Plasma Simulation', 'Learning Symmetries from Experimental Data'] },
+    { who: '材料学院', titles: ['AI-Guided Discovery of Solid-State Electrolytes', 'Accelerating Catalyst Design with Active Learning', 'Generative Models for Crystal Structure Prediction'] },
+    { who: '经管学院', titles: ['Forecasting Market Volatility with Language Models', 'Measuring Supply Chain Risk from News Text', 'Algorithmic Pricing in Online Marketplaces'] },
+    { who: '地球科学学院', titles: ['Deep Learning for Medium-Range Weather Forecasting', 'Mapping Glacier Retreat from Satellite Imagery', 'Earthquake Detection with Self-Supervised Learning'] },
+    { who: '心理学系', titles: ['Language Models as Simulated Participants in Psychology Experiments', 'Detecting Early Signs of Depression in Online Text', 'A Computational Model of Human Curiosity'] },
+  ];
   RS.genBio = function (role, traits, school) {
     let goal = U.weighted(Object.keys(RS.GOALS), k => ({ academia: 3, industry: 3.5, startup: 1, quant: 1, undecided: 1.5 }[k]));
     if (traits.includes('academic')) goal = 'academia';

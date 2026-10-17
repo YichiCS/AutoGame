@@ -306,7 +306,7 @@
       <div class="sub">成长轨迹</div>
       ${(m.story || []).slice().reverse().map(s => `<div class="story"><span class="dim">${G.monthStr(s.d)}</span>${esc(s.t)}</div>`).join('') || '<div class="dim small">还没有什么故事。</div>'}
       <div class="sub">发表的论文（${papers.length}）</div>
-      ${papers.slice(0, 8).map(p => `<div class="story">${tierTag(p.tier)}<span>${esc(S.short(p.title))} <span class="dim">${esc(RS.VENUES[p.venue].name)} ${p.year}${p.lead === m.id ? ' · 一作' : ''}</span></span></div>`).join('') || '<div class="dim small">还没有论文。</div>'}
+      ${papers.slice(0, 8).map(p => `<div class="story">${tierTag(p.tier)}<span>${esc(S.short(p.title))} <span class="dim">${esc(RS.VENUES[p.venue].name)} ${p.year} · </span><b class="${/一作/.test(S.authorPos(p, m.id)) ? 'good' : ''}">${S.authorPos(p, m.id)}</b></span></div>`).join('') || '<div class="dim small">还没有论文。</div>'}
     </div>`;
   }
 
@@ -331,7 +331,7 @@
         <div class="row"><label class="small">心情</label>${bar(m.mood / 100, moodCls(m.mood))}<b class="num">${Math.round(m.mood)}</b></div>
         <div class="row" data-tip="师生信任：谈心、发奖金、一起发论文、支持实习会增加；内卷、拒绝实习、延期毕业会减少。&#10;信任高的学生更扛压、不容易被挖走，毕业时你的推荐信也更有分量。"><label class="small">信任</label>${bar(trust / 100, trust < 35 ? 'bad' : trust < 60 ? 'warn' : 'good')}<b class="num">${trust}</b></div>
         <div class="task small">${taskText(m)}</div>
-        <div class="small dim">论文 ${m.pubs}（A 类 ${m.pubsA}）· ${esc(m.school || '—')}${sal ? ` · 月薪 ${money(sal)}` : ''}</div>
+        <div class="small dim">论文 ${m.pubs}（一作 ${m.first || 0} · A 类 ${m.pubsA}）· ${esc(m.school || '—')}${sal ? ` · 月薪 ${money(sal)}` : ''}</div>
         <div class="actions">
           <button data-act="talk" data-arg="${m.id}" ${talkCd || m.status !== 'active' ? 'disabled' : ''} data-tip="${talkCd ? '最近刚谈过' : '精力 -4，心情 +10~16，信任 +6'}">谈心</button>
           <button data-act="bonus" data-arg="${m.id}" ${bonusCd ? 'disabled' : ''} data-tip="${bonusCd ? '最近刚发过' : `经费 -${money(S.bonusCost(g, m))}，心情 +18，信任 +4`}">发奖金</button>
@@ -358,7 +358,7 @@
       </div>
       ${g.members.length > G.desks(g) ? `<p class="warn small">工位不够了！挤在一起会让大家心情变差、效率下降。去「设施」页扩建实验室吧。</p>` : ''}
       ${list.map(memberCard).join('') || '<p class="dim">实验室空空荡荡……</p>'}
-      ${g.alumni.length ? fold('alumni', `已离开的成员（${g.alumni.length}）`, g.alumni.slice(0, 60).map(a => `<div class="kvline alum"><img class="portrait tiny" src="${SP.portraitURL(a.avatar, a.role, 2)}" alt=""><span class="grow">${esc(a.name)}<span class="dim small"> ${S.ROLE_NAMES[a.role]} · ${reasons[a.reason] || a.reason} · ${G.yearOfDay(a.leftDay)} · 论文 ${a.pubs || 0}（A ${a.pubsA || 0}）</span></span><span class="small">${esc(a.dest || '')}</span></div>`).join(''), 'card') : ''}`;
+      ${g.alumni.length ? fold('alumni', `已离开的成员（${g.alumni.length}）`, g.alumni.slice(0, 60).map(a => `<div class="kvline alum"><img class="portrait tiny" src="${SP.portraitURL(a.avatar, a.role, 2)}" alt=""><span class="grow">${esc(a.name)}<span class="dim small"> ${S.ROLE_NAMES[a.role]} · ${reasons[a.reason] || a.reason} · ${G.yearOfDay(a.leftDay)} · 论文 ${a.pubs || 0}（一作 ${a.first || 0} · A ${a.pubsA || 0}）</span></span><span class="small">${esc(a.dest || '')}</span></div>`).join(''), 'card') : ''}`;
   }
 
   // ---------- 小组 ----------
@@ -454,16 +454,25 @@
       <div class="row small">${gr ? groupTag(gr, `方向：${topic.name}`) : tag(topic.name, 't-mid', '这个方向没有对应的小组，用共享算力')}${heatIcons(g.topics[p.topic].heat)}<span class="dim">${lead ? esc(lead.name) : '前成员'}${helpers.length ? ' + ' + esc(helpers.join('、')) : ''}</span></div>
       <div class="pipeline">${phases.map((ph, i) => `<span class="${i === ci ? 'cur' : i < ci ? 'done' : ''}">${S.PHASE_NAMES[ph]}</span>`).join('')}</div>
       ${work ? bar(p.prog / p.need[p.phase], p.rush > 0 ? 'warn' : '', `${S.PHASE_NAMES[p.phase]} ${Math.round((p.prog / p.need[p.phase]) * 100)}%${p.rush > 0 ? ' · DDL 冲刺中！' : ''}`) : ''}
+      ${['write', 'ready', 'review'].includes(p.phase) ? (() => { const ao = S.authorOrder(g, p); return `<div class="small authors" data-tip="按目前的实际工作量排序">署名：${authorsHTML(S.authorList(g, { authors: ao.order, co: ao.co, ext: p.collab ? p.collab.who : null, guest: p.guest }))}</div>`; })() : ''}
       <div class="row small"><span data-tip="基于当前进度的估计，有误差">预估质量 <b>${Math.round(est)}</b></span>${p.attempts ? `<span class="bad">已被拒 ${p.attempts} 次</span>` : ''}${p.collab ? `<span class="good">合作：${esc(p.collab.who)}</span>` : ''}${p.bold ? '<span class="gold">大胆的想法</span>' : ''}</div>
       ${target}
       <div class="actions">${p.phase === 'ready' ? `<button data-act="venue" data-arg="${p.id}">选择投稿目标</button>` : ''}${p.phase === 'idea' ? `<button data-act="topic" data-arg="${p.id}">换方向</button>` : ''}</div>
     </div>`;
+  }
+  // 署名：* 共同一作，✉ 通讯作者（你）；外单位的合作者灰色显示
+  function authorsHTML(list) {
+    return list.map(a => {
+      const tip = a.pi ? '通讯作者（你）' : a.co ? '共同一作' : a.guest ? '挂名' : a.ext ? '外单位合作者' : '';
+      return `<span class="${a.pi ? 'gold' : a.ext ? 'dim' : ''}"${tip ? ` data-tip="${tip}"` : ''}>${esc(a.n)}${a.co ? '*' : a.pi ? '✉' : ''}</span>`;
+    }).join(', ');
   }
   function paperRow(pa) {
     const v = RS.VENUES[pa.venue];
     return `<div class="paper ${pa.retracted ? 'retracted' : ''}" data-key="${pa.id}">
       ${tierTag(pa.tier)}
       <div class="grow"><div class="ptitle">${esc(pa.title)}</div>
+      <div class="small authors">${authorsHTML(S.authorList(g, pa))}</div>
       <div class="small dim">${esc(v.name)} ${pa.year}${pa.best ? ` · <span class="gold">${ico('trophy')}最佳论文</span>` : ''}${pa.oral ? ' · Oral' : ''}${pa.viral ? ' · <span class="good">出圈</span>' : ''}${pa.retracted ? ' · <span class="bad">已撤稿</span>' : ''} · 引用 ${pa.cites}</div></div>
     </div>`;
   }
@@ -817,7 +826,7 @@
       const other = S.leadsGroup(g, m);
       const why = !ok ? '资历不够' : other && other !== gr ? `已是${S.groupName(g, other)}组长` : '';
       return `<div class="venue-row" data-key="${m.id}">${memberRowHead(m)}
-        <div class="small dim">想法 ${Math.round(m.stats.idea)} · 论文 ${m.pubs}（A ${m.pubsA}）· 信任 ${Math.round(m.trust == null ? 55 : m.trust)}</div></div>
+        <div class="small dim">想法 ${Math.round(m.stats.idea)} · 论文 ${m.pubs}（一作 ${m.first || 0}）· 信任 ${Math.round(m.trust == null ? 55 : m.trust)}</div></div>
         <button data-act="leadPick" data-arg="${gid}" data-k="${m.id}" ${why || gr.lead === m.id ? 'disabled' : ''}>${gr.lead === m.id ? '现任组长' : why ? esc(why) : '任命'}</button></div>`;
     }).join('') || '<p class="dim">组里还没有成员。</p>';
     return modalShell(`${head('star', `任命「${S.groupName(g, gr)}」组长`)}
@@ -853,7 +862,7 @@
     return modalShell(`${head('cap', `${m.name} 的毕业规划`)}
       <div class="mbody">${portraitHTML({ member: m.id }, 'big')}<div class="mtext grow">
         ${kv('身份', `${S.ROLE_NAMES[m.role]} · ${S.memberYearLabel(g, m)}（已 ${yrs.toFixed(1)} 年）`)}
-        ${kv('论文', `${m.pubs} 篇（A 类 ${m.pubsA}）`)}
+        ${kv('论文', `${m.pubs} 篇（一作 ${m.first || 0}，一作 A 类 ${m.firstA || 0}）`)}
         ${kv('职业理想 / 信任', `${esc(RS.GOALS[(m.bio || {}).goal] || '还没想好')} / ${Math.round(m.trust == null ? 55 : m.trust)}`)}
         ${kv('去向预估', esc(S.placementOutlook(g, m)))}
         <p class="${st.ok ? 'good' : 'warn'}">${esc(st.text)}</p>
@@ -1104,9 +1113,9 @@
         <p class="hint">${esc(R.desc)}</p>
         <div class="frow"><label>学校档次</label><div class="chips-wrap">${R.tiers.map((t, i) => chip('ngTier', i, t.name, ng.tier === i, t.desc)).join('')}</div></div>
         <p class="hint">${esc(R.tiers[ng.tier].desc)}。起步经费 ${R.money(R.tiers[ng.tier].startup)}。</p>
-        <div class="frow"><label>你的学校</label><div class="chips-wrap">${(R.tiers[ng.tier].schools || []).map(s => chip('ngSchool', s, s, !ng.customSchool && ng.school === s)).join('')}</div></div>
-        <div class="frow"><label></label><input id="ng-school" maxlength="20" placeholder="或者输入其他学校的名字" value="${esc(ng.customSchool)}"></div>
-        <p class="hint">学校名字会出现在游戏里：你课上和学院群里招到的学生都来自这所学校。档次决定经费、生源和考核标准。</p>
+        <div class="frow"><label>你的学校</label><div class="chips-wrap" id="ng-school-list">${(R.tiers[ng.tier].schools || []).map(s => chip('ngSchool', s, s, !ng.customSchool && ng.school === s)).join('')}</div></div>
+        <div class="frow"><label></label><input id="ng-school" maxlength="24" placeholder="输入校名：筛选上面的列表，或直接用列表里没有的学校" value="${esc(ng.customSchool)}"><span class="small dim" id="ng-school-none"></span></div>
+        <p class="hint">学校名字会出现在游戏里：你课上和学院群里招到的学生都来自这所学校。档次决定经费、生源和考核标准（${esc(R.tiers[R.tiers.length - 1].name)}用的是虚构校名）。</p>
         <div class="frow"><label>研究方向</label><div class="chips-wrap">${Object.values(RS.AREAS).map(a => chip('ngArea', a.id, a.name, ng.area === a.id)).join('')}</div></div>
         <p class="hint">${esc(A.desc)}</p>
         <div class="frow"><label>核心课题</label><div class="chips-wrap">${A.topics.map(t => chip('ngTopic', t.id, t.name, ng.topic === t.id)).join('')}</div></div>
@@ -1122,7 +1131,32 @@
     el.style.display = 'block';
     el.innerHTML = renderStart(save);
     UI._save = save;
+    const input = $('ng-school');
+    if (input) {
+      input.addEventListener('input', filterSchools);
+      filterSchools();
+    }
   };
+  // 输入校名时筛选学校列表；列表里没有的话就用输入的名字
+  function filterSchools() {
+    const input = $('ng-school'), none = $('ng-school-none');
+    if (!input) return;
+    const q = input.value.trim().toLowerCase();
+    let shown = 0;
+    document.querySelectorAll('#ng-school-list [data-act="ngSchool"]').forEach(b => {
+      const hit = !q || b.textContent.toLowerCase().includes(q);
+      b.style.display = hit ? '' : 'none';
+      if (hit) shown++;
+    });
+    if (none) none.textContent = q && !shown ? '列表里没有，就用这个名字' : '';
+  }
+  // 输入的名字和列表里的某所学校一样（不分大小写）时，用列表里的写法
+  function typedSchool() {
+    const typed = (ng.customSchool || '').trim();
+    if (!typed) return '';
+    const list = RS.REGIONS[ng.region].tiers[ng.tier].schools || [];
+    return list.find(s => s.toLowerCase() === typed.toLowerCase()) || typed;
+  }
   function hideStart() {
     const el = $('startScreen');
     el.style.display = 'none';
@@ -1155,7 +1189,7 @@
       case 'start': {
         readNgInputs();
         const lab = (ng.lab || '').trim() || 'PIXEL Lab';
-        const school = (ng.customSchool || '').trim() || ng.school;
+        const school = typedSchool() || ng.school;
         const game = G.newGame({ piName: (ng.name || '').trim() || (ng.region === 'cn' ? '张老师' : 'Prof. Zhang'), labName: lab, school, region: ng.region, tier: ng.tier, areaId: ng.area, coreTopic: ng.topic, perk: ng.perk, avatar: ng.avatar });
         hideStart();
         M.start(game, true);

@@ -254,6 +254,9 @@ button.mini-btn { padding: 0 6px; }
 .mchip button.x:hover { color: var(--bad); }
 .kvline.item { padding: 1px 0; }
 .kvline.alum { border-bottom: 1px dashed #333b66; }
+.mdetail .kvline > span:first-child { white-space: nowrap; }
+.authors { color: var(--dim); }
+.authors .gold { color: var(--gold); }
 
 /* ---------- 成员档案 ---------- */
 .motto { color: #b8c3e6; margin: 2px 0; }

@@ -150,10 +150,14 @@
   // 每个小组能用的算力：先用本组的专用服务器，不够的部分按缺口比例分共享池
   S.computeAlloc = function (g) {
     S.fixAlloc(g);
-    const total = G.computeUnits(g);
+    const f = g.flags;
+    // 机房过热限功率时所有服务器都打折；临时租的云算力进共享池
+    const cut = f.cutUntil > g.day ? f.computeCut || 1 : 1;
+    const temp = f.tempUntil > g.day ? f.tempUnits || 0 : 0;
+    const total = G.computeUnits(g) * cut + temp;
     const own = {}, dem = { _pool: 0 };
     let dedicated = 0;
-    g.groups.forEach(gr => { own[gr.id] = S.allocUnits(g, gr.id); dedicated += own[gr.id]; dem[gr.id] = 0; });
+    g.groups.forEach(gr => { own[gr.id] = S.allocUnits(g, gr.id) * cut; dedicated += own[gr.id]; dem[gr.id] = 0; });
     for (const p of g.projects) {
       if (p.phase !== 'exp') continue;
       const gr = S.groupOfTopic(g, p.topic);
@@ -173,6 +177,14 @@
       got[gr.id] = own[gr.id] + gap[gr.id] * share;
       ratio[gr.id] = dem[gr.id] > 0 ? got[gr.id] / dem[gr.id] : 9;
     });
+    // DDL 前你指定优先保证的小组：多分一些，其他人让一让
+    if (f.prioUntil > g.day && dem[f.prio] > 0) {
+      Object.keys(ratio).forEach(k => {
+        if (!(dem[k] > 0)) return;
+        ratio[k] *= k === f.prio ? 1.5 : 0.8;
+        got[k] = ratio[k] * dem[k];
+      });
+    }
     return { total, pool, dedicated, own, dem, got, ratio, idle };
   };
   S.projRatio = (g, p, ctx) => {
@@ -258,6 +270,22 @@
     G.log(g, `${m.name} 先去帮 ${G.personName(g, p.lead)} 做《${short(p.title)}》`, 'info');
   };
 
+  // 想换组的人：最感兴趣的方向有小组，但自己不在里面
+  S.switchCands = g => g.members.filter(m => {
+    if (m.status !== 'active' || m.role === 'visit') return false;
+    const gr = S.groupOfTopic(g, S.interestOf(m));
+    return !!gr && !S.inGroup(m, gr.id);
+  });
+  // DDL 前抢算力的两个小组：都有实验在跑、而且算力不够分
+  S.rushPair = function (g) {
+    if (G.area(g).compute < 0.3) return null;
+    const al = S.computeAlloc(g);
+    const gs = g.groups.filter(gr => al.dem[gr.id] > 0);
+    if (gs.length < 2 || gs.every(gr => al.ratio[gr.id] >= 1)) return null;
+    gs.sort((a, b) => al.dem[b.id] - al.dem[a.id]);
+    return [gs[0].id, gs[1].id];
+  };
+
   // ---------- 新成员分组 ----------
   S.suggestGroup = function (g, m) {
     const byInterest = S.groupOfTopic(g, S.interestOf(m));
@@ -280,8 +308,8 @@
     const yrs = S.memberYears(g, m);
     if (m.preUntil && g.day < m.preUntil) return { ok: false, text: '还没正式入学呢' };
     if (m.role === 'phd') {
-      const ok = (yrs >= 3 && (m.pubsA >= 2 || m.pubs >= 4)) || yrs >= 5.5;
-      return { ok, text: ok ? '已经达到博士毕业要求' : '博士毕业要求：读满 3 年，并且有 2 篇 A 类或 4 篇论文', early: !ok && yrs >= 1.5 };
+      const ok = (yrs >= 3 && ((m.firstA || 0) >= 2 || (m.first || 0) >= 4)) || yrs >= 5.5;
+      return { ok, text: ok ? '已经达到博士毕业要求' : '博士毕业要求：读满 3 年，并且有 2 篇一作 A 类或 4 篇一作论文', early: !ok && yrs >= 1.5 };
     }
     if (m.role === 'ms') {
       const ok = yrs >= 1.4;
@@ -291,11 +319,13 @@
     if (m.role === 'ug') return { ok: true, text: '本科生可以随时结束科研训练' };
     return { ok: true, text: '访问学生可以提前结束访问' };
   };
-  // 毕业去向的“底子”：成果、能力、你的声望和推荐信（信任），带过组的加分
+  // 毕业去向的“底子”：成果（一作的分量是挂名合作的两倍）、能力、你的声望和推荐信（信任），带过组的加分
   S.placementScore = function (g, m) {
     const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
     const trust = m.trust == null ? 55 : m.trust;
-    return m.pubsA * 3 + m.pubs + (avg - 50) / 5 + g.rep / 80 + (trust - 50) / 12 + (m.ledGroup ? 2 : 0);
+    const first = m.first || 0, firstA = m.firstA || 0;
+    const papers = firstA * 3 + Math.max(0, m.pubsA - firstA) * 1.5 + first + Math.max(0, m.pubs - first) * 0.5;
+    return papers + (avg - 50) / 5 + g.rep / 80 + (trust - 50) / 12 + (m.ledGroup ? 2 : 0);
   };
   S.placementOutlook = function (g, m) {
     const s = S.placementScore(g, m);

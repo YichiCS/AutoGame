@@ -93,6 +93,8 @@
           S.bumpStat(m, 'write', 1);
           S.addMood(m, 12);
           G.log(g, `${m.name} 实习归来，带回了不少工程经验`, 'info');
+        } else if (m.awayReward) {
+          S.awayReturn(g, m);
         } else {
           G.log(g, `${m.name} 回到了实验室`, 'info');
         }
@@ -499,7 +501,7 @@
     for (const m of g.members.slice()) {
       const yrs = S.memberYears(g, m);
       if (m.role === 'phd') {
-        const ready = (yrs >= 3.8 && (m.pubsA >= 3 || m.pubs >= 5)) || yrs >= 5.6;
+        const ready = (yrs >= 3.8 && ((m.firstA || 0) >= 3 || (m.first || 0) >= 5)) || yrs >= 5.6;
         if (ready) G.queue(g, { type: 'event', id: 'phd_grad', ctx: { mid: m.id } });
       } else if (m.role === 'ms' && yrs >= 1.7) {
         const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
@@ -522,12 +524,13 @@
     let acad = 0.3 + S.tAdd(m, 'academia') - (m.traits.includes('industry') ? 0.25 : 0);
     acad += { academia: 0.35, industry: -0.2, startup: -0.25, quant: -0.25, undecided: 0 }[goal] || 0;
     if (m.role === 'ms' || m.role === 'ug') acad = 0;
-    const univs = R.univs.filter(u => u !== g.school);
-    const univ = U.pick(univs.length ? univs : R.univs);
+    const pickUniv = list => { const l = (list || R.univs).filter(u => u !== g.school); return U.pick(l.length ? l : R.univs); };
+    const univ = pickUniv(R.univs);
     if ((m.role === 'phd' || m.role === 'postdoc') && score > 15 && U.chance(U.clamp(acad + 0.15, 0, 0.95))) {
+      // 成果特别突出的，去最好的那一批学校
       const top = score > 24;
       if (trust >= 70 && U.chance(0.12)) return { text: `${g.school} 助理教授（留校任教）`, kind: 'prof', rep: top ? 10 : 6 };
-      return { text: `${univ} 助理教授`, kind: 'prof', rep: top ? 10 : 5 };
+      return { text: `${top ? pickUniv(R.univsTop) : univ} 助理教授`, kind: 'prof', rep: top ? 10 : 5 };
     }
     if (m.role === 'phd' && score > 9 && U.chance(U.clamp(acad, 0, 0.9))) return { text: `${univ} 博士后`, kind: 'postdoc', rep: 2 };
     const co = U.pick(R.companies);

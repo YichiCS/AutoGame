@@ -22,6 +22,8 @@
     VENUES[id] = { id, name, tier, dl: null, review, type: 'jour', parity: null, rebuttal: false };
   }
   VENUES.arxiv = { id: 'arxiv', name: 'arXiv', tier: 'P', dl: null, review: 0, type: 'pre', parity: null, rebuttal: false };
+  // 跨学科合作发的论文（不在任何方向的投稿列表里）
+  VENUES.cross = { id: 'cross', name: '交叉学科期刊', tier: 'B', dl: null, review: 0, type: 'jour', parity: null, rebuttal: false };
 
   // —— 人工智能 / 机器学习 ——
   V('neurips', 'NeurIPS', 'A', [[5, 15]], 130, { rebuttal: true });
@@ -342,10 +344,133 @@
     },
   };
 
+  // ---------- 论文标题 ----------
+  // 占位符：{Adj} {Adj2} {Method} {Task} {Acr} {Noun} {Verb} {Thing} {Num} {Barrier}
   RS.TITLE_PARTS = {
-    templates: ['{Adj} {Method} for {Task}', '{Acr}: {Adj} {Task} via {Method}', 'Towards {Adj} {Task}', 'Rethinking {Task} with {Method}', '{Method} Is All You Need for {Task}', 'When {Method} Meets {Task}', 'Scaling {Method} for {Task}', 'On the {Noun} of {Method} in {Task}', 'Revisiting {Method}: {Adj} {Task}', '{Acr}: {Method} for {Adj} {Task}', 'Beyond {Method}: {Adj} {Task}', 'A Unified Framework for {Task}', '{Acr}: Taming {Task} with {Method}'],
-    adj: ['Efficient', 'Scalable', 'Robust', 'Provable', 'Generalizable', 'Adaptive', 'Lightweight', 'Unified', 'Faithful', 'Fast', 'Private', 'Interpretable', 'Practical', 'Zero-Shot', 'Data-Efficient', 'Fine-Grained', 'Holistic'],
-    noun: ['Limits', 'Power', 'Robustness', 'Expressivity', 'Pitfalls', 'Generalization', 'Benefits', 'Brittleness'],
-    acr: ['FLASH', 'SPARK', 'LUMEN', 'ORCA', 'MAPLE', 'NOVA', 'TITAN', 'ECHO', 'PRISM', 'HALO', 'ATLAS', 'COMET', 'FALCON', 'PANDA', 'LOTUS', 'ZEBRA', 'QUILL', 'RAVEN', 'SIGMA', 'TURBO', 'VORTEX', 'PIXIE', 'MOCHI', 'BOBA', 'DUMPLING', 'TOFU', 'BAOZI', 'WONTON', 'MANGO', 'KIWI', 'OTTER', 'BADGER', 'LYNX', 'NEXUS', 'HELIX', 'ZEPHYR', 'AURORA', 'EMBER', 'GLACIER', 'TEMPO', 'MOSAIC', 'ORBIT', 'PULSAR', 'QUASAR'],
+    templates: [
+      '{Adj} {Method} for {Task}', '{Acr}: {Adj} {Task} via {Method}', 'Towards {Adj} {Task}', 'Rethinking {Task} with {Method}',
+      '{Method} Is All You Need for {Task}', 'When {Method} Meets {Task}', 'Scaling {Method} for {Task}', 'On the {Noun} of {Method} in {Task}',
+      'Revisiting {Method}: {Adj} {Task}', '{Acr}: {Method} for {Adj} {Task}', 'Beyond {Method}: {Adj} {Task}', 'A Unified Framework for {Task}',
+      '{Acr}: Taming {Task} with {Method}', 'A Closer Look at {Method} for {Task}', 'Demystifying {Method} in {Task}',
+      'Is {Method} Really Necessary for {Task}?', 'What Makes {Method} Work for {Task}?', 'Less Is More: {Adj} {Task} with {Method}',
+      '{Adj} and {Adj2} {Task}', '{Acr}: Bridging {Method} and {Task}', 'From {Method} to {Task}', '{Task} at Scale: Lessons from {Acr}',
+      'Mind the Gap: {Method} for {Task}', '{Acr}: Teaching Models to {Verb} in {Task}', 'Learning to {Verb}: {Adj} {Task} with {Method}',
+      'The {Noun} of {Task}: An Empirical Study', 'Unlocking {Adj} {Task} with {Method}', '{Acr}: A Benchmark for {Task}',
+      '{Acr}-{Num}: A Large-Scale Dataset for {Task}', 'Do We Really Need {Method} for {Task}?', 'Not All {Thing} Are Equal: {Adj} {Task}',
+      'Fewer {Thing}, Better {Task}', 'Breaking the {Barrier} in {Task}', '{Adj} {Task} in the Wild', 'Provably {Adj} {Task}',
+      '{Method} as a Lens on {Task}', '{Acr}: {Adj}, {Adj2} {Task} with {Method}', 'Self-Supervised {Task} via {Method}', 'Can {Method} Help {Task}?',
+      '{Task} through the Lens of {Method}', '{Acr}: Plug-and-Play {Method} for {Task}', 'On the {Noun} of {Task}', 'Training-Free {Task} with {Method}',
+      'Towards Trustworthy {Task}', '{Method} Done Right for {Task}', '{Acr}: Rethinking {Thing} in {Task}',
+    ],
+    // 偶尔冒出来的“标题党”
+    fun: [
+      '{Method} Is Not All You Need', 'We Need to Talk About {Task}', 'No Free Lunch in {Task}', 'The Unreasonable Effectiveness of {Method} in {Task}',
+      'Everything You Always Wanted to Know About {Task}', '{Task} Considered Harmful', 'Stop Using {Method} for {Task}', 'Yes, {Method} Can Do {Task}',
+      'Attention Is Still All You Need for {Task}', 'Is {Task} Solved? Not Yet', 'One {Method} to Rule Them All', '{Task}: The Good, the Bad, and the Ugly',
+    ],
+    adj: [
+      'Efficient', 'Scalable', 'Robust', 'Provable', 'Generalizable', 'Adaptive', 'Lightweight', 'Unified', 'Faithful', 'Fast', 'Private', 'Interpretable',
+      'Practical', 'Zero-Shot', 'Data-Efficient', 'Fine-Grained', 'Holistic', 'Hierarchical', 'Compositional', 'Training-Free', 'Self-Improving', 'Calibrated',
+      'Long-Horizon', 'Multi-Scale', 'Energy-Efficient', 'Verifiable', 'Decentralized', 'Continual', 'Causal', 'Sparse', 'Equivariant', 'Memory-Efficient',
+      'Streaming', 'Open-World', 'Certified', 'Elastic', 'Explainable', 'Resilient', 'Modular', 'Fair',
+    ],
+    noun: ['Limits', 'Power', 'Robustness', 'Expressivity', 'Pitfalls', 'Generalization', 'Benefits', 'Brittleness', 'Hidden Costs', 'Surprising Effectiveness', 'Role', 'Geometry', 'Dynamics', 'Fragility', 'Scaling Behavior', 'Trade-offs'],
+    verb: ['Reason', 'Generalize', 'Compress', 'Plan', 'Forget', 'Adapt', 'Explain', 'Verify', 'Collaborate', 'Self-Correct', 'Search', 'Remember'],
+    thing: ['Tokens', 'Layers', 'Samples', 'Experts', 'Features', 'Gradients', 'Queries', 'Edges', 'Pixels', 'Heads', 'Parameters', 'Demonstrations'],
+    num: ['1M', '10K', '100K', '1B', '50K', '2M', '500K'],
+    barrier: ['Memory Wall', 'Quadratic Barrier', 'Data Bottleneck', 'Latency Barrier', 'Scaling Ceiling', 'Annotation Bottleneck'],
+    acr: [
+      'FLASH', 'SPARK', 'LUMEN', 'ORCA', 'MAPLE', 'NOVA', 'TITAN', 'ECHO', 'PRISM', 'HALO', 'ATLAS', 'COMET', 'FALCON', 'PANDA', 'LOTUS', 'ZEBRA',
+      'QUILL', 'RAVEN', 'SIGMA', 'TURBO', 'VORTEX', 'PIXIE', 'MOCHI', 'BOBA', 'DUMPLING', 'TOFU', 'BAOZI', 'WONTON', 'MANGO', 'KIWI', 'OTTER', 'BADGER',
+      'LYNX', 'NEXUS', 'HELIX', 'ZEPHYR', 'AURORA', 'EMBER', 'GLACIER', 'TEMPO', 'MOSAIC', 'ORBIT', 'PULSAR', 'QUASAR', 'GLOW', 'BEACON', 'CIRRUS',
+      'DELTA', 'FABLE', 'GECKO', 'HERON', 'IRIS', 'JADE', 'KOALA', 'LARK', 'MERLIN', 'NIMBUS', 'OPAL', 'PEBBLE', 'QUOKKA', 'RIPPLE', 'SAGE', 'TAPIR',
+      'UMBRA', 'VELVET', 'WALRUS', 'YETI', 'ZENITH', 'MANTIS', 'CRANE', 'SPROUT', 'TEAPOT', 'NOODLE', 'MOONCAKE', 'HOTPOT', 'JIAOZI', 'MAHJONG', 'PANGOLIN',
+    ],
+    acrSuffix: ['++', '-2', 'v2', 'XL', '-Zero', '-R1', '-Lite', '-Pro'],
   };
+
+  // 各方向自己的标题风格
+  const AREA_TEMPLATES = {
+    ml: ['Provably {Adj} {Task} via {Method}', 'Understanding {Method} through the Lens of {Task}', 'Scaling Laws for {Task}', 'A Theoretical Analysis of {Method} for {Task}',
+      '{Acr}: {Adj} {Task} with {Method}', 'Sample-Efficient {Task} via {Method}', 'In Defense of {Method} for {Task}', 'The Implicit Bias of {Method} in {Task}',
+      'How Does {Method} Help {Task}?', 'Stabilizing {Task} with {Method}'],
+    cv: ['{Acr}: {Adj} {Task} from a Single Image', 'Learning {Task} from Unlabeled Videos', '{Task} in the Wild with {Method}', '{Acr}: Seeing {Task} through {Method}',
+      'Open-World {Task} via {Method}', '{Acr}: Real-Time {Task} on Mobile Devices', 'Zero-Shot {Task} with {Method}', 'Segment, Track, and Reconstruct: {Adj} {Task}',
+      'Pixel-Perfect {Task} with {Method}', '{Task} from Sparse Views via {Method}'],
+    nlp: ['Do Large Language Models Understand {Task}?', '{Acr}: A Benchmark for Evaluating {Task}', 'Teaching Language Models to {Verb} with {Method}',
+      'The Curious Case of {Task} in Language Models', '{Method} Improves {Task} in Language Models', 'Large Language Models Are {Adj} {Task} Learners',
+      'Lost in {Task}: How Language Models Fail', '{Acr}: {Adj} {Task} via {Method}', 'Language Models Can {Verb} through {Method}', 'Revisiting {Task} in the Era of Large Language Models'],
+    sys: ['{Acr}: {Adj} {Task} with {Method}', '{Acr}: Fast and Correct {Task}', 'Taming Tail Latency in {Task}', 'Understanding and Improving {Task} in Production',
+      '{Acr}: Rethinking the {Task} Stack', 'Fine-Grained {Task} with {Method}', '{Acr}: {Task} at Datacenter Scale', 'A Large-Scale Characterization of {Task} in the Cloud',
+      '{Acr}: Making {Task} {Adj} with {Method}', 'Zero-Copy {Task} via {Method}'],
+    sec: ['SoK: {Task}', '{Acr}: Practical {Task} at Scale', 'Revisiting {Task}: Attacks and Defenses', 'Hidden in Plain Sight: {Task} via {Method}', 'Measuring {Task} in the Wild',
+      '{Acr}: Towards Provably Secure {Task}', '{Acr}: Hunting Bugs in {Task} with {Method}', 'You Can Run but You Cannot Hide: {Task}', '{Acr}: Automated {Task} via {Method}',
+      'Breaking and Fixing {Task}'],
+    theory: ['Optimal {Task} in Near-Linear Time', 'Lower Bounds for {Task}', 'A Simple Proof for {Task} via {Method}', '{Task} Beyond the Worst Case', 'Derandomizing {Task}',
+      'Tight Analysis of {Task}'],
+    hci: ['{Acr}: Co-Designing {Task} with Communities', '"I Felt Heard": {Task} in Practice', 'Towards Inclusive {Task}', '{Acr}: Augmenting {Task} with {Method}',
+      'A Longitudinal Study of {Task}', 'Speculative Design for {Task}'],
+    robo: ['{Acr}: Learning {Task} from Human Videos', 'Generalist {Task} with {Method}', '{Task} in the Real World via {Method}', 'One Policy to Rule Them All: {Task}',
+      'Learning {Task} from a Handful of Demonstrations', '{Acr}: Robust {Task} on Real Hardware', 'Sim-to-Real {Task} with {Method}', '{Acr}: {Adj} {Task} for Household Robots',
+      'Scaling Up {Task} with {Method}'],
+    db: ['{Acr}: Learned {Task}', 'Towards Instance-Optimal {Task}', '{Task} for the LLM Era', 'An Experimental Evaluation of {Task}', 'Are We There Yet? Revisiting {Task}',
+      '{Acr}: {Adj} {Task} over Massive Data', '{Method} Meets {Task}: A Systematic Study', '{Acr}: Interactive {Task} at Scale', 'Efficient and Accurate {Task} via {Method}'],
+    arch: ['{Acr}: An Accelerator for {Task}', '{Acr}: Energy-Efficient {Task} with {Method}', 'Rethinking {Task} for the Post-Moore Era', 'Characterizing {Task} on Modern Hardware',
+      '{Acr}: Co-Designing {Task} and {Method}', 'Breaking the Memory Wall in {Task}', '{Acr}: A Scalable Architecture for {Task}', 'Bit-Level {Task} with {Method}'],
+    se: ['An Empirical Study of {Task}', 'How Far Are We from {Adj} {Task}?', '{Acr}: Automated {Task} via {Method}', 'Large Language Models for {Task}: Promise and Pitfalls',
+      'Revisiting {Task} in the Era of {Method}', '{Acr}: {Adj} {Task} for Real-World Projects', 'Mining Software Repositories for {Task}', 'Towards Reliable {Task} with {Method}'],
+    graphics: ['{Acr}: Real-Time {Task} with {Method}', 'Differentiable {Task}', '{Task} from Sparse Inputs via {Method}', 'Learning {Task} from a Single Video',
+      'Physically-Based {Task} with {Method}', '{Acr}: Interactive {Task} for Artists', 'Neural {Task} with {Method}', '{Acr}: Controllable {Task}'],
+  };
+
+  // 每个课题更多的研究任务（论文标题里的 {Task}）
+  const TASK_EXTRA = {
+    ml: { llm: ['Long-Context Language Modeling', 'Small Language Models'], diffusion: ['Consistency Models', 'Discrete Diffusion'],
+      rl: ['Model-Based Reinforcement Learning', 'Exploration in Sparse-Reward Environments'], gnn: ['Graph Transformers', 'Molecular Property Prediction'],
+      fl: ['Personalized Federated Learning', 'Communication-Efficient Training'], xai: ['Sparse Autoencoder Features', 'Concept-Based Explanations'],
+      opt: ['Adaptive Optimizers', 'Learning Rate Schedules'], align: ['Scalable Oversight', 'Red Teaming'] },
+    cv: { '3d': ['Multi-View Stereo', 'Dynamic Scene Reconstruction'], videogen: ['Long Video Generation', 'Camera-Controlled Video Synthesis'],
+      det: ['Open-World Segmentation', 'Referring Expression Grounding'], ad: ['Occupancy Prediction', 'End-to-End Autonomous Driving'],
+      med: ['Pathology Image Analysis', 'Radiology Report Generation'], vlm: ['Multimodal Large Language Models', 'Visual Grounding'],
+      edit: ['Personalized Text-to-Image Generation', 'Image Inpainting'], pose: ['Hand Pose Estimation', 'Human Motion Capture'] },
+    nlp: { reason: ['Multi-Step Reasoning', 'Test-Time Reasoning'], rag: ['Long-Document Question Answering', 'Knowledge-Intensive Generation'],
+      agent: ['Multi-Agent Collaboration', 'GUI Agents'], mt: ['Speech Translation', 'Document-Level Translation'],
+      dialog: ['Persona-Grounded Conversation', 'Empathetic Dialogue'], eval: ['LLM-as-a-Judge', 'Benchmark Contamination'],
+      multi: ['Code-Switching', 'Low-Resource Languages'], halluc: ['Knowledge Conflicts', 'Faithful Summarization'] },
+    sys: { serving: ['KV-Cache Management', 'Multi-Tenant LLM Serving'], dtrain: ['Fault-Tolerant Training', 'Mixture-of-Experts Training'],
+      storage: ['Log-Structured Storage', 'Flash Storage'], os: ['Microkernels', 'Virtualization'], serverless: ['Cold Start Mitigation', 'Edge Computing'],
+      sched: ['Datacenter Resource Management', 'Job Scheduling'], cxl: ['Tiered Memory', 'Far Memory'], compiler: ['Kernel Fusion', 'Auto-Tuning'] },
+    sec: { fuzz: ['Kernel Fuzzing', 'Protocol Fuzzing'], side: ['Transient Execution Attacks', 'Rowhammer'], privacy: ['Private Information Retrieval', 'Privacy-Preserving Analytics'],
+      llmsec: ['LLM Watermarking', 'Backdoor Attacks on LLMs'], chain: ['Cross-Chain Bridges', 'MEV Extraction'], malware: ['Ransomware Detection', 'Android Malware'],
+      supply: ['Dependency Confusion', 'Reproducible Builds'] },
+    theory: { approx: ['Facility Location', 'k-Means Clustering'], complex: ['Proof Complexity', 'Fine-Grained Complexity'],
+      online: ['Online Learning with Predictions', 'Secretary Problems'], graph: ['Shortest Paths', 'Graph Sparsification'],
+      quantum: ['Quantum Error Correction', 'Quantum Query Complexity'], crypto: ['Zero-Knowledge Proofs', 'Fully Homomorphic Encryption'],
+      agt: ['Auctions', 'Information Design'], lt: ['Generalization Bounds', 'PAC Learning'] },
+    hci: { xr: ['Spatial Computing', 'Locomotion in VR'], access: ['Screen Reader Interaction', 'Sign Language Technology'], vis: ['Visualization Literacy', 'Notebook Interfaces'],
+      haic: ['Trust in AI Assistants', 'Creative Writing Support'], wear: ['Smart Rings', 'Health Sensing'], social: ['Content Moderation', 'Misinformation'],
+      edu: ['AI Tutors', 'Classroom Orchestration'] },
+    robo: { embodied: ['Embodied Question Answering', 'Generalist Robot Policies'], manip: ['Deformable Object Manipulation', 'Bimanual Manipulation'],
+      legged: ['Parkour Locomotion', 'Terrain-Aware Locomotion'], slam: ['Lidar Odometry', 'Semantic Mapping'], humanoid: ['Humanoid Teleoperation', 'Humanoid Locomotion'],
+      il: ['Learning from Play', 'Cross-Embodiment Transfer'], plan: ['Task and Motion Planning', 'Multi-Robot Coordination'] },
+    db: { vecdb: ['Filtered Vector Search', 'Hybrid Search'], qo: ['Join Ordering', 'Query Rewriting'], rec: ['Sequential Recommendation', 'Generative Recommendation'],
+      gmine: ['Subgraph Matching', 'Dense Subgraph Discovery'], ts: ['Time Series Foundation Models', 'Streaming Anomaly Detection'],
+      lake: ['Table Discovery', 'Data Cleaning'], llmdb: ['Table Question Answering', 'Data Wrangling with LLMs'] },
+    arch: { accel: ['Transformer Accelerators', 'Sparse Attention Hardware'], pim: ['In-DRAM Computing', 'ReRAM Crossbars'],
+      chiplet: ['Heterogeneous Integration', 'Network-on-Package'], riscv: ['Vector Extensions', 'Processor Verification'],
+      qarch: ['Qubit Mapping', 'Quantum Control Systems'], mem: ['CXL Memory Expansion', 'Memory Compression'],
+      sparse: ['GNN Acceleration', 'Sparse Matrix Multiplication'] },
+    se: { codellm: ['Repository-Level Code Completion', 'Code Review Automation'], apr: ['Vulnerability Repair', 'Fault Localization'],
+      testing: ['Flaky Test Detection', 'Unit Test Generation'], analysis: ['Taint Analysis', 'Type Inference'],
+      oss: ['Developer Onboarding', 'Open Source Sustainability'], sesmart: ['Smart Contract Verification', 'Gas Optimization'] },
+    graphics: { nrender: ['Relighting', 'Global Illumination'], sim: ['Cloth Simulation', 'Rigid Body Contact'], geo: ['Mesh Simplification', 'Surface Reconstruction'],
+      anim: ['Motion Retargeting', 'Facial Animation'], gen3d: ['Text-to-Shape Generation', '3D Scene Generation'], visu: ['Flow Visualization', 'Uncertainty Visualization'] },
+  };
+
+  Object.keys(RS.AREAS).forEach(id => {
+    const A = RS.AREAS[id];
+    if (AREA_TEMPLATES[id]) A.templates = (A.templates || []).concat(AREA_TEMPLATES[id]);
+    const extra = TASK_EXTRA[id] || {};
+    A.topics.forEach(t => { if (extra[t.id]) t.en = t.en.concat(extra[t.id]); });
+  });
 })();

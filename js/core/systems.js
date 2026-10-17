@@ -88,7 +88,7 @@
       stats, pot: o.pot || U.range(0.8, 1.25), mood: o.mood || U.int(68, 85),
       traits, funding: o.funding || S.defaultFunding(g, role), fellowUntil: o.fellowUntil || 0,
       projectId: null, status: 'active', awayUntil: 0, awayWhy: '', remoteUntil: 0, preUntil: o.preUntil || 0,
-      pubs: 0, pubsA: 0, school: o.school || '',
+      pubs: 0, pubsA: 0, first: 0, firstA: 0, school: o.school || '',
       lowMood: 0, quitCd: 0, salaryMult: 1, desk: -1,
       endDay: ROLE_YEARS[role] ? startDay + Math.round(ROLE_YEARS[role] * 360) : 0,
       internYear: 0, talkCd: 0, bonusCd: 0, extended: 0,
@@ -110,6 +110,16 @@
       if (m.trust == null) m.trust = 55;
       if (!m.base) m.base = { idea: Math.round(m.stats.idea), code: Math.round(m.stats.code), write: Math.round(m.stats.write) };
       if (!m.story) m.story = [];
+      if (m.first == null) {
+        // 旧存档没有记录一作，从已发表的论文里数（旧论文的作者顺序就是负责人在前）
+        m.first = 0;
+        m.firstA = 0;
+        g.papers.forEach(pa => {
+          if (pa.tier === 'P' || pa.pre) return;
+          const i = (pa.authors || []).indexOf(m.id);
+          if (i >= 0 && i < (pa.co == null ? 1 : pa.co)) { m.first++; if (pa.tier === 'A') m.firstA++; }
+        });
+      }
     });
     S.normalizeGroups(g);
   };
@@ -188,7 +198,7 @@
     S.groupsOnLeave(g, m);
     g.alumni.unshift({
       id: m.id, name: m.name, role: m.role, avatar: m.avatar, joinDay: m.joinDay, startDay: m.startDay,
-      leftDay: g.day, reason, dest: dest || '', pubs: m.pubs, pubsA: m.pubsA, goal: m.bio ? m.bio.goal : '',
+      leftDay: g.day, reason, dest: dest || '', pubs: m.pubs, pubsA: m.pubsA, first: m.first || 0, goal: m.bio ? m.bio.goal : '',
     });
     if (g.alumni.length > 100) g.alumni.length = 100;
     S.assignDesks(g);
@@ -208,13 +218,22 @@
     return U.pick(A.topics).id;
   };
 
+  // 论文标题：方向自己的风格、通用模板，偶尔来个“标题党”
   S.genTitle = function (g, tid) {
     const A = G.area(g);
     const T = G.topic(g, tid);
     const P = RS.TITLE_PARTS;
-    const tpl = A.templates && U.chance(0.7) ? U.pick(A.templates) : U.pick(P.templates);
-    return tpl.replace('{Adj}', U.pick(P.adj)).replace('{Method}', U.pick(A.methods)).replace('{Task}', U.pick(T.en))
-      .replace('{Acr}', U.pick(P.acr)).replace('{Noun}', U.pick(P.noun));
+    const r = Math.random();
+    const tpl = r < 0.04 ? U.pick(P.fun) : A.templates && r < 0.5 ? U.pick(A.templates) : U.pick(P.templates);
+    const adj = U.pick(P.adj);
+    let adj2 = U.pick(P.adj);
+    for (let i = 0; i < 5 && adj2 === adj; i++) adj2 = U.pick(P.adj);
+    const fill = {
+      Adj: adj, Adj2: adj2, Method: U.pick(A.methods), Task: U.pick(T.en), Noun: U.pick(P.noun), Verb: U.pick(P.verb),
+      Thing: U.pick(P.thing), Num: U.pick(P.num), Barrier: U.pick(P.barrier),
+      Acr: U.pick(P.acr) + (U.chance(0.12) ? U.pick(P.acrSuffix) : ''),
+    };
+    return tpl.replace(/\{(\w+)\}/g, (all, k) => (fill[k] != null ? fill[k] : all));
   };
 
   // 尽量不和在研课题、已发表论文重名
@@ -239,6 +258,7 @@
       sc: {}, q: 0, bonus: 0, polish: 0, est: U.normal(0, 3),
       target: null, venue: null, submitDay: 0, notifyDay: 0, rebuttalDay: 0, attempts: 0, history: [],
       startDay: g.day, rush: 0, rushTarget: null, rushAsked: {}, collab: null, asking: false,
+      contrib: {}, // 每个人的实际工作量，决定作者顺序
     };
     g.projects.push(p);
     lead.projectId = p.id;
@@ -288,7 +308,8 @@
     const piMentor = resting ? 0.93 : pol.focus === 'mentor' && g.pi.energy >= 25 ? 1.07 : g.pi.energy < 15 ? 0.92 : 1;
     const crowd = g.members.length > G.desks(g) ? 0.93 : 1;
     const contracts = g.grants.filter(x => x.kind === 'contract').length;
-    const holiday = S.isHoliday(g) ? 0.45 : 1;
+    // 假期效率低；暴雪/台风停课的那几天也差不多
+    const holiday = S.isHoliday(g) ? 0.45 : g.flags.closedUntil > g.day ? 0.6 : 1;
     const mentor = S.mentorLoad(g);
     const labMult = intensity * meeting * piMentor * (1 + fac.prod) * crowd * Math.pow(0.93, contracts) * holiday * mentor.factor;
     const units = G.computeUnits(g);
@@ -365,6 +386,7 @@
     p.prog += w;
     p.acc[ph] += w * S.phaseStat(m, ph);
     p.wsum[ph] += w;
+    if (p.contrib) p.contrib[m.id] = (p.contrib[m.id] || 0) + w;
     S.grow(g, m, ph, w);
     if (p.prog >= p.need[ph]) S.completePhase(g, p);
   };
@@ -381,7 +403,61 @@
     p.prog += w;
     p.acc[p.phase] += w * stat;
     p.wsum[p.phase] += w;
+    if (p.contrib) p.contrib.pi = (p.contrib.pi || 0) + w;
     if (p.prog >= p.need[p.phase]) S.completePhase(g, p);
+  };
+
+  // ---------- 作者顺序 ----------
+  // 学生按实际工作量排（课题负责人略有加成），前两位贡献接近时共同一作；
+  // 贡献太少的只出现在致谢里。PI 是通讯作者，排在最后。
+  S.authorOrder = function (g, p) {
+    const ids = p.authors.slice();
+    const c = p.contrib;
+    if (!c) return { order: ids, co: 1 }; // 旧存档：保持原来的顺序
+    const score = id => (c[id] || 0) * (id === p.lead ? 1.15 : 1);
+    let order = ids.slice().sort((a, b) => score(b) - score(a) || ids.indexOf(a) - ids.indexOf(b));
+    const top = score(order[0]) || 1;
+    const plan = p.authorPlan && p.authorPlan.filter(id => ids.includes(id));
+    order = order.filter((id, i) => i === 0 || score(id) >= top * 0.03 || (plan && plan.includes(id)));
+    let co = 1;
+    if (plan && plan.length) {
+      order = plan.concat(order.filter(id => !plan.includes(id)));
+      co = plan.length;
+    } else if (order.length > 1 && score(order[1]) >= top * 0.8) co = 2;
+    return { order, co };
+  };
+  // 可能闹署名纠纷的论文：写作后期或刚写完，第二作者的工作量不小、但还没到自动共一的程度
+  S.disputeCands = function (g) {
+    const out = [];
+    g.projects.forEach(p => {
+      if (p.authorPlan || !p.contrib) return;
+      if (!(p.phase === 'ready' || (p.phase === 'write' && p.prog >= p.need.write * 0.5))) return;
+      const ao = S.authorOrder(g, p);
+      if (ao.co > 1 || ao.order.length < 2) return;
+      const a = G.member(g, ao.order[0]), b = G.member(g, ao.order[1]);
+      if (a && b && (p.contrib[b.id] || 0) >= (p.contrib[a.id] || 0) * 0.35) out.push({ p, a: a.id, b: b.id });
+    });
+    return out;
+  };
+  S.POS_NAMES = ['一作', '二作', '三作', '四作', '五作', '六作'];
+  // 某位成员在一篇论文里的署名位置
+  S.authorPos = function (pa, id) {
+    const i = (pa.authors || []).indexOf(id);
+    if (i < 0) return '';
+    const co = pa.co == null ? 1 : pa.co;
+    if (i < co) return co > 1 ? '共同一作' : '一作';
+    const k = i + (pa.pre ? pa.pre.length : 0);
+    return S.POS_NAMES[k] || `第 ${k + 1} 作者`;
+  };
+  // 署名列表（给界面显示）：外单位牵头的在前，然后是学生、合作者、挂名的人，最后是你（通讯作者）
+  S.authorList = function (g, pa) {
+    const co = pa.co == null ? 1 : pa.co;
+    const out = (pa.pre || []).map(n => ({ n, ext: true }));
+    (pa.authors || []).forEach((id, i) => out.push({ n: G.personName(g, id), id, co: co > 1 && i < co }));
+    if (pa.ext) out.push({ n: pa.ext, ext: true });
+    if (pa.guest) out.push({ n: pa.guest, ext: true, guest: true });
+    out.push({ n: g.pi.name, pi: true });
+    return out;
   };
 
   S.completePhase = function (g, p) {
@@ -632,10 +708,12 @@
       if (margin > 18 && !g.flags.bestAt[key] && U.chance(Math.min(0.12, 0.01 + (margin - 18) * 0.006))) { best = true; g.flags.bestAt[key] = 1; }
       else if (margin > 10 && U.chance(0.5)) oral = true;
     }
+    const ao = S.authorOrder(g, p);
     const paper = {
       id: G.nid(g, 'pa'), title: p.title, topic: p.topic, venue: v.id, tier: v.tier, year, day: g.day,
-      q: Math.round(p.q * 10) / 10, cites: 0, acc: 0, rate: S.citeRate(g, p, v, best), best, oral,
-      authors: p.authors.slice(), lead: p.lead, scores: info.scores || null, pid: p.id,
+      q: Math.round(p.q * 10) / 10, cites: 0, acc: 0, rate: S.citeRate(g, p, v, best) * (p.guest ? 1.1 : 1), best, oral,
+      authors: ao.order, co: ao.co, lead: ao.order[0], ext: p.collab ? p.collab.who : null, guest: p.guest || null,
+      scores: info.scores || null, pid: p.id,
     };
     g.papers.unshift(paper);
     if (p.fake && v.tier !== 'P' && U.chance(0.45)) G.schedule(g, g.day + U.int(120, 540), 'scandal', { paperId: paper.id });
@@ -647,24 +725,31 @@
     if (v.tier === 'A') g.year.papersA++;
     S.addRep(g, RS.TIERS[v.tier].rep + (best ? 15 : 0) + (oral ? 1.5 : 0));
     if (v.tier !== 'P') g.expertise[p.topic] = Math.min(10, (g.expertise[p.topic] || 0) + (v.tier === 'A' ? 1 : 0.5));
-    p.authors.forEach(id => {
+    ao.order.forEach((id, i) => {
       const m = G.member(g, id);
       if (!m) return;
+      const first = i < ao.co;
+      const pos = S.authorPos(paper, id);
       if (v.tier !== 'P') {
-        if (m.pubs === 0) S.story(g, m, `第一篇论文：${v.name} ${year}`);
+        if (m.pubs === 0) S.story(g, m, `第一篇论文（${pos}）：${v.name} ${year}`);
+        else if (first && !m.first) S.story(g, m, `第一篇${pos}论文：${v.name} ${year}`);
         m.pubs++;
+        if (first) m.first = (m.first || 0) + 1;
       }
       if (v.tier === 'A') {
-        if (m.pubsA === 0 && m.pubs > 1) S.story(g, m, `第一篇 A 类论文：${v.name} ${year}`);
+        if (first && !m.firstA && m.pubs > 1) S.story(g, m, `第一篇${pos} A 类论文：${v.name} ${year}`);
         m.pubsA++;
+        if (first) m.firstA = (m.firstA || 0) + 1;
       }
-      if (best) S.story(g, m, `获得 ${v.name} ${year} 最佳论文奖！`);
-      S.addMood(m, id === p.lead ? (v.tier === 'P' ? 2 : 6) : 3);
-      if (v.tier !== 'P') S.addTrust(m, id === p.lead ? 5 : 2);
+      if (best) S.story(g, m, `获得 ${v.name} ${year} 最佳论文奖（${pos}）！`);
+      S.addMood(m, first ? (v.tier === 'P' ? 2 : 6) : 3);
+      if (v.tier !== 'P') S.addTrust(m, first ? 5 : 2);
     });
+    // 被挤到致谢里的人会有点失落
+    p.authors.filter(id => !ao.order.includes(id)).forEach(id => S.addMood(G.member(g, id), -2));
     g.pi.stats.research = Math.min(100, g.pi.stats.research + (v.tier === 'A' ? 0.3 : 0.1) * S.soft(g.pi.stats.research));
     g.pi.stats.writing = Math.min(100, g.pi.stats.writing + 0.1 * S.soft(g.pi.stats.writing));
-    const lead = G.member(g, p.lead);
+    const lead = G.member(g, ao.order[0]) || G.member(g, p.lead); // 一作去开会
     if (v.tier === 'P') {
       RS.bus.emit('arxiv', { paper });
       return paper;
@@ -681,6 +766,35 @@
     }
     RS.bus.emit('accept', { paper, lead: p.lead, best });
     return paper;
+  };
+
+  // 外单位牵头的交叉学科论文：学生署名靠前，你是通讯作者之一
+  S.sidePaper = function (g, m, partner, title, extLead) {
+    const v = RS.VENUES.cross;
+    const pa = {
+      id: G.nid(g, 'pa'), title, topic: null, venue: v.id, tier: v.tier, year: G.calYear(g), day: g.day, q: 60, cites: 0, acc: 0,
+      rate: RS.TIERS[v.tier].cite * U.range(0.8, 1.6) * (1 + Math.min(0.5, g.rep / 1000)), best: false, oral: false,
+      authors: [m.id], co: 0, lead: null, pre: [extLead], scores: null, pid: null,
+    };
+    g.papers.unshift(pa);
+    g.stats.pubs[v.tier] = (g.stats.pubs[v.tier] || 0) + 1;
+    g.year.papers++;
+    S.addRep(g, RS.TIERS[v.tier].rep);
+    const pos = S.authorPos(pa, m.id);
+    S.story(g, m, m.pubs === 0 ? `第一篇论文（${pos}）：和${partner}合作的交叉学科论文` : `和${partner}合作发表交叉学科论文（${pos}）`);
+    m.pubs++;
+    S.addTrust(m, 2);
+    G.log(g, `${m.name} 和${partner}合作的论文《${short(title)}》发表了（${pos}）`, 'good');
+    return pa;
+  };
+  // 外出合作归来
+  S.awayReturn = function (g, m) {
+    const r = m.awayReward;
+    m.awayReward = null;
+    if (r.idea) S.bumpStat(m, 'idea', r.idea);
+    S.addMood(m, 6);
+    G.log(g, `${m.name} 结束了在${r.partner}的合作，回到了实验室`, 'info');
+    if (r.paper) S.sidePaper(g, m, r.partner, r.paper, r.lead);
   };
 
   S.travel = function (g, v, lead) {

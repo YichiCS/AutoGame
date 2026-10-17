@@ -16,6 +16,15 @@
   const nop = () => {};
   const alumniIndustry = g => g.alumni.filter(a => a.reason === 'poached' || (a.reason === 'graduated' && (/创办|量化/.test(a.dest || '') || RS.G.region(g).companies.some(co => (a.dest || '').indexOf(co) >= 0))));
   const activeOf = (g, pred) => g.members.filter(m => m.status === 'active' && (!pred || pred(m)));
+  // 在读的研究生和博士后（会独立负责课题的人）
+  const seniorOf = (g, pred) => activeOf(g, m => RS.Sys.CONSULT_ROLES.includes(m.role) && (!pred || pred(m)));
+  // 要用真人数据、做用户实验的方向（要过伦理审查）
+  const HUMAN_TOPICS = ['med', 'access', 'haic', 'wear', 'social', 'edu', 'xr', 'vis', 'rec', 'dialog'];
+  const humanProjects = g => g.projects.filter(p => (p.phase === 'idea' || p.phase === 'exp') && !p.irb && (g.areaId === 'hci' || HUMAN_TOPICS.includes(p.topic)));
+  // 可以申请奖学金的学生
+  const fellowCands = g => (g.region === 'us'
+    ? activeOf(g, m => m.role === 'phd' && m.funding === 'ra' && (RS.Sys.memberYears(g, m) < 1.5 || (m.first || 0) >= 1))
+    : activeOf(g, m => (m.role === 'phd' || m.role === 'ms') && (m.first || 0) >= 1 && !m.natAward));
 
   RS.EVENTS = {
     // ================= 系统事件 =================
@@ -124,7 +133,7 @@
         const moodHit = Math.round(15 * (1.5 - trust / 100));
         return {
           title: '博士毕业季', portrait: { member: m.id },
-          text: `${U.esc(m.name)} 读博 ${yrs.toFixed(1)} 年，发表论文 ${m.pubs} 篇（A 类 ${m.pubsA} 篇），觉得自己可以毕业了。<br>${U.esc(sn(m.name))}的职业理想是「${goal}」，和你的信任度 ${trust}。要让${U.esc(sn(m.name))}答辩吗？`,
+          text: `${U.esc(m.name)} 读博 ${yrs.toFixed(1)} 年，发表论文 ${m.pubs} 篇（一作 ${m.first || 0} 篇，其中 A 类 ${m.firstA || 0} 篇），觉得自己可以毕业了。<br>${U.esc(sn(m.name))}的职业理想是「${goal}」，和你的信任度 ${trust}。要让${U.esc(sn(m.name))}答辩吗？`,
           choices: [
             { label: '同意答辩，恭喜毕业！', hint: '学生毕业离组；去向越好，你的声望提升越多（信任越高，推荐信越有分量）', def: true,
               apply: g => {
@@ -844,9 +853,9 @@
     },
 
     student_award: {
-      weight: g => (g.members.some(m => m.role === 'phd' && m.pubsA >= 2 && m.funding === 'ra') ? 0.6 : 0), cd: 360,
+      weight: g => (g.members.some(m => m.role === 'phd' && (m.firstA || 0) >= 2 && m.funding === 'ra') ? 0.6 : 0), cd: 360,
       ctx: g => {
-        const c = g.members.filter(m => m.role === 'phd' && m.pubsA >= 2 && m.funding === 'ra');
+        const c = g.members.filter(m => m.role === 'phd' && (m.firstA || 0) >= 2 && m.funding === 'ra');
         return c.length ? { mid: U.pick(c).id } : null;
       },
       instant: (g, c) => {
@@ -1004,6 +1013,557 @@
             { label: '轻伤不下火线', hint: '心情 -10', apply: () => S().addMood(m, -10) },
           ],
         };
+      },
+    },
+
+    // ================= 随机事件（第二批）：署名、小组、学生、校园 =================
+
+    // 署名之争：快写完的论文，第二作者的工作量不小
+    author_dispute: {
+      weight: g => (S().disputeCands(g).length ? 1.2 : 0), cd: 200,
+      ctx: g => {
+        const c = S().disputeCands(g);
+        if (!c.length) return null;
+        const x = U.pick(c);
+        return { pid: x.p.id, a: x.a, b: x.b };
+      },
+      build: (g, c) => {
+        const p = G().project(g, c.pid);
+        if (!p || p.authorPlan || !(p.phase === 'write' || p.phase === 'ready')) return null;
+        const a = M(g, c.a), b = M(g, c.b);
+        if (!a || !b) return null;
+        const ca = (p.contrib || {})[a.id] || 0, cb = (p.contrib || {})[b.id] || 0;
+        const pa = Math.round((ca / (ca + cb || 1)) * 100);
+        const close = cb >= ca * 0.75;
+        const why = b.role === 'ug' ? '申请研究生需要一篇拿得出手的论文' : b.role === 'ms' ? '找工作想要一篇一作' : '毕业要看一作论文';
+        return {
+          title: '署名之争', portrait: { member: b.id },
+          text: `《${U.esc(p.title)}》${p.phase === 'write' ? '快写完了' : '已经写完了'}。${U.esc(b.name)} 私下找到你：“这篇我做了不少实验，能不能给我共同一作？${why}……”<br><span class="dim">按实验记录，两人的工作量大约是 ${U.esc(sn(a.name))} ${pa}% : ${U.esc(sn(b.name))} ${100 - pa}%。</span>`,
+          choices: [
+            { label: '同意共同一作', hint: `两人都算一作 · ${sn(b.name)}心情 +6、信任 +3 · ${sn(a.name)}觉得功劳被分走：心情 -4`, def: close,
+              apply: g => { p.authorPlan = [a.id, b.id]; S().addMood(b, 6); S().addTrust(b, 3); S().addMood(a, -4); S().addTrust(a, -1); S().story(g, b, `争取到了《${S().short(p.title)}》的共同一作`); } },
+            { label: `按贡献来，${sn(a.name)}一作`, hint: `${sn(b.name)}二作：心情 -6、信任 -3 · ${sn(a.name)}信任 +2`, def: !close,
+              apply: () => { p.authorPlan = [a.id]; S().addMood(b, -6); S().addTrust(b, -3); S().addTrust(a, 2); } },
+            { label: `让 ${sn(b.name)} 当一作`, hint: `${sn(a.name)}心情 -12、信任 -8 · ${sn(b.name)}心情 +8、信任 +3`,
+              apply: g => { p.authorPlan = [b.id]; S().addMood(a, -12); S().addTrust(a, -8); S().addMood(b, 8); S().addTrust(b, 3); S().story(g, a, `《${S().short(p.title)}》的一作让给了 ${b.name}`); } },
+          ],
+        };
+      },
+    },
+
+    // 挂名请求
+    guest_author: {
+      weight: g => (g.projects.some(p => (p.phase === 'ready' || p.phase === 'review') && !p.guest) ? 0.5 : 0), cd: 400,
+      ctx: g => {
+        const c = g.projects.filter(p => (p.phase === 'ready' || p.phase === 'review') && !p.guest);
+        if (!c.length) return null;
+        const who = U.pick(g.region === 'cn'
+          ? [['学院的一位领导', '某院领导'], ['合作单位的一位大佬', '合作单位 W 教授'], ['一位头衔很多的老教授', 'L 教授'], ['学校分管科研的副校长', '某副校长']]
+          : [['系主任', 'Dept. Chair'], ['隔壁组的大牛教授', 'Prof. K'], ['合作公司的一位副总裁', 'VP Chen'], ['一位资深院士', 'Prof. H']]);
+        return { pid: U.pick(c).id, who: who[0], as: who[1] };
+      },
+      build: (g, c) => {
+        const p = G().project(g, c.pid);
+        if (!p || p.guest || !(p.phase === 'ready' || p.phase === 'review')) return null;
+        const lead = M(g, S().authorOrder(g, p).order[0]);
+        const ln = lead ? sn(lead.name) : '一作';
+        return {
+          title: '挂名请求', portrait: { icon: 'mail' },
+          text: `${c.who}委婉地表示，想在《${U.esc(p.title)}》上“挂个名”：“我的名字放上去，审稿人也会多看两眼嘛。”<br><span class="dim">这篇论文是 ${lead ? U.esc(lead.name) : '学生们'}一手做出来的。</span>`,
+          choices: [
+            { label: '婉拒，论文是学生做的', hint: `精力 -2（有点尴尬）· ${ln}信任 +4${g.pi.tenured ? '' : ' · 对方有点不高兴：声望 -1'}`, def: true,
+              apply: g => { S().addEnergy(g, -2); S().addTrust(lead, 4); if (!g.pi.tenured) S().addRep(g, -1); } },
+            { label: '加上吧，以后好办事', hint: `人脉 +3 · 这篇论文引用 +10% · ${ln}心情 -4、信任 -5`,
+              apply: g => { p.guest = c.as; g.pi.stats.network = Math.min(100, g.pi.stats.network + 3); S().addMood(lead, -4); S().addTrust(lead, -5); G().log(g, `《${S().short(p.title)}》的作者列表里多了一位 ${c.as}`, 'info'); } },
+          ],
+        };
+      },
+    },
+
+    // 想换组
+    group_switch: {
+      weight: g => (S().switchCands(g).length ? 0.9 : 0), cd: 150, minor: true,
+      ctx: g => {
+        const c = S().switchCands(g);
+        if (!c.length) return null;
+        const m = U.pick(c);
+        return { mid: m.id, to: S().groupOfTopic(g, S().interestOf(m)).id };
+      },
+      build: (g, c) => {
+        const m = M(g, c.mid), to = S().group(g, c.to);
+        if (!m || !to || S().inGroup(m, to.id)) return null;
+        const from = S().memberGroups(g, m);
+        const fromName = from.map(x => S().groupName(g, x)).join('、') || '未分组';
+        const toName = S().groupName(g, to);
+        const leads = S().leadsGroup(g, m);
+        const full = (m.groups || []).length >= S().MAX_MEMBER_GROUPS;
+        const ch = [
+          { label: `同意转到「${toName}」`, hint: `${from.length ? `离开${fromName}${leads ? '（会卸任组长）' : ''} · ` : ''}心情 +8 · 信任 +3`, def: full,
+            apply: g => {
+              (m.groups || []).slice().forEach(id => S().setMemberGroup(g, m, id, false));
+              S().setMemberGroup(g, m, to.id, true);
+              S().addMood(m, 8); S().addTrust(m, 3);
+              S().story(g, m, `转到了「${toName}」`);
+              G().log(g, `${m.name} 转到了「${toName}」`, 'info');
+            } },
+        ];
+        if (!full && from.length) {
+          ch.push({ label: '两个组都参加', hint: `同时在${fromName}和${toName} · 心情 +5`, def: true,
+            apply: g => { S().setMemberGroup(g, m, to.id, true); S().addMood(m, 5); G().log(g, `${m.name} 也加入了「${toName}」`, 'info'); } });
+        }
+        ch.push({ label: '先把手上的课题做完再说', hint: '心情 -4 · 信任 -2', apply: () => { S().addMood(m, -4); S().addTrust(m, -2); } });
+        if (!ch.some(x => x.def)) ch[0].def = true;
+        return {
+          title: `${m.name} 想换个小组`, portrait: { member: m.id },
+          text: `${U.esc(m.name)} 来找你：“老师，我还是对「${U.esc(G().topic(g, to.topic).name)}」最感兴趣，能不能去${U.esc(toName)}？”<br><span class="dim">TA 现在在：${U.esc(fromName)}</span>`,
+          choices: ch,
+        };
+      },
+    },
+
+    // 迷上了新方向
+    interest_change: {
+      weight: g => (activeOf(g, m => m.role !== 'visit').length ? 0.8 : 0), cd: 200, minor: true,
+      ctx: g => {
+        const c = activeOf(g, m => m.role !== 'visit');
+        if (!c.length) return null;
+        const m = U.pick(c);
+        const t = U.weighted(G().area(g).topics.filter(x => x.id !== S().interestOf(m)), x => Math.pow(g.topics[x.id].heat, 1.5));
+        return t ? { mid: m.id, tid: t.id } : null;
+      },
+      build: (g, c) => {
+        const m = M(g, c.mid);
+        if (!m || !m.bio || S().interestOf(m) === c.tid) return null;
+        const t = G().topic(g, c.tid);
+        const gr = S().groupOfTopic(g, c.tid);
+        const ch = [
+          { label: '支持 TA 往这个方向发展', hint: `兴趣变成「${t.name}」· 心情 +5 · 信任 +2${gr ? `（可以加入${S().groupName(g, gr)}）` : ''}`, def: true,
+            apply: g => { m.bio.interest = c.tid; S().addMood(m, 5); S().addTrust(m, 2); S().story(g, m, `迷上了「${t.name}」`); } },
+        ];
+        if (!gr && !S().canCreateGroup(g, c.tid)) {
+          ch.push({ label: `干脆成立「${t.name}组」`, hint: 'TA 是第一个成员 · 心情 +8 · 信任 +4',
+            apply: g => {
+              if (S().canCreateGroup(g, c.tid)) return;
+              m.bio.interest = c.tid;
+              const ng = S().createGroup(g, c.tid);
+              if ((m.groups || []).length >= S().MAX_MEMBER_GROUPS) S().setMemberGroup(g, m, m.groups[0], false);
+              S().setMemberGroup(g, m, ng.id, true);
+              S().addMood(m, 8); S().addTrust(m, 4);
+              S().story(g, m, `牵头成立了「${S().groupName(g, ng)}」`);
+            } });
+        }
+        ch.push({ label: '先专注眼前的方向', hint: '兴趣不变 · 心情 -3', apply: () => S().addMood(m, -3) });
+        return {
+          title: '迷上了新方向', portrait: { member: m.id },
+          text: `${U.esc(m.name)} 最近一口气读了十几篇「${U.esc(t.name)}」的论文，越看越着迷，跑来说想往这个方向发展。<br><span class="dim">TA 原来最想做的是「${U.esc(G().topic(g, S().interestOf(m)).name)}」。</span>`,
+          choices: ch,
+        };
+      },
+    },
+
+    // 组长有点撑不住了
+    leader_burnout: {
+      weight: g => {
+        const ls = g.groups.map(gr => M(g, gr.lead)).filter(Boolean);
+        return !ls.length ? 0 : ls.some(m => m.mood < 50) ? 1.5 : 0.3;
+      },
+      cd: 200,
+      ctx: g => {
+        const gs = g.groups.filter(gr => M(g, gr.lead));
+        if (!gs.length) return null;
+        return { gid: gs.reduce((a, b) => (M(g, b.lead).mood < M(g, a.lead).mood ? b : a)).id };
+      },
+      build: (g, c) => {
+        const gr = S().group(g, c.gid);
+        const m = gr && M(g, gr.lead);
+        if (!m) return null;
+        const cost = S().bonusCost(g, m);
+        const n = Math.max(0, S().groupMembers(g, gr).length - 1);
+        return {
+          title: '组长有点撑不住了', portrait: { member: m.id },
+          text: `「${U.esc(S().groupName(g, gr))}」组长 ${U.esc(m.name)} 最近黑眼圈很重：“又要带 ${n} 个师弟师妹，又要赶自己的论文，实在有点顾不过来了……”`,
+          choices: [
+            { label: '好好聊一聊', hint: '你的精力 -6 · 心情 +14 · 信任 +5', def: g.pi.energy >= 20, disabled: g.pi.energy < 6 ? '你自己也没精力了' : null,
+              apply: g => { S().addEnergy(g, -6); S().addMood(m, 14); S().addTrust(m, 5); } },
+            { label: '发一笔组长补贴', hint: `经费 -${money(g, cost)} · 心情 +12 · 信任 +3`, def: g.pi.energy < 20, disabled: g.funds < cost ? '经费不足' : null,
+              apply: g => { S().spend(g, cost, 'welfare'); S().addMood(m, 12); S().addTrust(m, 3); } },
+            { label: '卸下组长的担子', hint: '心情 +10 · 这个小组暂时没有组长（你要亲自协调）',
+              apply: g => { S().setGroupLead(g, gr.id, null); S().addMood(m, 10); S().story(g, m, `卸任了「${S().groupName(g, gr)}」组长`); } },
+          ],
+        };
+      },
+    },
+
+    // DDL 前抢算力
+    compute_rush: {
+      weight: g => (S().rushPair(g) ? 1 : 0), cd: 240,
+      ctx: g => { const pr = S().rushPair(g); return pr ? { a: pr[0], b: pr[1] } : null; },
+      build: (g, c) => {
+        const A = S().group(g, c.a), B = S().group(g, c.b);
+        if (!A || !B) return null;
+        const R = G().region(g);
+        const n = 4, cost = R.cloud.price * n;
+        const mood = (gr, v) => S().groupMembers(g, gr).forEach(m => S().addMood(m, v));
+        const prio = (X, Y) => g => {
+          g.flags.prio = X.id; g.flags.prioUntil = g.day + 30;
+          mood(X, 3); mood(Y, -4);
+          G().log(g, `接下来一个月优先保证「${S().groupName(g, X)}」的算力`, 'info');
+        };
+        const rich = g.funds > cost * 8;
+        return {
+          title: 'DDL 前的算力争夺', portrait: { icon: 'gpu' },
+          text: `截稿日越来越近，「${U.esc(S().groupName(g, A))}」和「${U.esc(S().groupName(g, B))}」的实验都在排队，服务器根本不够分。两边的人都来找你要卡。`,
+          choices: [
+            { label: `优先保证「${S().groupName(g, A)}」`, hint: '一个月内这个组算力 ×1.5、其他组 ×0.8 · 这组心情 +3，那组 -4', apply: prio(A, B) },
+            { label: `优先保证「${S().groupName(g, B)}」`, hint: '一个月内这个组算力 ×1.5、其他组 ×0.8 · 这组心情 +3，那组 -4', apply: prio(B, A) },
+            { label: `临时租 ${n} 份${R.cloud.name}`, hint: `经费 -${money(g, cost)} · 一个月内共享算力 +${R.cloud.units * n}`, def: rich, disabled: g.funds < cost ? '经费不足' : null,
+              apply: g => { S().spend(g, cost, 'compute'); g.flags.tempUnits = R.cloud.units * n; g.flags.tempUntil = g.day + 30; } },
+            { label: '一视同仁，按缺口分', hint: '两组心情 -1', def: !rich, apply: () => { mood(A, -1); mood(B, -1); } },
+          ],
+        };
+      },
+    },
+
+    // 校内种子基金
+    seed_grant: {
+      weight: 0.6, cd: 360, minor: true,
+      ctx: g => ({ v: Math.round((G().region(g).ppp * U.range(30000, 60000)) / 1000) * 1000, roll: Math.random() }),
+      build: (g, c) => {
+        const p = U.clamp(0.35 + g.rep / 400 + (g.pi.stats.writing - 50) / 150, 0.3, 0.85);
+        return {
+          title: '校内种子基金', portrait: { icon: 'money' },
+          text: `学校设立了一批${g.region === 'cn' ? '交叉学科种子基金' : '内部种子基金（Seed Grant）'}，鼓励老师们探索新方向，每项 <b>${money(g, c.v)}</b>，评审很快。`,
+          choices: [
+            { label: '写个申请试试', hint: `精力 -8 · 成功率约 ${U.pct(p)}`, def: g.pi.energy > 35,
+              apply: g => {
+                S().addEnergy(g, -8);
+                if (c.roll < p) {
+                  S().earn(g, c.v, 'dept');
+                  G().log(g, `校内种子基金获批：${money(g, c.v)}`, 'good');
+                  RS.bus.emit('toast', { text: `种子基金 +${money(g, c.v)}`, kind: 'good' });
+                } else G().log(g, '校内种子基金没有评上', 'bad');
+              } },
+            { label: '这次就算了', hint: '没有影响', def: g.pi.energy <= 35, apply: nop },
+          ],
+        };
+      },
+    },
+
+    // 跨学科合作
+    interdisc: {
+      weight: g => (seniorOf(g).length >= 2 ? 0.6 : 0), cd: 400,
+      ctx: g => {
+        const c = seniorOf(g);
+        if (c.length < 2) return null;
+        // 派手上的课题进度最早期的人，损失最小
+        const load = m => { const p = m.projectId && G().project(g, m.projectId); return p ? S().projectPct(p) : 0; };
+        const m = c.reduce((a, b) => (load(b) < load(a) ? b : a));
+        const x = U.pick(RS.CROSS);
+        return { mid: m.id, who: x.who, title: U.pick(x.titles), prof: RS.randomName(g.region) };
+      },
+      build: (g, c) => {
+        const m = M(g, c.mid);
+        if (!m || m.status !== 'active') return null;
+        const many = seniorOf(g).length >= 3;
+        return {
+          title: '跨学科合作', portrait: { icon: 'people' },
+          text: `${U.esc(c.who)}的 ${U.esc(c.prof)} 教授想用 AI 方法解决他们领域的一个难题，希望你派一个学生过去合作两个月。<br><span class="dim">看下来 ${U.esc(m.name)} 手上的课题刚起步，走开影响最小。</span>`,
+          choices: [
+            { label: `派 ${sn(m.name)} 过去`, hint: 'TA 离开 60 天（自己的课题暂停）· 回来想法 +3 · 署名一篇对方牵头的交叉学科论文 · 声望 +1', def: many,
+              apply: g => {
+                m.status = 'away'; m.awayUntil = g.day + 60; m.awayWhy = `在${c.who}合作`;
+                m.awayReward = { idea: 3, partner: c.who, paper: c.title, lead: `${c.prof}（${c.who}）` };
+                S().addRep(g, 1);
+                S().story(g, m, `去${c.who}做跨学科合作`);
+                G().log(g, `${m.name} 去${c.who}做跨学科合作了`, 'info');
+              } },
+            { label: '组里实在抽不出人', hint: '没有影响', def: !many, apply: nop },
+          ],
+        };
+      },
+    },
+
+    // 凌晨两点的实验室
+    late_night: {
+      weight: g => (seniorOf(g, m => m.projectId).length ? 0.9 : 0), cd: 120, minor: true,
+      ctx: g => { const c = seniorOf(g, m => m.projectId); return c.length ? { mid: U.pick(c).id } : null; },
+      build: (g, c) => {
+        const m = M(g, c.mid);
+        if (!m || m.status !== 'active') return null;
+        const p = m.projectId ? G().project(g, m.projectId) : null;
+        const working = p && S().WORK_PHASES.includes(p.phase);
+        const cost = Math.round(15 * G().region(g).ppp);
+        return {
+          title: '凌晨两点的实验室', portrait: { member: m.id },
+          text: `你半夜回办公室拿东西，发现 ${U.esc(m.name)} 还在${working && p.phase === 'write' ? '改论文' : working && p.phase === 'exp' ? '盯着训练曲线' : '对着白板画来画去'}，桌上摆着三罐空咖啡。`,
+          choices: [
+            { label: '赶 TA 回去睡觉', hint: '心情 +6 · 信任 +2', def: true, apply: () => { S().addMood(m, 6); S().addTrust(m, 2); } },
+            { label: '点份夜宵一起吃', hint: `经费 -${money(g, cost)} · 心情 +8 · 信任 +3`, apply: g => { S().spend(g, cost, 'welfare'); S().addMood(m, 8); S().addTrust(m, 3); } },
+            { label: '拍拍肩膀：加油！', hint: '课题进度 +5% · 心情 -4', disabled: working ? null : '手上没有在做的课题',
+              apply: () => { if (working) p.prog = Math.min(p.need[p.phase] - 0.01, p.prog + p.need[p.phase] * 0.05); S().addMood(m, -4); } },
+          ],
+        };
+      },
+    },
+
+    // 组会上吵起来了
+    meeting_debate: {
+      weight: g => (seniorOf(g, m => m.projectId).length >= 2 ? 1 : 0), cd: 150, minor: true,
+      ctx: g => {
+        const c = U.sample(seniorOf(g, m => m.projectId), 2);
+        return c.length === 2 ? { a: c[0].id, b: c[1].id, method: U.pick(G().area(g).methods) } : null;
+      },
+      build: (g, c) => {
+        const a = M(g, c.a), b = M(g, c.b);
+        if (!a || !b) return null;
+        const pa = a.projectId ? G().project(g, a.projectId) : null, pb = b.projectId ? G().project(g, b.projectId) : null;
+        const bonus = (p, v) => { if (p && S().WORK_PHASES.includes(p.phase)) p.bonus += v; };
+        return {
+          title: '组会上吵起来了', portrait: { member: a.id },
+          text: `组会上，${U.esc(a.name)} 坚持 ${U.esc(c.method)} 才是未来，${U.esc(b.name)} 觉得那只是炒作。两人越说越激动，大家都看向你。`,
+          choices: [
+            { label: `支持 ${sn(a.name)}`, hint: `${sn(a.name)}心情 +5、课题质量 +1.5 · ${sn(b.name)}心情 -6`, apply: () => { S().addMood(a, 5); bonus(pa, 1.5); S().addMood(b, -6); } },
+            { label: `支持 ${sn(b.name)}`, hint: `${sn(b.name)}心情 +5、课题质量 +1.5 · ${sn(a.name)}心情 -6`, apply: () => { S().addMood(b, 5); bonus(pb, 1.5); S().addMood(a, -6); } },
+            { label: '各自跑实验，用数据说话', hint: '你的精力 -3 · 两人课题质量 +1 · 心情 -1（又多了实验要跑）', def: true,
+              apply: g => { S().addEnergy(g, -3); bonus(pa, 1); bonus(pb, 1); S().addMood(a, -1); S().addMood(b, -1); } },
+          ],
+        };
+      },
+    },
+
+    // AI 写的审稿意见
+    llm_review: {
+      weight: g => (g.projects.some(p => p.phase === 'review') ? 0.8 : 0), cd: 200, minor: true,
+      ctx: g => { const c = g.projects.filter(p => p.phase === 'review'); return c.length ? { pid: U.pick(c).id, roll: Math.random() } : null; },
+      build: (g, c) => {
+        const p = G().project(g, c.pid);
+        if (!p || p.phase !== 'review') return null;
+        const v = RS.VENUES[p.venue];
+        return {
+          title: '这份审稿意见是 AI 写的吧？', portrait: { icon: 'warn' },
+          text: `《${U.esc(p.title)}》在 ${v.name} 收到一份审稿意见：“This paper delves into an intricate tapestry of ...”，还把你们方法的名字写错了三次，最后给了个低分。`,
+          choices: [
+            { label: '写信向 AC 反映', hint: '精力 -3 · 一半的可能这份意见被作废（论文质量 +3）', def: g.pi.energy >= 20,
+              apply: g => {
+                S().addEnergy(g, -3);
+                if (c.roll < 0.5) { p.q += 3; G().log(g, `AC 认可了你的申诉，《${S().short(p.title)}》那份 AI 审稿意见被作废`, 'good'); }
+                else G().log(g, '你写给 AC 的信石沉大海……', 'info');
+              } },
+            { label: '算了，不节外生枝', hint: '没有影响', def: g.pi.energy < 20, apply: nop },
+          ],
+        };
+      },
+    },
+
+    // 帮学生申请奖学金
+    student_fellowship: {
+      weight: g => (fellowCands(g).length ? 0.6 : 0), cd: 360, minor: true,
+      ctx: g => { const c = fellowCands(g); return c.length ? { mid: U.pick(c).id, roll: Math.random() } : null; },
+      build: (g, c) => {
+        const m = M(g, c.mid);
+        if (!m || m.funding === 'fellow') return null;
+        const us = g.region === 'us';
+        const grfp = us && S().memberYears(g, m) < 1.5;
+        const name = us ? (grfp ? 'NSF 研究生奖学金（GRFP）' : '大厂博士生奖学金') : `${S().ROLE_NAMES[m.role]}国家奖学金`;
+        const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
+        const p = U.clamp(0.15 + (avg - 50) / 80 + (m.firstA || 0) * 0.12 + (m.first || 0) * 0.04 + g.rep / 800, 0.08, 0.85);
+        const win = g => {
+          if (us) { m.funding = 'fellow'; m.fellowUntil = g.day + (grfp ? 3 : 2) * 360; } else m.natAward = true;
+          S().addMood(m, 15); S().addTrust(m, 5); S().addRep(g, 0.5);
+          S().story(g, m, `获得${name}`);
+          G().log(g, `${m.name} 获得了${name}！${us ? '接下来几年 TA 的工资由奖学金来付' : ''}`, 'gold');
+          RS.bus.emit('toast', { text: `${m.name} 获得${name}`, kind: 'gold' });
+        };
+        const lose = (g, v) => { S().addMood(m, v); G().log(g, `${m.name} 的${name}申请没有成功`, 'info'); };
+        return {
+          title: '奖学金申请', portrait: { member: m.id },
+          text: `${U.esc(m.name)} 想申请<b>${name}</b>，需要你写推荐信、帮忙改材料。${us ? '拿到的话，奖学金会替你付 TA 的工资。' : '评上的话，对 TA 以后找工作、申请博后都很有帮助。'}`,
+          choices: [
+            { label: '认真写推荐信、帮 TA 改材料', hint: `你的精力 -6 · 成功率约 ${U.pct(p)} · 不管结果如何信任 +3`, def: g.pi.energy >= 25,
+              apply: g => { S().addEnergy(g, -6); S().addTrust(m, 3); if (c.roll < p) win(g); else lose(g, -3); } },
+            { label: '写封简短的推荐信', hint: `精力 -1 · 成功率约 ${U.pct(p * 0.5)}`, def: g.pi.energy < 25,
+              apply: g => { S().addEnergy(g, -1); if (c.roll < p * 0.5) win(g); else lose(g, -5); } },
+            { label: '今年先别申请了', hint: '心情 -4 · 信任 -2', apply: () => { S().addMood(m, -4); S().addTrust(m, -2); } },
+          ],
+        };
+      },
+    },
+
+    // 系里来了新同事
+    new_colleague: {
+      weight: 0.35, cd: 900, minor: true,
+      ctx: g => ({ name: RS.randomName(g.region), from: U.pick(G().region(g).univsTop || G().region(g).univs) }),
+      build: (g, c) => {
+        const ideas = g.projects.filter(p => (p.phase === 'idea' || p.phase === 'exp') && !p.collab);
+        const target = ideas.length ? ideas.reduce((a, b) => (S().projectPct(b) > S().projectPct(a) ? b : a)) : null;
+        return {
+          title: '系里来了新同事', portrait: { icon: 'people' },
+          text: `刚从 ${U.esc(c.from)} 博士后出站的 ${U.esc(c.name)} 入职了你们系，研究方向和你挺接近。`,
+          choices: [
+            { label: '主动约饭，聊聊合作', hint: `精力 -3 · 人脉 +2${target ? ` ·《${S().short(target.title)}》多一位合作者（质量 +3）` : ''}`, def: true,
+              apply: g => {
+                S().addEnergy(g, -3);
+                g.pi.stats.network = Math.min(100, g.pi.stats.network + 2);
+                if (target && !target.collab && G().project(g, target.id)) target.collab = { who: `${c.name} 教授`, bonus: 3 };
+              } },
+            { label: '帮 TA 熟悉学院的情况', hint: '精力 -5 · 声望 +1（同事们都说你人好）', apply: g => { S().addEnergy(g, -5); S().addRep(g, 1); } },
+            { label: '各做各的', hint: '没有影响', apply: nop },
+          ],
+        };
+      },
+    },
+
+    // 机房热到报警
+    heatwave: {
+      weight: g => (RS.G.computeUnits(g) > 0 && [7, 8].includes(G().month(g)) ? 1.5 : 0), cd: 300, minor: true,
+      ctx: g => ({ cost: Math.round(8000 * G().region(g).ppp) }),
+      build: (g, c) => ({
+        title: '机房热到报警', portrait: { icon: 'gpu' },
+        text: '连续高温，机房的空调扛不住了，服务器温度直逼 90 度，频繁过热降频。',
+        choices: [
+          { label: '加装一台工业空调', hint: `经费 -${money(g, c.cost)} · 问题解决`, def: g.funds > c.cost * 6, disabled: g.funds < c.cost ? '经费不足' : null, apply: g => S().spend(g, c.cost, 'facility') },
+          { label: '限功率运行', hint: '20 天内算力 -40%', def: g.funds <= c.cost * 6, apply: g => { g.flags.computeCut = 0.6; g.flags.cutUntil = g.day + 20; } },
+          { label: '让大家半夜再跑实验', hint: '20 天内算力 -15% · 全组心情 -4', apply: g => { g.flags.computeCut = 0.85; g.flags.cutUntil = g.day + 20; S().labMood(g, -4); } },
+        ],
+      }),
+    },
+
+    // 伦理审查
+    ethics_review: {
+      weight: g => (humanProjects(g).length ? 0.8 : 0), cd: 300, minor: true,
+      ctx: g => { const c = humanProjects(g); return c.length ? { pid: U.pick(c).id } : null; },
+      build: (g, c) => {
+        const p = G().project(g, c.pid);
+        if (!p || !S().WORK_PHASES.includes(p.phase)) return null;
+        return {
+          title: '伦理审查', portrait: { icon: 'paper' },
+          text: `《${U.esc(p.title)}》要用到真人的数据、做用户实验，${g.region === 'us' ? 'IRB（伦理审查委员会）' : '学校的伦理审查委员会'}要求补充知情同意书、数据脱敏方案和一大堆表格。`,
+          choices: [
+            { label: '老老实实补材料', hint: '精力 -3 · 当前阶段进度 -15%（等审批）', def: true, apply: g => { p.irb = true; S().addEnergy(g, -3); p.prog *= 0.85; } },
+            { label: '改用公开数据集', hint: '不用等审批 · 论文质量 -2', apply: () => { p.irb = true; p.bonus -= 2; } },
+          ],
+        };
+      },
+    },
+
+    // 本科生科研双选会（直接弹出录用窗口）
+    ug_fair: {
+      weight: g => ([9, 10].includes(G().month(g)) && g.members.length < G().desks(g) + 1 ? 2 : 0), cd: 300,
+      ctx: g => {
+        const ts = g.groups.map(gr => gr.topic);
+        const from = g.region === 'cn' ? '在本科生导师双选会上选了你' : '在本科生科研招募会上找到了你';
+        const cands = [];
+        for (let i = U.int(2, 3); i > 0; i--) cands.push(Object.assign(S().genCandidate(g, 'ug', 2, { own: true, interest: ts.length && U.chance(0.7) ? U.pick(ts) : undefined }), { from }));
+        return { cands };
+      },
+      instant: (g, c) => {
+        const name = g.region === 'cn' ? '本科生导师双选会' : '本科生科研招募会';
+        G().queue(g, { type: 'pool', role: 'ug', title: name, text: `学院办了一场${name}，有几位 ${g.school} 的本科生对你们组的方向很感兴趣。`, cands: c.cands, max: 2 });
+        return true;
+      },
+    },
+
+    // 校友回来做报告
+    alumni_talk: {
+      weight: g => (g.alumni.some(a => a.reason === 'graduated' && a.dest && a.role !== 'ug') ? 0.6 : 0), cd: 300,
+      ctx: g => { const c = g.alumni.filter(a => a.reason === 'graduated' && a.dest && a.role !== 'ug'); return c.length ? { aid: U.pick(c).id } : null; },
+      instant: (g, c) => {
+        const a = g.alumni.find(x => x.id === c.aid);
+        if (!a) return true;
+        S().labMood(g, 4);
+        let t;
+        if (/教授/.test(a.dest)) { S().addRep(g, 1); t = `如今已是${a.dest}的 ${a.name} 回来做了场报告，师弟师妹们听得热血沸腾`; }
+        else if (/创办/.test(a.dest)) t = `自己创业的 ${a.name} 回来分享创业故事，还给大家带了公司的周边`;
+        else t = `在${a.dest.split(' ')[0]}工作的 ${a.name} 回来分享经验，还请大家喝了奶茶`;
+        G().log(g, t, 'good');
+        return true;
+      },
+    },
+
+    // 小组读书会
+    paper_reading: {
+      weight: g => (g.groups.some(gr => S().groupMembers(g, gr).filter(m => m.status === 'active').length >= 2) ? 1 : 0), cd: 90,
+      ctx: g => {
+        const c = g.groups.filter(gr => S().groupMembers(g, gr).filter(m => m.status === 'active').length >= 2);
+        return c.length ? { gid: U.pick(c).id } : null;
+      },
+      instant: (g, c) => {
+        const gr = S().group(g, c.gid);
+        if (!gr) return true;
+        g.expertise[gr.topic] = Math.min(10, (g.expertise[gr.topic] || 0) + 0.1);
+        S().groupMembers(g, gr).forEach(m => S().addMood(m, 2));
+        G().log(g, `「${S().groupName(g, gr)}」办了一次读书会，把最近的论文过了一遍（方向积累 +0.1）`, 'info');
+        return true;
+      },
+    },
+
+    // 生日
+    birthday: {
+      weight: g => (g.members.length ? 0.8 : 0), cd: 60,
+      ctx: g => {
+        const c = activeOf(g);
+        return c.length ? { mid: U.pick(c).id, wish: U.pick(['这次投稿一定要中！', '希望 Reviewer 2 对我好一点', '早日毕业！', '实验一次就跑通', '显卡管够', '论文引用破百', '老师少催一点稿（小声）', '世界和平，代码没有 bug']) } : null;
+      },
+      instant: (g, c) => {
+        const m = M(g, c.mid);
+        if (!m) return true;
+        S().addMood(m, 6);
+        S().labMood(g, 1);
+        G().log(g, `今天是 ${m.name} 的生日，大家凑钱买了个蛋糕。${sn(m.name)}许愿：“${c.wish}”`, 'good');
+        return true;
+      },
+    },
+
+    // 奇怪的邮件
+    spam_mail: {
+      weight: 0.7, cd: 120,
+      ctx: () => ({ i: U.int(0, 5) }),
+      instant: (g, c) => {
+        const t = [
+          '收到一封邮件：“Dear Esteemed Professor，诚邀您担任《国际前沿科学与工程评论》主编……”，直接删了',
+          '一个从没听说过的“国际会议”邀请你做大会报告，只要交 999 美元注册费。你笑着点了删除',
+          '有人发邮件说能“保证三周内录用”，版面费另议。你顺手点了举报',
+          g.region === 'cn' ? '收到“全国杰出科技创新人物”评选通知，交 3800 元评审费即可入选……' : '收到一封“Who’s Who in Science”入选通知，只要买一本 299 美元的纪念册……',
+          '邮箱里躺着第 37 封“Call for Papers: International Conference on Everything”',
+          '一家“学术服务公司”问你要不要代写基金申请书，你直接拉黑了',
+        ][c.i] || '';
+        if (t) G().log(g, t, 'info');
+        return true;
+      },
+    },
+
+    // 暴雪 / 台风停课
+    weather: {
+      weight: g => { const mo = G().month(g); return g.region === 'us' ? ([12, 1, 2].includes(mo) ? 0.8 : 0) : [7, 8, 9].includes(mo) ? 0.6 : 0; },
+      cd: 300,
+      ctx: () => ({}),
+      instant: g => {
+        g.flags.closedUntil = g.day + 3;
+        S().labMood(g, 2);
+        G().log(g, g.region === 'us' ? '暴风雪来袭，学校停课三天。大家在家远程办公（其实主要在打雪仗）' : '台风过境，学校停课三天。大家在宿舍远程办公，顺便补了补觉', 'info');
+        RS.bus.emit('toast', { text: g.region === 'us' ? '暴风雪停课 3 天' : '台风停课 3 天', kind: 'info' });
+        return true;
+      },
+    },
+
+    // 大佬点赞
+    big_shot_praise: {
+      weight: g => (g.papers.some(p => g.day - p.day < 360 && !p.retracted && p.tier !== 'P' && !p.praised) ? 0.5 : 0), cd: 360,
+      ctx: g => {
+        const c = g.papers.filter(p => g.day - p.day < 360 && !p.retracted && p.tier !== 'P' && !p.praised);
+        return c.length ? { pid: U.weighted(c, p => p.q).id, who: U.pick(['图灵奖得主 B 教授', '领域泰斗 L 教授', '某大厂的首席科学家', '一位你很崇拜的前辈']) } : null;
+      },
+      instant: (g, c) => {
+        const pa = g.papers.find(p => p.id === c.pid);
+        if (!pa) return true;
+        pa.praised = true;
+        pa.rate *= 1.5;
+        S().addRep(g, 2);
+        const first = M(g, (pa.authors || [])[0]);
+        if (first) { S().addMood(first, 10); S().addTrust(first, 2); S().story(g, first, `《${S().short(pa.title)}》被${c.who}公开点赞`); }
+        G().log(g, `${c.who}在社交媒体上推荐了你们的《${S().short(pa.title)}》：“今年读到最有意思的工作之一。”${first ? `${first.name} 激动得一晚上没睡着` : ''}`, 'gold');
+        RS.bus.emit('toast', { text: '大佬点赞！引用速度 ×1.5', kind: 'gold' });
+        return true;
       },
     },
   };
