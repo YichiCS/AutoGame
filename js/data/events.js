@@ -32,9 +32,11 @@
       build: g => {
         const R = G().region(g), A = G().area(g);
         const tip = A.compute >= 0.3 ? '你的方向很依赖算力，记得去「设施」页面买几台 GPU，不然实验会慢得像蜗牛。' : '你的方向不太依赖算力，可以把钱花在人身上。';
+        const ph = g.pi.phd;
+        const back = ph ? `你在 <b>${U.esc(ph.school)}</b> 读完了博士（导师 ${U.esc(ph.advisor)}）${ph.path === 'postdoc' ? `，又在 ${U.esc(ph.pathPlace)} 做了两年博后` : ph.path === 'industry' ? `，又在 ${U.esc(ph.pathPlace)} 工作了两年` : ''}，带着 ${ph.papers} 篇论文（一作 ${ph.first} 篇）拿到了这份教职。读博的经历让你成了一位「${U.esc((RS.PERKS.find(p => p.id === ph.perk) || {}).name || '')}」。<br><br>` : '';
         return {
           title: `欢迎来到 ${g.school}！`, portrait: { pi: true },
-          text: `${R.startText}<br><br>研究方向：<b>${A.name}</b>　起步经费：<b>${money(g, g.startup)}</b><br><br>实验室会自己运转——学生们会选题、做实验、写论文、投稿。你的工作是在<b>关键节点做决定</b>（申请基金、招生、处理突发状况），以及在右侧面板里调整方针、购置设备。遇到需要决定的事情，时间会自动暂停。<br><br><span class="dim">提示：${tip}</span>`,
+          text: `${back}${R.startText}<br><br>研究方向：<b>${A.name}</b>　起步经费：<b>${money(g, g.startup)}</b><br><br>实验室会自己运转——学生们会选题、做实验、写论文、投稿。你的工作是在<b>关键节点做决定</b>（申请基金、招生、处理突发状况），以及在右侧面板里调整方针、购置设备。遇到需要决定的事情，时间会自动暂停。<br><br><span class="dim">提示：${tip}</span>`,
           choices: [{ label: '开始我的科研人生！', def: true, apply: nop }],
         };
       },
@@ -109,7 +111,9 @@
         const pct = Math.round((p.prog / p.need.write) * 100);
         return {
           title: `${v.name} 截稿倒计时 ${left} 天！`, portrait: lead ? { member: lead.id } : { icon: 'clock' },
-          text: `《${U.esc(p.title)}》已经写了 ${pct}%。${lead ? U.esc(lead.name) : '学生'}眼巴巴地看着你：要不要冲一下 <b>${v.name}</b>？`,
+          text: lead && lead.isPlayer
+            ? `你的《${U.esc(p.title)}》已经写了 ${pct}%。要不要通宵冲一下 <b>${v.name}</b>？`
+            : `《${U.esc(p.title)}》已经写了 ${pct}%。${lead ? U.esc(lead.name) : '学生'}眼巴巴地看着你：要不要冲一下 <b>${v.name}</b>？`,
           choices: [
             { label: '冲！通宵也要赶上', hint: '写作速度 ×1.6 · 参与者心情 -6 · 你的精力 -4 · 赶出来的稿子表达分 -3', def: true,
               apply: g => {

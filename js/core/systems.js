@@ -192,7 +192,7 @@
 
   S.removeMember = function (g, m, reason, dest) {
     const i = g.members.indexOf(m);
-    if (i < 0) return;
+    if (i < 0 || m.isPlayer) return; // 博士阶段的“你”不会被移出实验室
     g.members.splice(i, 1);
     S.releaseMemberProjects(g, m);
     S.groupsOnLeave(g, m);
@@ -341,10 +341,14 @@
     if (m.traits.includes('coffee')) w *= g.facilities.coffee ? 1.1 : 0.95;
     if (m.preUntil && g.day < m.preUntil) w *= 0.6;
     if (m.remoteUntil > g.day) w *= 0.7;
+    if (m.isPlayer && g.phd) w *= S.PACE[g.phd.pace].work; // 博士阶段：你自己的工作节奏
+    if (m.busyUntil > g.day) w *= m.busyMult || 0.9; // 当助教之类的杂事
     return w;
   };
 
-  S.projectDemand = (g, p) => 6 * G.area(g).compute * G.topic(g, p.topic).compute * Math.pow(1.15, Math.max(0, G.calYear(g) - G.BASE_YEAR));
+  // 难度随“你的职业生涯开始以后”的年份增长（读完博士再当 PI 的存档，起点是入职那一年）
+  S.epoch = g => g.epoch || G.BASE_YEAR;
+  S.projectDemand = (g, p) => 6 * G.area(g).compute * G.topic(g, p.topic).compute * Math.pow(1.15, Math.max(0, G.calYear(g) - S.epoch(g)));
   S.computeDemand = g => U.sum(g.projects, p => (p.phase === 'exp' ? S.projectDemand(g, p) : 0));
   // 课题用所在小组的算力（没有对应小组的课题用共享池）
   S.computeFactor = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : U.clamp(Math.pow(S.projRatio(g, p, ctx), 0.6), 0.25, 1.15));
@@ -352,7 +356,8 @@
   S.grow = function (g, m, ph, w) {
     const key = STAT_OF[ph];
     const s = m.stats[key];
-    const mentor = (g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1) * S.groupGrowth(g, m);
+    const mentor = (g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1) * S.groupGrowth(g, m) *
+      (m.isPlayer && g.phd ? S.PACE[g.phd.pace].grow : 1);
     m.stats[key] = Math.min(100, s + GROW[ph] * w * m.pot * tMul(m, 'growth') * mentor * S.soft(s));
   };
   S.bumpStat = function (m, key, v) {
@@ -450,13 +455,15 @@
     return S.POS_NAMES[k] || `第 ${k + 1} 作者`;
   };
   // 署名列表（给界面显示）：外单位牵头的在前，然后是学生、合作者、挂名的人，最后是你（通讯作者）
+  // 每一项：{ n 名字, co 共同一作, ext 外单位, guest 挂名, corr 通讯作者, me 你自己 }
   S.authorList = function (g, pa) {
+    if (pa.names) return pa.names; // 读博期间的论文：署名在毕业时就定下来了
     const co = pa.co == null ? 1 : pa.co;
     const out = (pa.pre || []).map(n => ({ n, ext: true }));
-    (pa.authors || []).forEach((id, i) => out.push({ n: G.personName(g, id), id, co: co > 1 && i < co }));
+    (pa.authors || []).forEach((id, i) => out.push({ n: G.personName(g, id), id, co: co > 1 && i < co, me: !!g.phd && id === g.player }));
     if (pa.ext) out.push({ n: pa.ext, ext: true });
     if (pa.guest) out.push({ n: pa.guest, ext: true, guest: true });
-    out.push({ n: g.pi.name, pi: true });
+    out.push({ n: g.pi.name, corr: true, me: !g.phd });
     return out;
   };
 
@@ -515,7 +522,7 @@
   // 高分段边际递减：好论文很多，但“完美论文”很少
   S.squash = q => (q > 70 ? 70 + (q - 70) * 0.5 : q);
   // 整个领域的门槛逐年水涨船高
-  S.fieldBar = g => Math.min(14, 0.8 * Math.max(0, G.calYear(g) - G.BASE_YEAR));
+  S.fieldBar = g => Math.min(14, 0.8 * Math.max(0, G.calYear(g) - S.epoch(g)));
 
   S.releaseProject = function (g, p) {
     [p.lead].concat(p.helpers).forEach(id => {
@@ -615,7 +622,9 @@
       S.publish(g, p, RS.VENUES.arxiv, {});
       return;
     }
-    if (g.policies.submit === 'ask' && g.policies.auto !== 'all') {
+    // 博士阶段只有你自己负责的论文会来问你，其余的导师说了算
+    const ask = g.phd ? p.lead === g.player && g.phd.submit === 'ask' : g.policies.submit === 'ask';
+    if (ask && g.policies.auto !== 'all') {
       if (!p.asking) {
         p.asking = true;
         G.queue(g, { type: 'venue', pid: p.id });
@@ -665,7 +674,8 @@
     const lead = G.member(g, p.lead);
     const margin = p.q + (lead ? tAdd(lead, 'luck') : 0) - S.venueThr(g, v, p);
     const scores = S.genScores(v, margin + U.normal(0, 3), margin > 0);
-    if (g.policies.rebuttal === 'ask' && g.policies.auto === 'off') {
+    const ask = g.phd ? p.lead === g.player && g.phd.rebuttal === 'ask' : g.policies.rebuttal === 'ask';
+    if (ask && g.policies.auto === 'off') {
       G.queue(g, { type: 'event', id: 'rebuttal', ctx: { pid: p.id, scores, quote: U.pick(RS.REVIEWS.bad) } });
     } else {
       p.q += 2.5;
@@ -700,7 +710,7 @@
   S.publish = function (g, p, v, info) {
     const margin = info.margin || 0;
     let best = false, oral = false;
-    const nm = Math.floor((g.day % 360) / 30) + 1;
+    const nm = G.month(g);
     const year = G.calYear(g) + (v.type === 'conf' && nm >= 10 ? 1 : 0);
     if (v.tier === 'A' && v.type === 'conf') {
       g.flags.bestAt = g.flags.bestAt || {};
@@ -760,10 +770,11 @@
     if (best) {
       g.stats.bestPapers++;
       G.milestone(g, `《${p.title}》获 ${v.name} ${year} 最佳论文奖`);
-      G.queue(g, { type: 'notice', tone: 'gold', icon: 'trophy', fx: 'confetti', title: '最佳论文奖！', text: `《${p.title}》获得了 <b>${v.name} ${year}</b> 的最佳论文奖！<br>这是整个领域的最高认可之一。声望 +15，引用量将大幅提升。` });
+      G.queue(g, { type: 'notice', player: !g.phd || paper.authors.includes(g.player), tone: 'gold', icon: 'trophy', fx: 'confetti', title: '最佳论文奖！', text: `《${p.title}》获得了 <b>${v.name} ${year}</b> 的最佳论文奖！<br>这是整个领域的最高认可之一。声望 +15，引用量将大幅提升。` });
     } else if (v.tier === 'A' && g.stats.pubs.A === 1) {
       G.milestone(g, `第一篇 A 类论文被 ${v.name} 接收`);
     }
+    if (g.phd) S.phdOnPublish(g, paper, v);
     RS.bus.emit('accept', { paper, lead: p.lead, best });
     return paper;
   };

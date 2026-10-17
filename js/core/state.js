@@ -10,18 +10,20 @@
   G.SETTINGS_KEY = 'research-sim-settings-v1';
   G.VERSION = 1;
 
-  // ---------- 日期（每月 30 天、每年 360 天；day=0 为 2026 年 1 月 1 日） ----------
+  // ---------- 日期（每月 30 天、每年 360 天；day=0 为 2026 年 1 月 1 日，博士阶段从更早的负数天开始） ----------
+  const mod = (a, n) => ((a % n) + n) % n;
+  G.mod = mod;
   G.dayOf = (m, d) => (m - 1) * 30 + (d - 1);
-  G.doy = g => g.day % 360;
-  G.month = g => Math.floor((g.day % 360) / 30) + 1;
-  G.dom = g => (g.day % 30) + 1;
+  G.doy = g => mod(g.day, 360);
+  G.month = g => Math.floor(mod(g.day, 360) / 30) + 1;
+  G.dom = g => mod(g.day, 30) + 1;
   G.yearOfDay = day => G.BASE_YEAR + Math.floor(day / 360);
   G.calYear = g => G.yearOfDay(g.day);
   G.careerYear = g => Math.floor((g.day - g.startDay) / 360) + 1;
   G.piAge = g => g.pi.age0 + Math.floor((g.day - g.startDay) / 360);
-  G.dateStr = day => `${G.yearOfDay(day)}年${Math.floor((day % 360) / 30) + 1}月${(day % 30) + 1}日`;
-  G.monthStr = day => `${G.yearOfDay(day)}年${Math.floor((day % 360) / 30) + 1}月`;
-  G.mdStr = day => `${Math.floor((day % 360) / 30) + 1}月${(day % 30) + 1}日`;
+  G.dateStr = day => `${G.yearOfDay(day)}年${Math.floor(mod(day, 360) / 30) + 1}月${mod(day, 30) + 1}日`;
+  G.monthStr = day => `${G.yearOfDay(day)}年${Math.floor(mod(day, 360) / 30) + 1}月`;
+  G.mdStr = day => `${Math.floor(mod(day, 360) / 30) + 1}月${mod(day, 30) + 1}日`;
   // 从 fromDay（含）开始，下一个 m 月 d 日对应的绝对日
   G.nextDate = (fromDay, m, d) => {
     const doy = G.dayOf(m, d);
@@ -102,7 +104,9 @@
     if (g.logs.length > 150) g.logs.length = 150;
     RS.bus.emit('log', { text, kind: kind || 'info' });
   };
-  G.milestone = (g, text) => {
+  // 大事记。博士阶段只记你自己的事（phd = true），导师实验室的事不记
+  G.milestone = (g, text, phd) => {
+    if (g.mode === 'phd' && !phd) return;
     g.timeline.push({ d: g.day, t: text });
   };
   G.queue = (g, item) => {
@@ -121,7 +125,7 @@
     const T = R.tiers[o.tier];
     const A = RS.AREAS[o.areaId];
     const perk = RS.PERKS.find(p => p.id === o.perk) || RS.PERKS[0];
-    const startDay = G.dayOf(R.start[0], R.start[1]);
+    const startDay = o.day != null ? o.day : G.dayOf(R.start[0], R.start[1]);
     const g = {
       version: G.VERSION, nextId: 1, created: Date.now(), savedAt: Date.now(),
       region: o.region, tier: o.tier, areaId: o.areaId, perk: perk.id,

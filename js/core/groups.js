@@ -227,14 +227,18 @@
     if (out.length < 2) add(g.policies.coreTopic);
     return out.slice(0, 4);
   };
-  S.wantsConsult = (g, m) => g.policies.consult !== 'auto' && !!m.lastDone && S.CONSULT_ROLES.includes(m.role) &&
-    !g.queue.some(q => q.type === 'event' && q.id === 'next_topic' && q.ctx.mid === m.id);
+  S.wantsConsult = (g, m) => {
+    if (!m.lastDone || !S.CONSULT_ROLES.includes(m.role)) return false;
+    // 博士阶段：只有你自己做完课题时会停下来想下一步，师兄师姐的选题导师自动安排
+    if (g.phd) return !!m.isPlayer && g.phd.consult !== 'auto' && !g.queue.some(q => q.type === 'event' && q.id === 'phd_next');
+    return g.policies.consult !== 'auto' && !g.queue.some(q => q.type === 'event' && q.id === 'next_topic' && q.ctx.mid === m.id);
+  };
   S.queueConsult = function (g, m) {
     const last = m.lastDone || {};
     const opts = S.topicOptions(g, m, last.topic);
     const mine = S.memberTopics(g, m).filter(t => opts.includes(t));
     const def = argmax(mine.length ? mine : opts, t => S.topicScore(g, m, t));
-    G.queue(g, { type: 'event', id: 'next_topic', ctx: { mid: m.id, title: last.title || '', topic: last.topic || null, opts, def } });
+    G.queue(g, { type: 'event', id: m.isPlayer ? 'phd_next' : 'next_topic', ctx: { mid: m.id, title: last.title || '', topic: last.topic || null, opts, def } });
   };
   // 延续上一个课题的方向：代码和数据都是现成的，构思更快
   S.continuity = function (m, p) {

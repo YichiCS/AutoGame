@@ -7,10 +7,15 @@
 
   // ---------- 新游戏初始化 ----------
   S.setupNewGame = function (g) {
+    const F = g.flags.fromPhd || null; // 从博士阶段过来：读博时带过的学弟学妹可能跟着你走
+    const mt = F && F.mentee;
     const fromPool = RS.SCHOOLS[g.region][1].filter(s => s !== g.school);
-    const phd = S.createMember(g, 'phd', { q: 52 + G.tierCfg(g).cand * 0.5, startDay: g.day - 360, trust: 70, school: U.pick(fromPool) });
+    const phd = mt
+      ? S.createMember(g, 'phd', { name: mt.name, avatar: mt.avatar, stats: mt.stats, traits: mt.traits, pot: mt.pot, startDay: g.day - (mt.role === 'phd' ? 360 : 0), trust: 78, school: F.school })
+      : S.createMember(g, 'phd', { q: 52 + G.tierCfg(g).cand * 0.5, startDay: g.day - 360, trust: 70, school: U.pick(fromPool) });
+    if (mt && mt.bio) phd.bio = Object.assign({}, mt.bio);
     S.addMember(g, phd, true);
-    S.story(g, phd, '跟着你从原来的学校转了过来');
+    S.story(g, phd, mt ? `读博时你带过 TA，这次跟着你从 ${F.school} 来了` : '跟着你从原来的学校转了过来');
     const ug = S.createMember(g, 'ug', { q: 58, school: g.school, trust: 60 });
     S.addMember(g, ug, true);
     // 第一个小组：你的核心方向，转来的博士生本来就做这个
@@ -31,7 +36,7 @@
     p2.phase = 'ready';
     phd.projectId = p1.id;
     g.year.joined = 0;
-    G.log(g, `${phd.name} 跟着你从原来的学校转了过来，成为实验室的第一位博士生。`, 'good');
+    G.log(g, mt ? `你读博时带过的 ${phd.name} 跟着你来到了 ${g.school}，成为实验室的第一位博士生。` : `${phd.name} 跟着你从原来的学校转了过来，成为实验室的第一位博士生。`, 'good');
     G.log(g, `${g.school} 的本科生 ${ug.name} 主动找上门来，想跟你做科研。`, 'good');
     if (S.currentSemester(g)) g.flags.firstSem = true;
     G.milestone(g, `入职 ${g.school}，成为${G.titleName(g)}`);
@@ -124,6 +129,7 @@
     const cur = m.projectId ? G.project(g, m.projectId) : null;
     if (cur && cur.topic === S.interestOf(m)) d += 0.01;
     if (S.leadsGroup(g, m)) { d -= 0.004; S.bumpStat(m, 'idea', 0.004); }
+    if (m.isPlayer && g.phd) d += S.PACE[g.phd.pace].mood;
     S.addMood(m, d + U.normal(0, 0.15));
     if (pol.intensity === 'crunch') S.addTrust(m, -0.01);
     else if (pol.intensity === 'chill') S.addTrust(m, 0.004);
@@ -133,7 +139,7 @@
     if (m.lowMood >= 20 + trust * 0.3 && m.quitCd <= g.day && m.role !== 'visit') {
       m.quitCd = g.day + 120;
       m.lowMood = 0;
-      G.queue(g, { type: 'event', id: 'quit_threat', ctx: { mid: m.id } });
+      G.queue(g, { type: 'event', id: m.isPlayer ? 'phd_slump' : 'quit_threat', ctx: { mid: m.id } });
     }
     if (m.funding === 'fellow' && m.fellowUntil && g.day >= m.fellowUntil) {
       m.funding = 'ra';
@@ -422,6 +428,7 @@
 
   // ---------- 教学 ----------
   S.semesterStart = function (g, sem) {
+    if (g.phd) S.phdSemester(g, sem); // 博士阶段：你可能要当助教
     if (!g.flags.firstSem) {
       g.flags.firstSem = true;
       G.log(g, `${sem.name}开始了。新教师的第一个学期免教学任务，专心搭建实验室吧`, 'info');
@@ -499,6 +506,7 @@
   // ---------- 毕业 ----------
   S.graduationSeason = function (g) {
     for (const m of g.members.slice()) {
+      if (m.isPlayer) continue; // 你自己什么时候毕业，由求职决定
       const yrs = S.memberYears(g, m);
       if (m.role === 'phd') {
         const ready = (yrs >= 3.8 && ((m.firstA || 0) >= 3 || (m.first || 0) >= 5)) || yrs >= 5.6;
@@ -647,6 +655,7 @@
     }
   };
   S.annualCheck = function (g) {
+    if (g.phd) return; // 博士阶段：导师的考核与你无关
     const cy = G.careerYear(g);
     const R = G.region(g);
     if (!g.pi.tenured) {
@@ -671,6 +680,7 @@
 
   // ---------- 年度总结 ----------
   S.yearEnd = function (g) {
+    if (g.phd) return S.phdYearEnd(g);
     const y = g.year;
     const cites = g.stats.cites - y.cites0;
     const score = y.papersA * 3 + y.papers + y.grants / (g.startup * 0.2) + cites / 200 + y.grads * 2;
@@ -707,6 +717,7 @@
 
   // ---------- 成就 ----------
   S.checkAchievements = function (g) {
+    if (g.phd) return; // 成就算的是你自己实验室的成绩
     for (const a of RS.ACHIEVEMENTS) {
       if (g.achievements[a.id]) continue;
       let ok = false;

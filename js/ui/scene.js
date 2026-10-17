@@ -725,6 +725,7 @@
       const typing = screenMode(a) !== 'idle';
       const bob = typing && Math.floor(T * 5 + d) % 2 ? 1 : 0;
       ctx.drawImage(sp, x + 11, y + 6 + bob);
+      if (isMe(a)) youMark(x + 17, y + 5);
       hits.push({ x: x + 9, y: y + 4, w: 16, h: 24, info: { kind: 'member', id: a.id } });
       if (a.emoteT > 0) emotes.push({ x: x + 17, y: y + 4, icon: a.emote });
     } else if (a && a.state === 'hidden') {
@@ -959,6 +960,7 @@
         ctx.fillStyle = '#00000030';
         ctx.fillRect(x + 2, Math.round(a.y) - 1, 8, 2);
         ctx.drawImage(sp, x, y);
+        if (isMe(a)) youMark(x + 6, y);
         if (a.grad) { R(x + 2, y - 1, 8, 2, P.black); R(x + 4, y - 2, 4, 1, P.black); R(x + 9, y, 1, 3, P.yellow); }
         if (!a.isPI || true) hits.push({ x, y, w: 12, h: 18, info: a.isPI ? { kind: 'pi' } : { kind: 'member', id: a.id } });
         if (a.emoteT > 0) emotes.push({ x: Math.round(a.x), y: y - 1, icon: a.emote });
@@ -974,12 +976,23 @@
         R(x - 7, 227, 14, 2, '#7a3a7a');
         if (a.state === 'sit') {
           ctx.drawImage(SP.character(a.av, 'back'), x - 6, 212);
+          if (isMe(a)) youMark(x, 211);
           R(x - 4, 224, 8, 1, '#73eff7');
           hits.push({ x: x - 6, y: 212, w: 12, h: 18, info: { kind: 'member', id: a.id } });
           if (a.emoteT > 0) emotes.push({ x, y: 210, icon: a.emote });
         }
       },
     });
+  }
+
+  // 博士阶段：在“你”头顶画一个上下跳动的小箭头
+  const isMe = a => !!(g && g.phd && a && a.id === g.player);
+  function youMark(x, y) {
+    const b = Math.floor(T * 2.5) % 2;
+    R(x - 3, y - 7 + b, 7, 1, P.black);
+    R(x - 2, y - 6 + b, 5, 1, P.yellow);
+    R(x - 1, y - 5 + b, 3, 1, P.yellow);
+    R(x, y - 4 + b, 1, 1, P.yellow);
   }
 
   function drawEmote(e) {

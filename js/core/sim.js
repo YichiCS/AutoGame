@@ -22,6 +22,7 @@
     for (const m of g.members.slice()) S.memberDaily(g, m, ctx);
     for (const m of g.members.slice()) S.memberWork(g, m, ctx);
     S.piDaily(g, ctx);
+    if (g.phd) S.phdDaily(g);
     S.proposalsDaily(g);
     S.projectsDaily(g);
     S.checkRush(g);
@@ -60,6 +61,7 @@
         else if (it.kind === 'join') S.joinCandidate(g, it.data.cand);
         else if (it.kind === 'postdocPool') S.postdocPool(g);
         else if (it.kind === 'scandal') Sim.scandal(g, it.data);
+        else if (it.kind === 'phdMarket') S.phdMarketResult(g);
       } catch (e) {
         console.error('schedule error', it, e);
       }
@@ -87,7 +89,8 @@
     if (Sim.blocked(g)) return;
     if (g.day - g.lastBlockDay < 10) return;
     if (!U.chance(1 / 20)) return;
-    const ids = Object.keys(RS.EVENTS).filter(id => RS.EVENTS[id].weight && (g.cooldowns['ev_' + id] || 0) <= g.day);
+    const phd = !!g.phd;
+    const ids = Object.keys(RS.EVENTS).filter(id => RS.EVENTS[id].weight && !!RS.EVENTS[id].phd === phd && (g.cooldowns['ev_' + id] || 0) <= g.day);
     for (let tries = 0; tries < 6 && ids.length; tries++) {
       const id = U.weighted(ids, k => Sim.eventWeight(g, RS.EVENTS[k]));
       if (!id) return;
@@ -152,6 +155,9 @@
         case 'ending':
           if (payload === 'continue') g.flags.continued = true;
           break;
+        case 'jobmarket':
+          S.phdMarketResolve(g, item, payload);
+          break;
         default:
           break;
       }
@@ -164,6 +170,9 @@
 
   // ---------- 托管 ----------
   Sim.canAuto = function (g, item, mode) {
+    // 博士阶段：导师实验室里的事都由导师处理，只有和你有关的才会问你
+    if (g.phd && !S.playerFacing(g, item)) return true;
+    if (item.type === 'jobmarket') return false;
     if (mode === 'off') return false;
     if (item.type === 'eval' || item.type === 'ending') return false;
     if (item.type === 'event') {
@@ -183,12 +192,15 @@
   };
 
   Sim.autoOne = function (g, item) {
+    // 博士阶段替导师处理的事不写进你的托管日志
+    const quiet = !!g.phd && !S.playerFacing(g, item);
+    const log = (text, kind) => { if (!quiet) G.log(g, text, kind); };
     switch (item.type) {
       case 'event': {
         const ev = Sim.buildEvent(g, item);
         if (!ev) { Sim.resolve(g, item, 0); return; }
         const i = Sim.autoChoice(ev);
-        G.log(g, `[托管] ${ev.title} → ${ev.choices[i].label}`, 'auto');
+        log(`[托管] ${ev.title} → ${ev.choices[i].label}`, 'auto');
         Sim.resolve(g, item, i);
         return;
       }
@@ -202,7 +214,7 @@
             if (d.group) { if (groups[d.group]) return; groups[d.group] = true; }
             pay[d.id] = effort;
           });
-        G.log(g, `[托管] 基金申请：${Object.keys(pay).map(id => G.grantDef(g, id).name).join('、') || '不申请'}`, 'auto');
+        log(`[托管] 基金申请：${Object.keys(pay).map(id => G.grantDef(g, id).name).join('、') || '不申请'}`, 'auto');
         Sim.resolve(g, item, pay);
         return;
       }

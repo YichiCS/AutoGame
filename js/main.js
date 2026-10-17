@@ -22,7 +22,8 @@
     RS.game = g;
     S.normalize(g);
     if (isNew) {
-      S.setupNewGame(g);
+      if (g.phd) S.setupPhd(g);
+      else S.setupNewGame(g);
     } else if (RS.settings.offline && g.savedAt && !Sim.blocked(g)) {
       const days = Math.min(120, Math.floor((Date.now() - g.savedAt) / MS_PER_DAY));
       if (days >= 2) {
