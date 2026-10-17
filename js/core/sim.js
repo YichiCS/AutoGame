@@ -192,8 +192,9 @@
   };
 
   Sim.autoOne = function (g, item) {
-    // 博士阶段替导师处理的事不写进你的托管日志
-    const quiet = !!g.phd && !S.playerFacing(g, item);
+    // 博士阶段：导师的事由导师按自己的风格（带点随机）决定，不写进你的托管日志
+    if (g.phd && !S.playerFacing(g, item)) { S.advisorDecide(g, item); return; }
+    const quiet = false;
     const log = (text, kind) => { if (!quiet) G.log(g, text, kind); };
     switch (item.type) {
       case 'event': {
@@ -243,7 +244,8 @@
 
   Sim.autoResolve = function (g) {
     const mode = g.policies.auto;
-    if (mode === 'off' || Sim._autoBusy) return;
+    // 博士阶段：导师的事不管你开没开托管，都由导师自己拿主意
+    if (Sim._autoBusy || (mode === 'off' && !g.phd)) return;
     Sim._autoBusy = true;
     try {
       let guard = 0;

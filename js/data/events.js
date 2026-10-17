@@ -81,19 +81,25 @@
         if (!p || p.phase !== 'review') return null;
         const v = RS.VENUES[p.venue];
         const lead = M(g, p.lead);
+        const withdraw = { label: '撤稿，改投别处', hint: '论文退回待投稿状态', apply: g => {
+          p.attempts++;
+          p.history.push({ v: v.id, d: g.day, scores: c.scores, withdrawn: true });
+          p.phase = 'ready'; p.venue = null; p.target = null;
+          G().log(g, `《${S().short(p.title)}》从 ${v.name} 撤稿`, 'info');
+          S().retarget(g, p);
+        } };
         return {
           title: 'Rebuttal 时间', portrait: lead ? { member: lead.id } : { icon: 'paper' },
           text: `《${U.esc(p.title)}》在 <b>${v.name}</b> 收到了初审意见：<b>${c.scores.join(' / ')}</b><br>Reviewer 2：“${c.quote}”<br>要怎么回复？`,
-          choices: [
+          choices: lead && lead.isPlayer ? [
+            // 博士阶段：你自己的论文，rebuttal 由你来写
+            { label: '熬夜逐条认真回复', hint: '论文质量 +4 · 你的心情 -5', def: true, apply: () => { p.q += 4; S().addMood(lead, -5); } },
+            { label: '简单回复一下', hint: '论文质量 +1.5', apply: () => { p.q += 1.5; } },
+            withdraw,
+          ] : [
             { label: '逐条认真回复', hint: '论文质量 +4 · 你的精力 -6 · 学生心情 -3', def: true, apply: g => { p.q += 4; S().addEnergy(g, -6); S().addMood(M(g, p.lead), -3); } },
             { label: '简单回复一下', hint: '论文质量 +1.5 · 精力 -1', apply: g => { p.q += 1.5; S().addEnergy(g, -1); } },
-            { label: '撤稿，改投别处', hint: '论文退回待投稿状态', apply: g => {
-              p.attempts++;
-              p.history.push({ v: v.id, d: g.day, scores: c.scores, withdrawn: true });
-              p.phase = 'ready'; p.venue = null; p.target = null;
-              G().log(g, `《${S().short(p.title)}》从 ${v.name} 撤稿`, 'info');
-              S().retarget(g, p);
-            } },
+            withdraw,
           ],
         };
       },

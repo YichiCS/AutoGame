@@ -21,6 +21,7 @@
   Main.start = function (g, isNew) {
     RS.game = g;
     S.normalize(g);
+    if (g.phd) Sim.autoResolve(g); // 旧存档里卡着的导师的决定，读档时交给导师处理掉
     if (isNew) {
       if (g.phd) S.setupPhd(g);
       else S.setupNewGame(g);

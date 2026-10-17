@@ -138,14 +138,16 @@
     G.queue(g, { type: 'event', id: 'phd_welcome', ctx: {} });
   };
 
-  // 导师每月管一管实验室：买卡、扩建、找经费、累了就歇歇
+  // 导师每月管一管实验室：买卡、扩建、找经费、累了就歇歇；作风也会随机变化
   S.advisorAI = function (g) {
     const adv = S.advisorType(g);
-    g.policies.focus = g.pi.energy < 25 ? 'rest' : adv.focus;
+    if (g.pi.energy < 25) g.policies.focus = 'rest';
+    else if (g.policies.focus === 'rest') g.policies.focus = adv.focus;
+    if (U.chance(0.1)) S.advisorDrift(g);
     const ctx = S.dayContext(g);
-    if (G.area(g).compute >= 0.3 && ctx.ratio < 0.9 && g.funds > 0) {
-      const av = S.gpuAvailable(g).filter(x => x.id !== 'ws' && S.gpuPrice(g, x) < g.funds * 0.25).sort((a, b) => b.units / b.price - a.units / a.price);
-      if (av.length) S.buyGpu(g, av[0].id);
+    if (G.area(g).compute >= 0.3 && ctx.ratio < 0.9 && g.funds > 0 && U.chance(0.6)) {
+      const av = S.gpuAvailable(g).filter(x => x.id !== 'ws' && S.gpuPrice(g, x) < g.funds * 0.25);
+      if (av.length) S.buyGpu(g, U.pick(av).id);
     }
     const next = RS.ROOMS[g.room + 1];
     if (next && g.members.length > G.desks(g) && g.funds > S.roomCost(g, next) * 2) {
@@ -154,6 +156,72 @@
       S.assignDesks(g);
     }
     if (S.runway(g) < 12) S.seekContract(g);
+  };
+
+  // 导师的作风会变：组会频率、工作强度、精力放在哪。一半回到自己的习惯，一半随机
+  const DRIFT = {
+    meeting: { opts: ['weekly', 'biweekly', 'monthly'], text: { weekly: '把组会改成了每周一次', biweekly: '把组会改成了两周一次', monthly: '把组会改成了一个月一次' } },
+    intensity: { opts: ['chill', 'normal', 'crunch'], text: { chill: '最近对大家很宽松，不怎么催进度了', normal: '恢复了正常的节奏', crunch: '开始天天催进度，实验室越来越卷了' } },
+    focus: { opts: ['mentor', 'grant', 'research'], text: { mentor: '最近花很多时间指导学生', grant: '最近忙着写基金，没空管大家', research: '最近亲自下场做研究' } },
+  };
+  S.advisorDrift = function (g) {
+    const adv = S.advisorType(g);
+    const k = U.pick(Object.keys(DRIFT));
+    const v = U.chance(0.5) ? adv[k] : U.pick(DRIFT[k].opts);
+    if (!v || g.policies[k] === v || (k === 'focus' && g.policies.focus === 'rest')) return;
+    g.policies[k] = v;
+    G.log(g, `导师 ${g.pi.name} ${DRIFT[k].text[v]}`, k === 'intensity' && v === 'crunch' ? 'bad' : 'info');
+  };
+  // 导师自己拿主意：大体有自己的风格（偏向稳妥的默认选项），但带着随机性
+  S.advisorDecide = function (g, item) {
+    const adv = S.advisorType(g);
+    const Sim = RS.Sim;
+    switch (item.type) {
+      case 'event': {
+        const ev = Sim.buildEvent(g, item);
+        const ok = ev ? ev.choices.map((c, i) => ({ c, i })).filter(x => !x.c.disabled) : [];
+        const pick = ok.length ? U.weighted(ok, x => (x.c.def ? adv.stick : 1)) : null;
+        Sim.resolve(g, item, pick ? pick.i : 0);
+        return;
+      }
+      case 'grants': {
+        // 每个能申请的项目随机决定申不申、花多少力气
+        const pay = {}, groups = {};
+        U.shuffle(item.ids).forEach(id => {
+          const d = G.grantDef(g, id);
+          if (S.grantElig(g, d) || (d.group && groups[d.group]) || !U.chance(adv.grantRate)) return;
+          if (d.group) groups[d.group] = true;
+          pay[id] = g.pi.energy > 40 && U.chance(0.6) ? 'full' : 'normal';
+        });
+        Sim.resolve(g, item, pay);
+        return;
+      }
+      case 'recruit': {
+        // 看人有自己的眼光：能力为主，但带点主观
+        const free = Math.max(1, G.desks(g) - g.members.length + 1);
+        const left = Object.assign({}, item.quota);
+        const score = {};
+        item.cands.forEach(c => { score[c.cid] = c.q * c.accept + U.normal(0, 12); });
+        item.offers = [];
+        if (U.chance(0.9)) {
+          item.cands.slice().sort((a, b) => score[b.cid] - score[a.cid]).forEach(c => {
+            if (item.offers.length >= free || left[c.role] <= 0) return;
+            left[c.role]--;
+            item.offers.push(c.cid);
+          });
+        }
+        Sim.resolve(g, item);
+        return;
+      }
+      case 'pool': {
+        const c = U.pick(item.cands);
+        const take = c && g.members.length < G.desks(g) + 1 && U.chance(item.role === 'postdoc' ? 0.45 : 0.6);
+        Sim.resolve(g, item, take ? [c.cid] : []);
+        return;
+      }
+      default:
+        Sim.resolve(g, item);
+    }
   };
 
   // 博士阶段：哪些事要问你（其余都由导师处理）

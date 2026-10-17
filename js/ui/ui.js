@@ -1207,7 +1207,13 @@
 
   function openNextQueue() {
     if (modal || !g) return;
-    const item = currentQueueItem();
+    let item = currentQueueItem();
+    // 博士阶段：不是你的事（导师的决定）不弹给你，交给导师处理
+    while (item && g.phd && !S.playerFacing(g, item)) {
+      RS.Sim.autoOne(g, item);
+      dirty = true;
+      item = currentQueueItem();
+    }
     if (!item) return;
     modal = { kind: 'queue', qid: item.qid };
     modalOpenedAt = performance.now();

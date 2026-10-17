@@ -13,18 +13,18 @@
   RS.ADVISORS = [
     { id: 'star', name: '大牛导师', desc: '领域大牛：名气大、资源足、人脉广，推荐信很有分量；但组里人多，导师很忙，指导你的时间少',
       rep: [320, 520], title: 3, lab: [7, 10], postdoc: true, gpu: 4, room: 2, fac: 9, funds: 1.4,
-      meeting: 'monthly', intensity: 'normal', focus: 'grant', research: 78, writing: 72, network: 75, letter: 1.5,
+      meeting: 'monthly', intensity: 'normal', focus: 'grant', research: 78, writing: 72, network: 75, letter: 1.5, stick: 3, grantRate: 0.8,
       tip: '大牛很忙，想让导师多关注你，得自己多出成果、主动约导师聊。' },
     { id: 'solid', name: '中坚导师', desc: '小有名气的副教授：节奏稳定，指导和资源都中规中矩，适合大多数人',
       rep: [110, 200], title: 1, lab: [4, 6], postdoc: false, gpu: 2, room: 1, fac: 6, funds: 1.2,
-      meeting: 'biweekly', intensity: 'normal', focus: 'mentor', research: 64, writing: 60, network: 50, letter: 1.15 },
+      meeting: 'biweekly', intensity: 'normal', focus: 'mentor', research: 64, writing: 60, network: 50, letter: 1.15, stick: 2.5, grantRate: 0.65 },
     { id: 'young', name: '青年导师', desc: '刚入职的助理教授：亲力亲为、每周组会、指导很多，成长快；但名气小、压力大，组里人少',
       rep: [20, 50], title: 0, lab: [1, 2], postdoc: false, gpu: 1, room: 0, fac: 3, funds: 1.1,
-      meeting: 'weekly', intensity: 'crunch', focus: 'mentor', research: 66, writing: 62, network: 35, letter: 0.85,
+      meeting: 'weekly', intensity: 'crunch', focus: 'mentor', research: 66, writing: 62, network: 35, letter: 0.85, stick: 2, grantRate: 0.85,
       tip: '青年导师自己也在赶 Tenure，会很拼，也会盯得很紧。' },
     { id: 'free', name: '放养型导师', desc: '兴趣广泛、很少管你：自由度高，全靠自己；组会一个月一次',
       rep: [150, 260], title: 2, lab: [4, 6], postdoc: false, gpu: 2, room: 1, fac: 6, funds: 1.2,
-      meeting: 'monthly', intensity: 'chill', focus: 'research', research: 72, writing: 56, network: 55, letter: 1.0 },
+      meeting: 'monthly', intensity: 'chill', focus: 'research', research: 72, writing: 56, network: 55, letter: 1.0, stick: 1.2, grantRate: 0.4 },
   ];
 
   // 本科背景：影响你刚入学时的能力
