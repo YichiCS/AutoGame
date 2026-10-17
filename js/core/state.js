@@ -71,7 +71,7 @@
   // ---------- 考核指标 ----------
   G.METRIC_NAMES = {
     papersA: 'A 类论文', funding: '累计获批经费', phd: '博士生（含毕业）', students: '研究生（含毕业）',
-    teaching: '平均教学评分', rep: '学术声望', nsfc: '主持国自然项目',
+    teaching: '平均教学评分', rep: '学术声望', nsfc: '主持国自然项目', ugCourses: '本科课程（门次）',
   };
   G.metric = (g, key) => {
     switch (key) {
@@ -82,10 +82,19 @@
       case 'teaching': return g.teaching.evals.length ? U.avg(g.teaching.evals) : 3.0;
       case 'rep': return g.rep;
       case 'nsfc': return g.grantLog.filter(x => x.won && x.nsfc).length;
+      case 'ugCourses': return g.teaching.ug || 0;
       default: return 0;
     }
   };
   G.metricFmt = (g, key, v) => (key === 'funding' ? G.money(g, v) : key === 'teaching' ? v.toFixed(2) : key === 'rep' ? String(Math.floor(v)) : String(v));
+
+  // ---------- 账本分类（经费明细） ----------
+  G.LEDGER_IN = { grant: '纵向基金拨款', contract: '企业合作 / 横向', gift: '捐赠与奖励', center: '研究中心分成', dept: '学院补贴', transfer: '技术转让', bridge: '过渡经费 / 垫付', sale: '设备转卖', other: '其他收入' };
+  G.LEDGER_OUT = { salary: '人员工资', compute: '算力维护与云服务', facility: '设施维护', supplies: '耗材与杂费', equip: '设备采购（GPU）', build: '设施购置与扩建', travel: '会议差旅', welfare: '学生福利（奖金 / 聚餐）', teaching: '买断教学', invest: '大型投资', misc: '维修与意外' };
+  G.ledgerName = (g, dir, cat) => {
+    if (dir === 'in' && cat === 'contract') return g.region === 'cn' ? '横向课题' : '企业合作项目';
+    return (dir === 'in' ? G.LEDGER_IN : G.LEDGER_OUT)[cat] || cat;
+  };
 
   // ---------- 日志 ----------
   G.log = (g, text, kind) => {
@@ -117,6 +126,7 @@
       version: G.VERSION, nextId: 1, created: Date.now(), savedAt: Date.now(),
       region: o.region, tier: o.tier, areaId: o.areaId, perk: perk.id,
       labName: o.labName || 'PIXEL Lab',
+      school: (o.school || '').trim() || G.defaultSchool(o.region, o.tier),
       day: startDay, startDay,
       startup: T.startup, funds: T.startup, rep: 10 + (perk.rep || 0),
       pi: {
@@ -136,7 +146,8 @@
       stats: { cites: 0, h: 0, pubs: { A: 0, B: 0, C: 0, W: 0, P: 0 }, bestPapers: 0, submissions: 0, rejects: 0, grantsWon: 0, grantTotal: 0, phdGrads: 0, msGrads: 0, profGrads: 0, peak: 0 },
       year: null,
       history: [],
-      teaching: { current: null, evals: [], count: 0 },
+      teaching: { current: null, evals: [], count: 0, ug: 0, grad: 0 },
+      ledger: {},
       services: [],
       logs: [], achievements: {}, titles: [], honors: [], timeline: [],
       lastBlockDay: startDay, evalDone: {}, ended: null,
@@ -174,8 +185,19 @@
       return null;
     }
   };
+  G.defaultSchool = (region, tier) => {
+    const T = RS.REGIONS[region].tiers[tier];
+    return (T.schools && T.schools[0]) || T.name;
+  };
+  // 旧存档缺少的字段在这里补上（成员的个性档案在 Sys.normalize 里补）
   G.migrate = g => {
     if (!g || typeof g !== 'object' || g.version !== G.VERSION || !RS.REGIONS[g.region] || !RS.AREAS[g.areaId]) return null;
+    if (!g.school) g.school = G.defaultSchool(g.region, g.tier);
+    if (!g.ledger) g.ledger = {};
+    if (g.teaching.ug == null) {
+      g.teaching.ug = Math.floor(g.teaching.count / 2);
+      g.teaching.grad = g.teaching.count - g.teaching.ug;
+    }
     return g;
   };
   G.clearSave = () => {

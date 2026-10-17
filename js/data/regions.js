@@ -19,7 +19,8 @@
     return s + '¥' + Math.round(a);
   }
 
-  const COURSES = ['数据结构', '算法设计与分析', '操作系统', '计算机网络', '机器学习', '编译原理', '计算机组成原理', '数据库系统', '人工智能导论', '软件工程', '离散数学', '计算机图形学', '深度学习', '程序设计基础', '分布式系统', '信息安全导论'];
+  // 本科课程（研究生课的名字由你的研究方向生成）
+  const COURSES = ['数据结构', '算法设计与分析', '操作系统', '计算机网络', '机器学习导论', '编译原理', '计算机组成原理', '数据库系统', '人工智能导论', '软件工程', '离散数学', '计算机图形学', '程序设计基础', '信息安全导论'];
 
   RS.REGIONS = {
     us: {
@@ -30,18 +31,21 @@
       startText: '你拿到了助理教授的 offer，搬进了计算机系大楼里一间空荡荡的实验室。六年后的 Tenure 评审，将决定你能否留在学术界。',
       tiers: [
         { name: '顶尖名校', desc: '起步经费充足、学生优秀，但 Tenure 要求严苛', startup: 900000, cand: 8, offer: 0.12, taSlots: 2,
-          req: { papersA: 12, funding: 1600000, phd: 5, teaching: 3.5, rep: 180 } },
+          schools: ['MIT', 'Stanford', 'CMU', 'UC Berkeley', 'Princeton', 'Cornell', 'UIUC', 'UW'],
+          req: { papersA: 12, funding: 1600000, phd: 5, teaching: 3.5, ugCourses: 3, rep: 180 } },
         { name: '研究型大学', desc: '中规中矩，推荐新手选择', startup: 650000, cand: 4, offer: 0.04, taSlots: 3,
-          req: { papersA: 8, funding: 1000000, phd: 4, teaching: 3.4, rep: 130 } },
+          schools: ['Penn State', 'Purdue', 'Rutgers', 'Ohio State', 'Virginia Tech', 'UC Irvine', 'UMass Amherst', 'Arizona State'],
+          req: { papersA: 8, funding: 1000000, phd: 4, teaching: 3.4, ugCourses: 4, rep: 130 } },
         { name: '新兴高校', desc: '经费紧张、生源一般，但考核相对宽松', startup: 400000, cand: -6, offer: -0.05, taSlots: 4,
-          req: { papersA: 5, funding: 500000, phd: 3, teaching: 3.2, rep: 80 } },
+          schools: ['Lakeside State University', 'Desert Tech', 'New Harbor University', 'Maple Valley College'],
+          req: { papersA: 5, funding: 500000, phd: 3, teaching: 3.2, ugCourses: 5, rep: 80 } },
       ],
-      evalKeys: ['papersA', 'funding', 'phd', 'teaching', 'rep'],
+      evalKeys: ['papersA', 'funding', 'phd', 'teaching', 'ugCourses', 'rep'],
       evalDate: [5, 1], midYear: 3, finalYear: 6,
       titles: ['助理教授', '副教授（终身）', '正教授', '讲席教授'],
       promotions: [
-        { to: 2, after: 5, rep: 220, papersA: 18 },
-        { to: 3, after: 4, rep: 480, papersA: 35 },
+        { to: 2, after: 5, rep: 220, papersA: 18, ugCourses: 8 },
+        { to: 3, after: 4, rep: 480, papersA: 35, ugCourses: 12 },
       ],
       costs: { phd: 6000, ms: 0, ug: 0, postdoc: 7000, visit: 0, supplies: 400, suppliesPer: 100, travel: 2500, buyout: 20000, dept: 0 },
       // 学校从基金中提取的管理费（间接费用）比例
@@ -113,18 +117,21 @@
       startText: '你作为青年人才入职了计算机学院，领到了钥匙和一间空实验室。预聘期六年，“非升即走”的倒计时已经开始。',
       tiers: [
         { name: '顶尖高校', desc: '启动经费高、生源好，但考核标准很高', startup: 1000000, cand: 8, offer: 0.12, taSlots: 0,
-          req: { papersA: 10, nsfc: 2, funding: 2500000, students: 10, teaching: 3.6, rep: 180 } },
+          schools: ['清华大学', '北京大学', '浙江大学', '上海交通大学', '中国科学技术大学', '南京大学', '复旦大学'],
+          req: { papersA: 10, nsfc: 2, funding: 2500000, students: 10, teaching: 3.6, ugCourses: 4, rep: 180 } },
         { name: '985/211 高校', desc: '中规中矩，推荐新手选择', startup: 600000, cand: 4, offer: 0.04, taSlots: 0,
-          req: { papersA: 7, nsfc: 1, funding: 1500000, students: 8, teaching: 3.4, rep: 130 } },
+          schools: ['哈尔滨工业大学', '华中科技大学', '西安交通大学', '北京航空航天大学', '武汉大学', '中山大学', '东南大学', '电子科技大学'],
+          req: { papersA: 7, nsfc: 1, funding: 1500000, students: 8, teaching: 3.4, ugCourses: 5, rep: 130 } },
         { name: '双非高校', desc: '经费少、生源一般，但考核相对宽松', startup: 300000, cand: -6, offer: -0.05, taSlots: 0,
-          req: { papersA: 4, nsfc: 1, funding: 800000, students: 5, teaching: 3.2, rep: 80 } },
+          schools: ['江海理工大学', '南山科技大学', '东湖信息工程大学', '北岭工业大学'],
+          req: { papersA: 4, nsfc: 1, funding: 800000, students: 5, teaching: 3.2, ugCourses: 6, rep: 80 } },
       ],
-      evalKeys: ['papersA', 'nsfc', 'funding', 'students', 'teaching', 'rep'],
+      evalKeys: ['papersA', 'nsfc', 'funding', 'students', 'teaching', 'ugCourses', 'rep'],
       evalDate: [7, 1], midYear: 3, finalYear: 6,
       titles: ['助理教授（预聘）', '长聘副教授', '教授', '讲席教授'],
       promotions: [
-        { to: 2, after: 3, rep: 170, papersA: 12 },
-        { to: 3, after: 4, rep: 450, papersA: 30 },
+        { to: 2, after: 3, rep: 170, papersA: 12, ugCourses: 9 },
+        { to: 3, after: 4, rep: 450, papersA: 30, ugCourses: 14 },
       ],
       costs: { phd: 4000, ms: 2000, ug: 0, postdoc: 25000, visit: 0, supplies: 3000, suppliesPer: 600, travel: 12000, buyout: 0, dept: 2000 },
       overhead: { grant: 0.1, gift: 0.05, award: 0.05, contract: 0.15 },

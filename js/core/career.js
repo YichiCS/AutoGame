@@ -7,9 +7,11 @@
 
   // ---------- 新游戏初始化 ----------
   S.setupNewGame = function (g) {
-    const phd = S.createMember(g, 'phd', { q: 52 + G.tierCfg(g).cand * 0.5, startDay: g.day - 360 });
+    const fromPool = RS.SCHOOLS[g.region][1].filter(s => s !== g.school);
+    const phd = S.createMember(g, 'phd', { q: 52 + G.tierCfg(g).cand * 0.5, startDay: g.day - 360, trust: 70, school: U.pick(fromPool) });
     S.addMember(g, phd, true);
-    const ug = S.createMember(g, 'ug', { q: 58 });
+    S.story(g, phd, '跟着你从原来的学校转了过来');
+    const ug = S.createMember(g, 'ug', { q: 58, school: g.school, trust: 60 });
     S.addMember(g, ug, true);
     // 转来的学生带着一篇快写完的论文；PI 自己也有一篇博后期间的存稿
     const p1 = S.newProject(g, phd, g.policies.coreTopic);
@@ -25,9 +27,9 @@
     phd.projectId = p1.id;
     g.year.joined = 0;
     G.log(g, `${phd.name} 跟着你从原来的学校转了过来，成为实验室的第一位博士生。`, 'good');
-    G.log(g, `本科生 ${ug.name} 主动找上门来，想跟你做科研。`, 'good');
+    G.log(g, `${g.school} 的本科生 ${ug.name} 主动找上门来，想跟你做科研。`, 'good');
     if (S.currentSemester(g)) g.flags.firstSem = true;
-    G.milestone(g, `入职${G.tierCfg(g).name}，成为${G.titleName(g)}`);
+    G.milestone(g, `入职 ${g.school}，成为${G.titleName(g)}`);
     G.queue(g, { type: 'event', id: 'welcome', ctx: {} });
   };
 
@@ -107,10 +109,16 @@
     if (g.pi.energy < 20) d -= 0.03;
     if (g.members.length > G.desks(g)) d -= 0.02;
     if (S.isHoliday(g)) d += 0.1;
+    // 信任高的学生更扛得住压力
+    const trust = m.trust == null ? 55 : m.trust;
+    d += (trust - 50) * 0.0004;
     S.addMood(m, d + U.normal(0, 0.15));
+    if (pol.intensity === 'crunch') S.addTrust(m, -0.01);
+    else if (pol.intensity === 'chill') S.addTrust(m, 0.004);
+    if (pol.focus === 'mentor' && g.pi.energy >= 25) S.addTrust(m, 0.003);
     if (m.mood < 18) m.lowMood++;
     else m.lowMood = Math.max(0, m.lowMood - 2);
-    if (m.lowMood >= 25 && m.quitCd <= g.day && m.role !== 'visit') {
+    if (m.lowMood >= 20 + trust * 0.3 && m.quitCd <= g.day && m.role !== 'visit') {
       m.quitCd = g.day + 120;
       m.lowMood = 0;
       G.queue(g, { type: 'event', id: 'quit_threat', ctx: { mid: m.id } });
@@ -273,12 +281,17 @@
   function noisyRange(v) {
     return { lo: U.clamp(Math.round(v - U.int(4, 12)), 1, 99), hi: U.clamp(Math.round(v + U.int(4, 12)), 1, 99) };
   }
-  S.genCandidate = function (g, role, qBonus) {
+  // opts.own: 来自你自己学校（课堂发掘、本科生招募、敲门的学生）
+  S.genCandidate = function (g, role, qBonus, opts) {
+    opts = opts || {};
     const T = G.tierCfg(g);
     const repB = Math.min(10, g.rep / 25);
     const fellowB = g.flags.fellowship && (role === 'phd' || role === 'ms') ? 6 : 0;
     let q = U.clamp(46 + T.cand + repB + fellowB + (qBonus || 0) + U.normal(0, 11), 18, 92);
     const st = U.clamp((q > 64 ? 2 : q > 50 ? 1 : 0) + (U.chance(0.15) ? U.pick([-1, 1]) : 0), 0, 2);
+    const own = !!opts.own || ((role === 'phd' || role === 'ms') && U.chance(0.15));
+    const pool = RS.SCHOOLS[g.region][st].filter(s => s !== g.school);
+    const school = own ? g.school : U.pick(pool.length ? pool : RS.SCHOOLS[g.region][st]);
     const stats = S.genStats(q + ROLE_Q[role]);
     const traits = RS.randomTraits(q);
     if (traits.includes('mathy')) stats.idea = U.clamp(stats.idea + 6, 8, 95);
@@ -288,7 +301,7 @@
       : 1;
     return {
       cid: G.nid(g, 'c'), name: RS.randomName(g.region), role, avatar: RS.randomAvatar(),
-      school: U.pick(RS.SCHOOLS[g.region][st]), q, stats, traits,
+      school, own, q, stats, traits, bio: RS.genBio(role, traits, school),
       pot: U.clamp(U.normal(1 + (q - 50) / 200, 0.15), 0.65, 1.45), fellow,
       pubs: q > 70 ? U.int(1, 3) : q > 58 ? U.int(0, 2) : U.chance(0.2) ? 1 : 0, accept,
       est: { idea: noisyRange(stats.idea), code: noisyRange(stats.code), write: noisyRange(stats.write) },
@@ -329,8 +342,10 @@
   };
 
   S.memberFromCandidate = function (g, c, startDay) {
-    const m = S.createMember(g, c.role, { name: c.name, avatar: c.avatar, stats: c.stats, traits: c.traits, pot: c.pot, school: c.school, startDay });
+    const m = S.createMember(g, c.role, { name: c.name, avatar: c.avatar, stats: c.stats, traits: c.traits, pot: c.pot, school: c.school, startDay, trust: c.own ? 62 : undefined });
+    if (c.bio) m.bio = c.bio;
     if (c.fellow) { m.funding = 'fellow'; m.fellowUntil = startDay + 3 * 360; }
+    if (c.from) S.story(g, m, c.from);
     return m;
   };
 
@@ -348,7 +363,7 @@
         G.schedule(g, joinDay, 'join', { cand: c });
       }
     });
-    const others = G.region(g).univs.concat(G.region(g).companies.slice(0, 2));
+    const others = G.region(g).univs.filter(u => u !== g.school).concat(G.region(g).companies.slice(0, 2));
     const lines = [];
     yes.forEach(c => lines.push(`<span class="good">✔ ${U.esc(c.name)}（${S.ROLE_NAMES[c.role]}）接受了 offer</span>`));
     no.forEach(c => lines.push(`<span class="bad">✘ ${U.esc(c.name)} 去了 ${U.esc(U.pick(others))}</span>`));
@@ -365,8 +380,8 @@
   S.ugPool = function (g) {
     if ((g.cooldowns.ug || 0) > g.day) return `${G.daysText(g.cooldowns.ug - g.day)}才能再次招募`;
     g.cooldowns.ug = g.day + 120;
-    const cands = [0, 1, 2].map(() => S.genCandidate(g, 'ug', -2));
-    G.queue(g, { type: 'pool', role: 'ug', title: '招募本科生科研助理', text: '在学院群里发了招募通知，有几位本科生报名。本科生不需要发工资，可以给博士生打下手；表现好的话还能留下来读研。', cands, max: 2 });
+    const cands = [0, 1, 2].map(() => Object.assign(S.genCandidate(g, 'ug', -2, { own: true }), { from: '响应招募通知加入' }));
+    G.queue(g, { type: 'pool', role: 'ug', title: '招募本科生科研助理', text: `在 ${g.school} 的学院群里发了招募通知，有几位本科生报名。本科生不需要发工资，可以给博士生打下手；表现好的话还能留下来读研。`, cands, max: 2 });
     return null;
   };
   S.postdocSearch = function (g) {
@@ -398,8 +413,15 @@
       G.log(g, `${sem.name}开始了。新教师的第一个学期免教学任务，专心搭建实验室吧`, 'info');
       return;
     }
-    const courses = U.sample(G.region(g).courses, 2);
-    G.queue(g, { type: 'event', id: 'teaching', ctx: { sem: sem.id, semName: sem.name, big: courses[0], grad: courses[1] } });
+    const ugCourse = U.pick(G.region(g).courses);
+    const t = U.chance(0.6) ? G.topic(g, g.policies.coreTopic) : U.pick(G.area(g).topics);
+    G.queue(g, { type: 'event', id: 'teaching', ctx: { sem: sem.id, semName: sem.name, big: ugCourse, grad: `${t.name}专题研讨`, gradTopic: t.id } });
+  };
+  // 本科课程的考核要求（还没拿到终身教职时看考核，之后看下一次晋升）
+  S.ugTarget = function (g) {
+    if (!g.pi.tenured) return G.tierCfg(g).req.ugCourses || 0;
+    const pr = G.region(g).promotions.find(p => p.to === g.pi.title + 1);
+    return pr ? pr.ugCourses || 0 : 0;
   };
   S.setTeaching = function (g, sem, c) {
     g.teaching.current = c ? Object.assign({ sem, eSum: 0, eN: 0 }, c) : null;
@@ -415,9 +437,32 @@
     pi.teaching = Math.min(100, pi.teaching + 3 * S.soft(pi.teaching));
     g.teaching.current = null;
     G.log(g, `《${T.name}》课程结束，学生评教 ${ev.toFixed(2)} / 5`, ev >= 4 ? 'good' : ev < 3 ? 'bad' : 'info');
-    if (T.scout && U.chance(0.35) && g.members.length < G.desks(g) + 2) {
-      const c = S.genCandidate(g, 'ug', 10);
-      G.queue(g, { type: 'pool', role: 'ug', title: '课堂上的好苗子', text: `《${T.name}》课上有位学生表现非常出色，期末后来问能不能加入你的实验室。`, cands: [c], max: 1 });
+    const room = g.members.length < G.desks(g) + 2;
+    const kind = T.kind || (T.mod < 0 ? 'ug' : 'grad'); // 兼容旧存档
+    if (kind === 'ug') {
+      g.teaching.ug = (g.teaching.ug || 0) + 1;
+      // 大课学生多：更容易发掘本科生；评教高还可能拿教学奖
+      if (ev >= 4.3) {
+        S.addRep(g, 2);
+        G.log(g, `《${T.name}》评教优秀，你获得了学院的本科教学优秀奖`, 'gold');
+        RS.bus.emit('toast', { text: '获得本科教学优秀奖！', kind: 'gold' });
+      }
+      if (room && U.chance(0.55)) {
+        const n = U.chance(0.4) ? 2 : 1;
+        const cands = [];
+        for (let i = 0; i < n; i++) cands.push(Object.assign(S.genCandidate(g, 'ug', 8, { own: true }), { from: `在你的本科课《${T.name}》上被发掘` }));
+        G.queue(g, { type: 'pool', role: 'ug', title: '课堂上的好苗子', text: `《${T.name}》是一门 ${g.school} 的本科大课，期末有 ${n} 位表现出色的学生来问能不能加入你的实验室。`, cands, max: n });
+      }
+    } else {
+      g.teaching.grad = (g.teaching.grad || 0) + 1;
+      // 研究生专题课：备课和讨论让你对这个方向理解更深
+      const tid = T.topic || g.policies.coreTopic;
+      g.expertise[tid] = Math.min(10, (g.expertise[tid] || 0) + 0.4);
+      G.log(g, `准备《${T.name}》让你对「${G.topic(g, tid).name}」的理解更深了（方向积累 +0.4）`, 'info');
+      if (room && U.chance(0.3)) {
+        const c = Object.assign(S.genCandidate(g, 'ms', 8, { own: true }), { from: `在你的研究生课《${T.name}》上被发掘` });
+        G.queue(g, { type: 'pool', role: 'ms', title: '课堂上的好苗子', text: `《${T.name}》课上有位 ${g.school} 的硕士生对你的方向特别感兴趣，想加入你的实验室。`, cands: [c], max: 1 });
+      }
     }
   };
 
@@ -456,20 +501,28 @@
     }
   };
 
+  // 毕业去向：看成果、能力、你的声望，也看学生自己的职业理想和你们之间的信任（推荐信写得好不好）
   S.placement = function (g, m) {
     const R = G.region(g);
     const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
-    const score = m.pubsA * 3 + m.pubs + (avg - 50) / 5 + g.rep / 80 + U.normal(0, 3);
+    const trust = m.trust == null ? 55 : m.trust;
+    const goal = m.bio ? m.bio.goal : 'undecided';
+    const score = m.pubsA * 3 + m.pubs + (avg - 50) / 5 + g.rep / 80 + (trust - 50) / 12 + U.normal(0, 3);
     let acad = 0.3 + S.tAdd(m, 'academia') - (m.traits.includes('industry') ? 0.25 : 0);
+    acad += { academia: 0.35, industry: -0.2, startup: -0.25, quant: -0.25, undecided: 0 }[goal] || 0;
     if (m.role === 'ms' || m.role === 'ug') acad = 0;
-    const univ = U.pick(R.univs);
-    if ((m.role === 'phd' || m.role === 'postdoc') && score > 15 && U.chance(acad + 0.15)) {
+    const univs = R.univs.filter(u => u !== g.school);
+    const univ = U.pick(univs.length ? univs : R.univs);
+    if ((m.role === 'phd' || m.role === 'postdoc') && score > 15 && U.chance(U.clamp(acad + 0.15, 0, 0.95))) {
       const top = score > 24;
+      if (trust >= 70 && U.chance(0.12)) return { text: `${g.school} 助理教授（留校任教）`, kind: 'prof', rep: top ? 10 : 6 };
       return { text: `${univ} 助理教授`, kind: 'prof', rep: top ? 10 : 5 };
     }
-    if (m.role === 'phd' && score > 9 && U.chance(acad)) return { text: `${univ} 博士后`, kind: 'postdoc', rep: 2 };
+    if (m.role === 'phd' && score > 9 && U.chance(U.clamp(acad, 0, 0.9))) return { text: `${univ} 博士后`, kind: 'postdoc', rep: 2 };
     const co = U.pick(R.companies);
     if (m.role === 'ug') return { text: score > 4 ? `${univ} 读研` : `${co} 工程师`, kind: 'other', rep: 0.5 };
+    if (goal === 'startup' && score > 8 && U.chance(0.6)) return { text: `创办了一家${U.pick(['AI', '芯片', '机器人', '数据', '安全'])}初创公司`, kind: 'industry', rep: 2 };
+    if (goal === 'quant' && U.chance(0.7)) return { text: `${R.companies.find(c => /量化/.test(c)) || co} 研究员`, kind: 'industry', rep: 1 };
     return { text: `${co} ${score > 12 ? '研究科学家' : '算法工程师'}`, kind: 'industry', rep: score > 12 ? 2 : 1 };
   };
 
@@ -560,7 +613,7 @@
     const pr = R.promotions.find(p => p.to === g.pi.title + 1);
     if (!pr) return;
     const since = (g.day - (g.pi.title === 1 ? g.pi.tenureDay : g.pi.promoDay)) / 360;
-    if (since >= pr.after && g.rep >= pr.rep && g.stats.pubs.A >= pr.papersA) {
+    if (since >= pr.after && g.rep >= pr.rep && g.stats.pubs.A >= pr.papersA && (g.teaching.ug || 0) >= (pr.ugCourses || 0)) {
       g.pi.title = pr.to;
       g.pi.promoDay = g.day;
       S.addRep(g, 10);
@@ -612,7 +665,9 @@
     if (y.papersA >= 5) g.flags.harvest = true;
     if (grade === 'S') { S.addEnergy(g, 10); S.addRep(g, 3); }
     else if (grade === 'A') S.addEnergy(g, 5);
-    const data = Object.assign({}, y, { year: G.calYear(g), cites, grade, funds: g.funds, rep: g.rep, h: g.stats.h, members: g.members.length });
+    const L = (g.ledger || {})[G.calYear(g)];
+    const data = Object.assign({}, y, { year: G.calYear(g), cites, grade, funds: g.funds, rep: g.rep, h: g.stats.h, members: g.members.length,
+      ledger: L ? JSON.parse(JSON.stringify(L)) : null });
     g.year = G.freshYear(g);
     if (RS.settings && RS.settings.yearSummary === false) {
       G.log(g, `${data.year} 年度总结：评级 ${grade}，A 类论文 ${data.papersA} 篇，新增引用 ${cites}`, 'info');
@@ -681,7 +736,7 @@
     if (!b) return '没有这个项目';
     const st = S.bigState(g, b);
     if (st) return st;
-    S.spend(g, S.bigCost(g, b));
+    S.spend(g, S.bigCost(g, b), 'invest');
     g.flags.big = g.flags.big || {};
     g.flags.big[id] = g.day;
     b.apply(g);
@@ -698,6 +753,7 @@
     m.talkCd = g.day + 30;
     S.addEnergy(g, -4);
     S.addMood(m, U.int(10, 16));
+    S.addTrust(m, 6);
     G.log(g, `你和 ${m.name} 聊了聊人生和科研，${RS.shortName(m.name)}的心情好多了`, 'info');
     return null;
   };
@@ -710,8 +766,9 @@
     const cost = S.bonusCost(g, m);
     if (g.funds < cost) return '经费不足';
     m.bonusCd = g.day + 90;
-    S.spend(g, cost);
+    S.spend(g, cost, 'welfare');
     S.addMood(m, 18);
+    S.addTrust(m, 4);
     G.log(g, `给 ${m.name} 发了 ${G.money(g, cost)} 的奖金，${RS.shortName(m.name)}笑开了花`, 'info');
     return null;
   };

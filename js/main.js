@@ -20,6 +20,7 @@
 
   Main.start = function (g, isNew) {
     RS.game = g;
+    S.normalize(g);
     if (isNew) {
       S.setupNewGame(g);
     } else if (RS.settings.offline && g.savedAt && !Sim.blocked(g)) {

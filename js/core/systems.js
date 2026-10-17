@@ -38,12 +38,31 @@
   const short = t => (t.length > 34 ? t.slice(0, 32) + '…' : t);
   S.short = short;
 
-  S.spend = (g, v) => { g.funds -= v; g.year.expense += v; };
-  S.earn = (g, v) => { g.funds += v; g.year.income += v; };
+  // 账本：按自然年、分类记录每一笔收支（经费明细页用）
+  S.book = function (g, dir, cat, v) {
+    if (!v) return;
+    if (!g.ledger) g.ledger = {};
+    const y = G.calYear(g);
+    const L = g.ledger[y] || (g.ledger[y] = { in: {}, out: {} });
+    L[dir][cat] = (L[dir][cat] || 0) + v;
+    const years = Object.keys(g.ledger).map(Number).sort((a, b) => a - b);
+    while (years.length > 4) delete g.ledger[years.shift()];
+  };
+  S.spend = (g, v, cat) => { g.funds -= v; g.year.expense += v; S.book(g, 'out', cat || 'misc', v); };
+  S.earn = (g, v, cat) => { g.funds += v; g.year.income += v; S.book(g, 'in', cat || 'other', v); };
   S.addRep = (g, v) => { g.rep = Math.max(0, g.rep + v); };
   S.addEnergy = (g, v) => { g.pi.energy = U.clamp(g.pi.energy + v, 0, 100); };
   S.addMood = (m, v) => { if (m) m.mood = U.clamp(m.mood + v, 0, 100); };
   S.labMood = (g, v) => g.members.forEach(m => S.addMood(m, v));
+  // 师生信任：谈心、发奖金、一起发论文会增加；拒绝实习、延期毕业会减少
+  S.addTrust = (m, v) => { if (m) m.trust = U.clamp((m.trust == null ? 55 : m.trust) + v, 0, 100); };
+  // 学生的成长轨迹
+  S.story = (g, m, text) => {
+    if (!m) return;
+    if (!m.story) m.story = [];
+    m.story.push({ d: g.day, t: text });
+    if (m.story.length > 16) m.story.shift();
+  };
 
   // ---------- 成员 ----------
   const clampStat = v => U.clamp(Math.round(v), 8, 95);
@@ -73,8 +92,21 @@
       lowMood: 0, quitCd: 0, salaryMult: 1, desk: -1,
       endDay: ROLE_YEARS[role] ? startDay + Math.round(ROLE_YEARS[role] * 360) : 0,
       internYear: 0, talkCd: 0, bonusCd: 0, extended: 0,
+      bio: RS.genBio(role, traits, o.school || ''),
+      trust: o.trust != null ? o.trust : U.int(45, 60),
+      base: { idea: stats.idea, code: stats.code, write: stats.write },
+      story: [],
     };
     return m;
+  };
+  // 给旧存档里的成员补上个性档案
+  S.normalize = function (g) {
+    g.members.forEach(m => {
+      if (!m.bio) m.bio = RS.genBio(m.role, m.traits, m.school || '');
+      if (m.trust == null) m.trust = 55;
+      if (!m.base) m.base = { idea: Math.round(m.stats.idea), code: Math.round(m.stats.code), write: Math.round(m.stats.write) };
+      if (!m.story) m.story = [];
+    });
   };
 
   S.memberYears = (g, m) => Math.max(0, (g.day - m.startDay) / 360);
@@ -95,6 +127,7 @@
     S.assignDesks(g);
     g.stats.peak = Math.max(g.stats.peak, g.members.length);
     g.year.joined++;
+    S.story(g, m, `以${S.ROLE_NAMES[m.role]}身份加入实验室`);
     if (!silent) G.log(g, `${m.name}（${S.ROLE_NAMES[m.role]}）加入了实验室！`, 'good');
     RS.bus.emit('member_join', m);
   };
@@ -146,7 +179,7 @@
     S.releaseMemberProjects(g, m);
     g.alumni.unshift({
       id: m.id, name: m.name, role: m.role, avatar: m.avatar, joinDay: m.joinDay, startDay: m.startDay,
-      leftDay: g.day, reason, dest: dest || '', pubs: m.pubs, pubsA: m.pubsA,
+      leftDay: g.day, reason, dest: dest || '', pubs: m.pubs, pubsA: m.pubsA, goal: m.bio ? m.bio.goal : '',
     });
     if (g.alumni.length > 100) g.alumni.length = 100;
     S.assignDesks(g);
@@ -578,9 +611,17 @@
     p.authors.forEach(id => {
       const m = G.member(g, id);
       if (!m) return;
-      if (v.tier !== 'P') m.pubs++;
-      if (v.tier === 'A') m.pubsA++;
+      if (v.tier !== 'P') {
+        if (m.pubs === 0) S.story(g, m, `第一篇论文：${v.name} ${year}`);
+        m.pubs++;
+      }
+      if (v.tier === 'A') {
+        if (m.pubsA === 0 && m.pubs > 1) S.story(g, m, `第一篇 A 类论文：${v.name} ${year}`);
+        m.pubsA++;
+      }
+      if (best) S.story(g, m, `获得 ${v.name} ${year} 最佳论文奖！`);
       S.addMood(m, id === p.lead ? (v.tier === 'P' ? 2 : 6) : 3);
+      if (v.tier !== 'P') S.addTrust(m, id === p.lead ? 5 : 2);
     });
     g.pi.stats.research = Math.min(100, g.pi.stats.research + (v.tier === 'A' ? 0.3 : 0.1) * S.soft(g.pi.stats.research));
     g.pi.stats.writing = Math.min(100, g.pi.stats.writing + 0.1 * S.soft(g.pi.stats.writing));
@@ -608,10 +649,10 @@
     const pol = g.policies.travel;
     const cost = G.region(g).costs.travel;
     if (pol === 'none') { S.addMood(lead, -4); return; }
-    S.spend(g, cost);
+    S.spend(g, cost, 'travel');
     S.addMood(lead, 6);
     if (pol === 'both') {
-      S.spend(g, cost);
+      S.spend(g, cost, 'travel');
       S.addRep(g, 0.8);
       g.pi.stats.network = Math.min(100, g.pi.stats.network + 0.8);
       S.addEnergy(g, -4);
@@ -631,6 +672,7 @@
     if (lead) S.addMood(lead, -8 * tMul(lead, 'rejectMood'));
     const quote = U.pick(RS.REVIEWS.bad);
     G.log(g, `《${short(p.title)}》被 ${v.name} 拒稿（评分 ${scores.join('/')}）。Reviewer 2：“${quote}”`, 'bad');
+    if (lead && lead.bio && U.chance(0.35)) G.log(g, `${lead.name} 叹了口气：“${lead.bio.motto}”`, 'info');
     RS.bus.emit('reject', { p, lead: p.lead });
     S.retarget(g, p);
   };
@@ -725,7 +767,7 @@
     if (f.req && !g.facilities[f.req]) return '需要先购买' + RS.FACILITIES.find(x => x.id === f.req).name;
     const cost = S.facilityCost(g, f);
     if (g.funds < cost) return '经费不足';
-    S.spend(g, cost);
+    S.spend(g, cost, 'build');
     g.facilities[id] = g.day;
     G.log(g, `购置了${f.name}（${G.money(g, cost)}）`, 'info');
     RS.bus.emit('buy', { id });
@@ -738,7 +780,7 @@
     if (!spec || !S.gpuAvailable(g).includes(spec)) return '买不到';
     const price = S.gpuPrice(g, spec);
     if (g.funds < price) return '经费不足';
-    S.spend(g, price);
+    S.spend(g, price, 'equip');
     g.gpus[id] = (g.gpus[id] || 0) + 1;
     G.log(g, `购入 ${spec.name}（+${spec.units} 算力，${G.money(g, price)}）`, 'info');
     RS.bus.emit('buy', { id: 'gpu' });
@@ -750,7 +792,7 @@
     const v = Math.round(spec.price * 0.25);
     g.gpus[id]--;
     if (!g.gpus[id]) delete g.gpus[id];
-    S.earn(g, v);
+    S.earn(g, v, 'sale');
     G.log(g, `二手出售了 ${spec.name}，回收 ${G.money(g, v)}`, 'info');
     return null;
   };
@@ -767,7 +809,7 @@
     if (g.rep < r.rep) return `需要声望 ≥ ${r.rep}`;
     const cost = S.roomCost(g, r);
     if (g.funds < cost) return '经费不足';
-    S.spend(g, cost);
+    S.spend(g, cost, 'build');
     g.room++;
     S.assignDesks(g);
     G.log(g, `实验室扩建为「${r.name}」，工位增加到 ${r.desks} 个`, 'good');
@@ -794,11 +836,34 @@
     const dept = G.region(g).costs.dept;
     return { grants, dept, total: grants + dept };
   };
+  S.grantCat = x => (x.kind === 'contract' ? 'contract' : x.kind === 'gift' || x.kind === 'award' ? 'gift' : x.kind === 'center' ? 'center' : 'grant');
+  // 每月固定收支的逐项明细（经费页展开用）
+  S.monthlyItems = function (g) {
+    const R = G.region(g), c = R.costs;
+    const out = {
+      salary: g.members.filter(m => S.salary(g, m) > 0).map(m => ({ name: `${m.name}（${S.ROLE_NAMES[m.role]}${m.salaryMult > 1.01 ? '，已加薪' : ''}）`, v: S.salary(g, m) })),
+      compute: Object.keys(g.gpus).map(id => ({ s: G.gpuSpec(g, id), n: g.gpus[id] })).filter(x => x.s).map(x => ({ name: `${x.s.name} ×${x.n} 维护电费`, v: x.s.maint * x.n })),
+      facility: RS.FACILITIES.filter(f => g.facilities[f.id] && f.maint).map(f => ({ name: f.name, v: f.maint * R.ppp })),
+      supplies: [{ name: '实验室基础耗材', v: c.supplies }, { name: `人均杂费 × ${g.members.length} 人`, v: c.suppliesPer * g.members.length }],
+    };
+    if (g.cloud) out.compute.push({ name: `${R.cloud.name} ×${g.cloud}`, v: g.cloud * R.cloud.price });
+    const inc = {
+      grants: g.grants.map(x => ({ name: x.name, v: x.monthly, left: x.monthsLeft, cat: S.grantCat(x) })),
+      dept: c.dept ? [{ name: '学院基本科研补贴', v: c.dept }] : [],
+    };
+    return { out, inc };
+  };
   S.monthly = function (g) {
     const ex = S.expenses(g), inc = S.income(g);
     g.funds += inc.total - ex.total;
     g.year.income += inc.total;
     g.year.expense += ex.total;
+    S.book(g, 'out', 'salary', ex.salaries);
+    S.book(g, 'out', 'compute', ex.compute);
+    S.book(g, 'out', 'facility', ex.facilities);
+    S.book(g, 'out', 'supplies', ex.supplies);
+    g.grants.forEach(x => S.book(g, 'in', S.grantCat(x), x.monthly));
+    S.book(g, 'in', 'dept', inc.dept);
     for (const x of g.grants) x.monthsLeft--;
     const done = g.grants.filter(x => x.monthsLeft <= 0);
     if (done.length) {

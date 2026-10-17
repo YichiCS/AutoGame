@@ -18,6 +18,9 @@
   let ng = null;
   let titleBlink = null;
   let modalOpenedAt = 0; // 新弹窗刚出现的一小段时间内忽略点击，防止双击误选下一个决定
+  // 可折叠区块的展开状态由这里记录（界面每次刷新都按它来渲染，不会被自动收起）
+  const openState = {};
+  let ledgerYear = 0; // 经费页查看哪一年的明细（0 = 今年）
 
   const $ = id => document.getElementById(id);
   const ico = name => `<img class="ico" src="${SP.iconURL(name, 2, 'ui')}" alt="">`;
@@ -144,12 +147,14 @@
     if (!g) return '';
     const sem = S.currentSemester(g);
     const hol = S.isHoliday(g);
-    const inc = S.income(g).total, ex = S.expenses(g).total, net = inc - ex;
+    const incD = S.income(g), exD = S.expenses(g);
+    const inc = incD.total, ex = exD.total, net = inc - ex;
     const M = RS.Main;
     const speeds = ['1x', '2x', '4x', '10x'];
     const blocked = g.queue.length > 0;
+    const moneyTip = `经费余额与每月净收支\n收入：基金拨款 +${money(incD.grants)}${incD.dept ? `，学院补贴 +${money(incD.dept)}` : ''}\n支出：工资 -${money(exD.salaries)}，算力 -${money(exD.compute)}，设施 -${money(exD.facilities)}，杂费 -${money(exD.supplies)}\n（「经费」页有逐项明细和年度账本）`;
     return `
-      <div class="brand" data-tip="${esc(g.labName)} · ${esc(G.titleName(g))}">${ico('flask')}<b>${esc(g.labName)}</b></div>
+      <div class="brand" data-tip="${esc(g.labName)} · ${esc(g.school)} · ${esc(G.titleName(g))}">${ico('flask')}<b>${esc(g.labName)}</b></div>
       <div class="date">${ico('calendar')}<b>${G.dateStr(g.day)}</b><span class="dim">${hol ? '假期' : sem ? sem.name : '假期'}</span></div>
       <div class="speed">
         <button class="${M.paused ? 'on' : ''}" data-act="pause" data-tip="暂停 / 继续（空格键）">${ico(M.paused ? 'play' : 'pause')}</button>
@@ -157,7 +162,7 @@
         ${blocked ? `<button class="alert" data-act="openQueue" data-tip="有事情等待你决定">${ico('exclam')}</button>` : ''}
       </div>
       <div class="chips">
-        <span class="chip" data-tip="经费余额 · 每月净收支">${ico('money')}<b class="${g.funds < 0 ? 'bad' : ''}">${money(g.funds)}</b><small class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}/月</small></span>
+        <span class="chip" data-tip="${esc(moneyTip)}">${ico('money')}<b class="${g.funds < 0 ? 'bad' : ''}">${money(g.funds)}</b><small class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}/月</small></span>
         <span class="chip" data-tip="PI 精力：太低会病倒，还会影响学生">${ico('energy')}<span class="mini ${g.pi.energy < 25 ? 'bad' : g.pi.energy < 50 ? 'warn' : 'good'}"><i style="width:${g.pi.energy.toFixed(0)}%"></i></span><b>${Math.round(g.pi.energy)}</b></span>
         <span class="chip" data-tip="学术声望：${repTitle(g.rep)}">${ico('star')}<b>${Math.floor(g.rep)}</b></span>
         <span class="chip" data-tip="已发表论文（A 类）">${ico('paper')}<b>${g.papers.filter(p => !p.retracted).length}</b><small>A ${g.stats.pubs.A}</small></span>
@@ -203,6 +208,7 @@
         ['学术声望', Math.floor(g.rep), pr.rep, g.rep >= pr.rep, g.rep / pr.rep],
         ['A 类论文', g.stats.pubs.A, pr.papersA, g.stats.pubs.A >= pr.papersA, g.stats.pubs.A / pr.papersA],
       ];
+      if (pr.ugCourses) rows.push(['本科课程（门次）', g.teaching.ug || 0, pr.ugCourses, (g.teaching.ug || 0) >= pr.ugCourses, (g.teaching.ug || 0) / pr.ugCourses]);
       return `<div class="card"><h3>${ico('star')} 晋升${esc(R.titles[pr.to])}</h3>${rows.map(r => critRow(r[0], r[1], r[2], r[3], r[4])).join('')}<p class="small dim">每年 ${G.mdStr(G.dayOf(R.evalDate[0], R.evalDate[1]))} 自动评估。</p></div>`;
     }
     const crit = S.evalCriteria(g, ev.kind);
@@ -228,7 +234,7 @@
         ${portraitHTML({ pi: true }, 'big')}
         <div class="grow">
           <div class="row"><b class="name">${esc(pi.name)}</b>${tag(G.titleName(g), 'gold')}</div>
-          <div class="small dim">${esc(G.tierCfg(g).name)} · ${esc(G.area(g).name)} · ${G.piAge(g)} 岁 · 入职第 ${G.careerYear(g)} 年</div>
+          <div class="small dim">${esc(g.school)}（${esc(G.tierCfg(g).name)}）· ${esc(G.area(g).name)} · ${G.piAge(g)} 岁 · 入职第 ${G.careerYear(g)} 年</div>
           ${bar(pi.energy / 100, pi.energy < 25 ? 'bad' : pi.energy < 50 ? 'warn' : 'good', `精力 ${Math.round(pi.energy)} / 100${resting ? '（休养中）' : ''}`)}
           <div class="row small">${tag(repTitle(g.rep), 't-mid')}${g.titles.map(t => tag(t, 'gold')).join('')}${g.honors.map(h => tag(h.name, 'gold')).join('')}</div>
         </div>
@@ -260,27 +266,66 @@
     const prog = S.WORK_PHASES.includes(ph) ? ` ${Math.round((p.prog / p.need[ph]) * 100)}%` : '';
     return `${ico({ idea: 'bulb', exp: 'gear', write: 'pen' }[ph] || 'paper')}${lead ? '负责' : '协助'}《${esc(S.short(p.title))}》· ${S.PHASE_NAMES[ph]}${prog}`;
   }
+  // 可折叠区块：用按钮切换、状态记在 openState 里，界面刷新时不会被自动收起
+  function fold(key, head, body, cls) {
+    const open = !!openState[key];
+    return `<div class="fold ${cls || ''}" data-key="fold-${key}">
+      <button class="fold-head ${open ? 'open' : ''}" data-act="fold" data-arg="${key}"><span class="caret">${open ? '▾' : '▸'}</span>${head}</button>
+      ${open ? `<div class="fold-body">${body}</div>` : ''}
+    </div>`;
+  }
+
+  function memberDetail(m) {
+    const bio = m.bio || {};
+    const base = m.base || {};
+    const grow = (k, n) => {
+      const b = base[k] == null ? Math.round(m.stats[k]) : base[k];
+      const d = Math.round(m.stats[k]) - b;
+      return `<span>${n} ${b}→${Math.round(m.stats[k])}${d > 0 ? ` <b class="good">+${d}</b>` : ''}</span>`;
+    };
+    const papers = g.papers.filter(p => p.authors.includes(m.id));
+    return `<div class="mdetail">
+      <div class="kvline"><span>来自</span><b>${esc([m.school, bio.major].filter(Boolean).join(' · ') || '—')}</b></div>
+      <div class="kvline"><span>职业理想</span><b>${esc(RS.GOALS[bio.goal] || '还没想好')}</b></div>
+      <div class="kvline"><span>爱好</span><b>${esc((bio.hobbies || []).join('、') || '—')}</b></div>
+      <div class="kvline"><span>口头禅</span><b>“${esc(bio.motto || '……')}”</b></div>
+      <div class="kvline" data-tip="入组时的能力 → 现在"><span>成长</span><b class="growline">${grow('idea', '想法')}${grow('code', '编程')}${grow('write', '写作')}</b></div>
+      <div class="sub">成长轨迹</div>
+      ${(m.story || []).slice().reverse().map(s => `<div class="story"><span class="dim">${G.monthStr(s.d)}</span>${esc(s.t)}</div>`).join('') || '<div class="dim small">还没有什么故事。</div>'}
+      <div class="sub">发表的论文（${papers.length}）</div>
+      ${papers.slice(0, 8).map(p => `<div class="story">${tierTag(p.tier)}<span>${esc(S.short(p.title))} <span class="dim">${esc(RS.VENUES[p.venue].name)} ${p.year}${p.lead === m.id ? ' · 一作' : ''}</span></span></div>`).join('') || '<div class="dim small">还没有论文。</div>'}
+    </div>`;
+  }
+
   function memberCard(m) {
     const R = G.region(g);
     const sal = S.salary(g, m);
     const fund = m.funding !== 'self' || m.role === 'phd' ? tag(S.fundName(g, m.funding), m.funding === 'fellow' ? 'gold' : 'fund') : '';
     const canTA = R.hasTA && m.role === 'phd' && m.funding !== 'fellow';
     const talkCd = m.talkCd > g.day, bonusCd = m.bonusCd > g.day;
+    const bio = m.bio || {};
+    const trust = Math.round(m.trust == null ? 55 : m.trust);
+    const key = 'm-' + m.id;
+    const open = !!openState[key];
     return `<div class="mcard ${selMember === m.id ? 'sel' : ''}" data-key="${m.id}" id="m-${m.id}">
       <img class="portrait" src="${SP.portraitURL(m.avatar, m.role, 3)}" alt="" data-act="locate" data-arg="${m.id}" data-tip="在画面中找到 TA">
       <div class="grow">
-        <div class="row"><b class="name">${esc(m.name)}</b>${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}${fund}</div>
+        <div class="row"><b class="name">${esc(m.name)}</b>${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}${fund}${bio.goal ? tag('想' + RS.GOALS[bio.goal].replace('还没想好', '再看看'), 't-mid', '职业理想：会影响 TA 对实习、跳槽和毕业去向的选择') : ''}</div>
         <div class="row traits">${traitTags(m)}</div>
+        ${bio.motto ? `<div class="motto small">“${esc(bio.motto)}”</div>` : ''}
         <div class="stats3"><label>想法</label>${mini(m.stats.idea)}<label>编程</label>${mini(m.stats.code)}<label>写作</label>${mini(m.stats.write)}</div>
         <div class="row"><label class="small">心情</label>${bar(m.mood / 100, moodCls(m.mood))}<b class="num">${Math.round(m.mood)}</b></div>
+        <div class="row" data-tip="师生信任：谈心、发奖金、一起发论文、支持实习会增加；内卷、拒绝实习、延期毕业会减少。&#10;信任高的学生更扛压、不容易被挖走，毕业时你的推荐信也更有分量。"><label class="small">信任</label>${bar(trust / 100, trust < 35 ? 'bad' : trust < 60 ? 'warn' : 'good')}<b class="num">${trust}</b></div>
         <div class="task small">${taskText(m)}</div>
         <div class="small dim">论文 ${m.pubs}（A 类 ${m.pubsA}）· ${esc(m.school || '—')}${sal ? ` · 月薪 ${money(sal)}` : ''}</div>
         <div class="actions">
-          <button data-act="talk" data-arg="${m.id}" ${talkCd || m.status !== 'active' ? 'disabled' : ''} data-tip="${talkCd ? '最近刚谈过' : '精力 -4，心情 +10~16'}">谈心</button>
-          <button data-act="bonus" data-arg="${m.id}" ${bonusCd ? 'disabled' : ''} data-tip="${bonusCd ? '最近刚发过' : `经费 -${money(S.bonusCost(g, m))}，心情 +18`}">发奖金</button>
+          <button data-act="talk" data-arg="${m.id}" ${talkCd || m.status !== 'active' ? 'disabled' : ''} data-tip="${talkCd ? '最近刚谈过' : '精力 -4，心情 +10~16，信任 +6'}">谈心</button>
+          <button data-act="bonus" data-arg="${m.id}" ${bonusCd ? 'disabled' : ''} data-tip="${bonusCd ? '最近刚发过' : `经费 -${money(S.bonusCost(g, m))}，心情 +18，信任 +4`}">发奖金</button>
           ${canTA ? `<button data-act="fund" data-arg="${m.id}" data-tip="${m.funding === 'ta' ? '改回 RA：由你发工资，效率恢复' : `当助教：系里发工资，但效率 -35%（名额 ${S.taUsed(g)}/${G.tierCfg(g).taSlots}）`}">${m.funding === 'ta' ? '改回 RA' : '去当助教'}</button>` : ''}
+          <button data-act="fold" data-arg="${key}">${open ? '收起档案' : '档案'}</button>
           <button class="danger" data-act="dismiss" data-arg="${m.id}" data-tip="让 TA 离开实验室（声望 -1，全组心情 -5）">${confirmDismiss === m.id ? '确定劝退？' : '劝退'}</button>
         </div>
+        ${open ? memberDetail(m) : ''}
       </div>
     </div>`;
   }
@@ -297,7 +342,7 @@
       </div>
       ${g.members.length > G.desks(g) ? `<p class="warn small">工位不够了！挤在一起会让大家心情变差、效率下降。去「设施」页扩建实验室吧。</p>` : ''}
       ${list.map(memberCard).join('') || '<p class="dim">实验室空空荡荡……</p>'}
-      ${g.alumni.length ? `<details class="card"><summary>已离开的成员（${g.alumni.length}）</summary>${g.alumni.slice(0, 40).map(a => `<div class="kvline"><img class="portrait tiny" src="${SP.portraitURL(a.avatar, a.role, 2)}" alt=""><span class="grow">${esc(a.name)} <span class="dim small">${S.ROLE_NAMES[a.role]} · ${reasons[a.reason] || a.reason} · ${G.yearOfDay(a.leftDay)}</span></span><span class="small">${esc(a.dest || '')}</span></div>`).join('')}</details>` : ''}`;
+      ${g.alumni.length ? fold('alumni', `已离开的成员（${g.alumni.length}）`, g.alumni.slice(0, 60).map(a => `<div class="kvline alum"><img class="portrait tiny" src="${SP.portraitURL(a.avatar, a.role, 2)}" alt=""><span class="grow">${esc(a.name)}<span class="dim small"> ${S.ROLE_NAMES[a.role]} · ${reasons[a.reason] || a.reason} · ${G.yearOfDay(a.leftDay)} · 论文 ${a.pubs || 0}（A ${a.pubsA || 0}）</span></span><span class="small">${esc(a.dest || '')}</span></div>`).join(''), 'card') : ''}`;
   }
 
   // ---------- 研究 ----------
@@ -371,24 +416,60 @@
     const zero = H - ((0 - lo) / (hi - lo)) * H;
     return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" y1="${zero}" x2="${W}" y2="${zero}" class="zero"/><polyline points="${pts}"/></svg><div class="small dim">近 ${h.length} 个月经费余额走势</div>`;
   }
+  const LEDGER_COLORS = ['#3b5dc9', '#ef7d57', '#38b764', '#94b0c2', '#b13e53', '#ffcd75', '#41a6f6', '#a7f070', '#5d275d', '#73eff7', '#566c86'];
+  function itemList(items, sign) {
+    return items.map(x => `<div class="kvline item"><span class="grow">${esc(x.name)}${x.left != null ? `<span class="dim small"> · 剩 ${x.left} 个月</span>` : ''}</span><b class="${sign > 0 ? 'good' : 'bad'}">${sign > 0 ? '+' : '-'}${money(x.v)}</b></div>`).join('') || '<div class="dim small">暂无</div>';
+  }
+  function ledgerRows(dir, data) {
+    const entries = Object.keys(data || {}).map(k => ({ k, v: data[k] })).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
+    const total = U.sum(entries, x => x.v);
+    if (!entries.length) return '<div class="dim small">暂无记录</div>';
+    return entries.map((x, i) => `<div class="lrow"><span class="lname">${esc(G.ledgerName(g, dir, x.k))}</span><span class="lbar"><i style="width:${((x.v / total) * 100).toFixed(1)}%;background:${LEDGER_COLORS[i % LEDGER_COLORS.length]}"></i></span><b class="${dir === 'in' ? 'good' : 'bad'}">${money(x.v)}</b><span class="dim small lpct">${Math.round((x.v / total) * 100)}%</span></div>`).join('');
+  }
   function tabFunding() {
     const ex = S.expenses(g), inc = S.income(g), net = inc.total - ex.total;
     const run = S.runway(g);
     const R = G.region(g);
     const regular = R.grants.filter(x => x.open && !x.special);
     const seekCd = (g.cooldowns.seek || 0) > g.day;
+    const items = S.monthlyItems(g);
+    // 每月支出构成条
+    const parts = [['人员工资', ex.salaries, '#3b5dc9'], ['算力维护', ex.compute, '#ef7d57'], ['设施维护', ex.facilities, '#38b764'], ['耗材杂费', ex.supplies, '#94b0c2']].filter(x => x[1] > 0);
+    const stack = ex.total > 0 ? `<div class="stack">${parts.map(p => `<i style="width:${((p[1] / ex.total) * 100).toFixed(1)}%;background:${p[2]}" data-tip="${p[0]} ${money(p[1])}/月（${Math.round((p[1] / ex.total) * 100)}%）"></i>`).join('')}</div>
+      <div class="legend">${parts.map(p => `<span><i style="background:${p[2]}"></i>${p[0]} ${Math.round((p[1] / ex.total) * 100)}%</span>`).join('')}</div>` : '';
+    // 年度账本
+    const years = Object.keys(g.ledger || {}).map(Number).sort((a, b) => b - a);
+    const cy = G.calYear(g);
+    const ly = ledgerYear && years.includes(ledgerYear) ? ledgerYear : cy;
+    const L = (g.ledger || {})[ly] || { in: {}, out: {} };
+    const tin = U.sum(Object.values(L.in)), tout = U.sum(Object.values(L.out));
+    const grantGroups = {};
+    items.inc.grants.forEach(x => { (grantGroups[x.cat] = grantGroups[x.cat] || []).push(x); });
     return `
       <div class="card">
         <div class="money-big ${g.funds < 0 ? 'bad' : ''}">${money(g.funds)}</div>
         <div class="row small">月收入 <b class="good">+${money(inc.total)}</b>　月支出 <b class="bad">-${money(ex.total)}</b>　净 <b class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}</b></div>
         <div class="small ${run < 12 ? 'warn' : 'dim'}">${run === Infinity ? '收支平衡，经费可持续。' : `按当前开销，经费还能撑 ${Math.floor(run)} 个月。`}</div>
         ${sparkline()}
-        <div class="kvline"><span>学生 / 博后工资</span><b>${money(ex.salaries)}</b></div>
-        <div class="kvline"><span>算力维护</span><b>${money(ex.compute)}</b></div>
-        <div class="kvline"><span>设施维护</span><b>${money(ex.facilities)}</b></div>
-        <div class="kvline"><span>耗材杂费</span><b>${money(ex.supplies)}</b></div>
-        <div class="kvline"><span>基金拨款</span><b class="good">+${money(inc.grants)}</b></div>
-        ${inc.dept ? `<div class="kvline"><span>学院补贴</span><b class="good">+${money(inc.dept)}</b></div>` : ''}
+      </div>
+      <div class="card"><h3>${ico('list')} 每月固定收支</h3>
+        <div class="sub">收入 <b class="good">+${money(inc.total)}</b></div>
+        ${Object.keys(grantGroups).map(cat => fold('fin-in-' + cat, `<span class="grow">${esc(G.ledgerName(g, 'in', cat))}（${grantGroups[cat].length} 项）</span><b class="good">+${money(U.sum(grantGroups[cat], x => x.v))}</b>`, itemList(grantGroups[cat], 1), 'line')).join('') || '<div class="dim small">目前没有基金拨款，经费只出不进。</div>'}
+        ${inc.dept ? fold('fin-in-dept', `<span class="grow">学院补贴</span><b class="good">+${money(inc.dept)}</b>`, itemList(items.inc.dept, 1), 'line') : ''}
+        <div class="sub">支出 <b class="bad">-${money(ex.total)}</b></div>
+        ${fold('fin-salary', `<span class="grow">人员工资（${items.out.salary.length} 人领工资）</span><b class="bad">-${money(ex.salaries)}</b>`, itemList(items.out.salary, -1) + '<div class="dim small">本科生、访问学生、自费硕士、拿奖学金或当助教的学生不由你发工资。</div>', 'line')}
+        ${fold('fin-compute', `<span class="grow">算力维护与云服务</span><b class="bad">-${money(ex.compute)}</b>`, itemList(items.out.compute, -1), 'line')}
+        ${fold('fin-facility', `<span class="grow">设施维护</span><b class="bad">-${money(ex.facilities)}</b>`, itemList(items.out.facility, -1), 'line')}
+        ${fold('fin-supplies', `<span class="grow">耗材与杂费</span><b class="bad">-${money(ex.supplies)}</b>`, itemList(items.out.supplies, -1), 'line')}
+        ${stack}
+      </div>
+      <div class="card"><h3>${ico('chart')} 年度收支明细</h3>
+        ${years.length > 1 ? `<div class="seg">${years.slice(0, 4).map(y => `<button class="${y === ly ? 'on' : ''}" data-act="ledgerYear" data-arg="${y}">${y === cy ? '今年' : y + ' 年'}</button>`).join('')}</div>` : ''}
+        <p class="small dim">${ly} 年${ly === cy ? '至今' : '全年'}：收入 <b class="good">${money(tin)}</b>，支出 <b class="bad">${money(tout)}</b>，结余 <b class="${tin - tout >= 0 ? 'good' : 'bad'}">${tin - tout >= 0 ? '+' : ''}${money(tin - tout)}</b>。买设备、扩建、差旅、发奖金这些一次性花销也都记在这里。</p>
+        <div class="sub">钱从哪里来</div>
+        ${ledgerRows('in', L.in)}
+        <div class="sub">钱花在哪里</div>
+        ${ledgerRows('out', L.out)}
       </div>
       <div class="card"><h3>${ico('money')} 在研项目（${g.grants.length}）</h3>
         ${g.grants.map(x => `<div class="grant-row"><div class="row"><b>${esc(x.name)}</b><span class="small dim">总额 ${money(x.total)}${x.net && x.net < x.total ? `，到账 ${money(x.net)}` : ''}</span></div>${bar(x.monthsLeft / x.months, 'good', `${money(x.monthly)}/月 · 剩 ${x.monthsLeft} 个月`)}</div>`).join('') || '<p class="dim small">暂无。</p>'}
@@ -495,8 +576,13 @@
   function modalShell(inner, cls) {
     return `<div class="modal-back"><div class="modal ${cls || ''}">${inner}</div></div>`;
   }
+  let headMin = false; // 渲染决策弹窗时，标题栏带“收起”按钮
   function head(icon, title) {
-    return `<div class="mhead">${ico(icon)}<span>${esc(title)}</span></div>`;
+    return `<div class="mhead">${ico(icon)}<span class="grow">${esc(title)}</span>${headMin ? '<button class="mmin" data-act="minModal" data-tip="先收起弹窗，去看看其他信息、调整方针或买设备（游戏保持暂停，按 Esc 也可以收起）">收起 ▾</button>' : ''}</div>`;
+  }
+  function queueTitle(item) {
+    if (item.type === 'event') { const ev = RS.Sim.buildEvent(g, item); return ev ? ev.title : '事件'; }
+    return { grants: '基金申请季', recruit: item.name, pool: item.title, venue: '选择投稿目标', notice: item.title, summary: `${item.data ? item.data.year : ''} 年度总结`, eval: '考核结果', ending: '人生的终章' }[item.type] || '待决定的事';
   }
 
   function renderEvent(item) {
@@ -554,9 +640,10 @@
     const traits = exact ? c.traits : c.shown;
     const hidden = !exact && c.traits.length > c.shown.length;
     return `<div class="ccard ${selected ? 'sel' : ''}" data-key="${c.cid}">
-      <div class="row"><img class="portrait" src="${SP.portraitURL(c.avatar, c.role, 3)}" alt=""><div class="grow"><b>${esc(c.name)}</b><div class="row">${tag(S.ROLE_NAMES[c.role], 'role-' + c.role)}${c.fellow ? tag('自带奖学金', 'gold', '前三年不用你发工资') : ''}</div><div class="small dim">${esc(c.school)}${c.pubs ? ` · 已有 ${c.pubs} 篇论文` : ''}</div></div></div>
+      <div class="row"><img class="portrait" src="${SP.portraitURL(c.avatar, c.role, 3)}" alt=""><div class="grow"><b>${esc(c.name)}</b><div class="row">${tag(S.ROLE_NAMES[c.role], 'role-' + c.role)}${c.own ? tag('本校', 'gold', `来自你所在的 ${g.school}`) : ''}${c.fellow ? tag('自带奖学金', 'gold', '前三年不用你发工资') : ''}</div><div class="small dim">${esc(c.school)}${c.bio ? ' · ' + esc(c.bio.major) : ''}${c.pubs ? ` · 已有 ${c.pubs} 篇论文` : ''}</div></div></div>
       ${candStats(c, exact)}
-      <div class="row small"><span>潜力 <b class="gold">${exact ? potStars(c.pot) : '？？？'}</b></span></div>
+      <div class="row small"><span>潜力 <b class="gold">${exact ? potStars(c.pot) : '？？？'}</b></span>${c.bio ? `<span>职业理想 <b>${exact ? esc(RS.GOALS[c.bio.goal]) : '？'}</b></span>` : ''}</div>
+      ${c.bio && exact ? `<div class="small dim">爱好：${esc(c.bio.hobbies.join('、'))} · “${esc(c.bio.motto)}”</div>` : ''}
       <div class="row traits">${traitTags(c, traits)}${hidden ? tag('？', 't-mid', '面试后才能看到全部特质') : ''}</div>
       ${mode === 'recruit' ? `<div class="small">接受 offer 的可能性：<b>${U.probWord(c.accept)}</b>（约 ${pct(c.accept)}）</div>` : ''}
       <div class="actions">
@@ -618,6 +705,7 @@
         ${kv('新获基金', money(d.grants))}${kv('全年收入 / 支出', `${money(d.income)} / ${money(d.expense)}`)}${kv('新成员 / 毕业博士', `${d.joined} / ${d.grads}`)}
         ${kv('年末经费', money(d.funds))}${kv('声望 / h-index', `${Math.floor(d.rep)} / ${d.h}`)}
       </div></div>
+      ${d.ledger ? `<div class="small dim center">主要花销：${Object.keys(d.ledger.out).sort((a, b) => d.ledger.out[b] - d.ledger.out[a]).slice(0, 3).map(k => `${esc(G.ledgerName(g, 'out', k))} ${money(d.ledger.out[k])}`).join('、') || '—'}</div>` : ''}
       <p class="center">${comment}</p>
       <div class="choices"><button class="choice def" data-act="ok"><b>新的一年，继续加油</b></button></div>`, 'tone-info');
   }
@@ -696,8 +784,18 @@
     if (modal.kind === 'queue') {
       const item = g.queue.find(q => q.qid === modal.qid);
       if (!item) { modal = null; layer.innerHTML = ''; return; }
+      if (modal.min) {
+        // 收起状态：只显示一条提示，玩家可以自由查看其他页面
+        const more = g.queue.length - 1;
+        html = `<div class="pending-bar">${ico('exclam')}<span class="grow">待你决定：<b>${esc(queueTitle(item))}</b>${more > 0 ? `<small class="dim">（之后还有 ${more} 件）</small>` : ''}<small class="dim"> · 游戏已暂停</small></span><button class="primary" data-act="restoreModal">展开</button></div>`;
+        if (!layer.firstChild || !layer.querySelector('.pending-bar')) layer.innerHTML = html;
+        else morph(layer, html);
+        return;
+      }
+      headMin = true;
       html = { event: renderEvent, grants: renderGrants, recruit: renderRecruit, pool: renderPool, notice: renderNotice, summary: renderSummary, eval: renderEval, ending: renderEnding }[item.type];
       html = item.type === 'venue' ? renderVenue(item.pid, false) : html ? html(item) : null;
+      headMin = false;
       if (html === null) {
         // 内容失效（比如事件主角已经离开），直接跳过
         RS.Sim.resolve(g, item, 0);
@@ -806,7 +904,7 @@
 
   // ---------- 开始界面 ----------
   function defaultNg() {
-    return { name: '', lab: U.pick(RS.LAB_NAMES), region: 'us', tier: 1, area: 'ml', topic: RS.AREAS.ml.topics[0].id, perk: 'postdoc', avatar: RS.randomAvatar() };
+    return { name: '', lab: U.pick(RS.LAB_NAMES), region: 'us', tier: 1, school: G.defaultSchool('us', 1), customSchool: '', area: 'ml', topic: RS.AREAS.ml.topics[0].id, perk: 'postdoc', avatar: RS.randomAvatar() };
   }
   function renderStart(save) {
     if (!ng) ng = defaultNg();
@@ -816,7 +914,7 @@
     const chip = (act, v, label, on, tip) => `<button class="chip-btn ${on ? 'on' : ''}" data-act="${act}" data-arg="${v}"${tip ? ` data-tip="${esc(tip)}"` : ''}>${esc(label)}</button>`;
     return `<div class="start-inner">
       <div class="logo"><div class="t1">科研模拟器</div><div class="t2">RESEARCH  SIMULATOR</div><div class="t3">一个计算机方向 PI 的挂机人生</div></div>
-      ${save ? `<div class="card continue"><div class="row"><img class="portrait" src="${SP.portraitURL(Object.assign({ suit: true }, save.pi.avatar), 'pi', 3)}" alt=""><div class="grow"><b>${esc(save.pi.name)}</b> · ${esc(save.labName)}<div class="small dim">${esc(RS.REGIONS[save.region].name)} · ${esc(RS.AREAS[save.areaId].name)} · ${G.dateStr(save.day)} · 论文 ${save.papers.length} 篇${save.ended && !save.flags.continued ? ' · 已结束' : ''}</div></div><button class="primary" data-act="continue">继续游戏</button></div></div>` : ''}
+      ${save ? `<div class="card continue"><div class="row"><img class="portrait" src="${SP.portraitURL(Object.assign({ suit: true }, save.pi.avatar), 'pi', 3)}" alt=""><div class="grow"><b>${esc(save.pi.name)}</b> · ${esc(save.labName)}<div class="small dim">${esc(save.school || RS.REGIONS[save.region].name)} · ${esc(RS.AREAS[save.areaId].name)} · ${G.dateStr(save.day)} · 论文 ${save.papers.length} 篇${save.ended && !save.flags.continued ? ' · 已结束' : ''}</div></div><button class="primary" data-act="continue">继续游戏</button></div></div>` : ''}
       <div class="card form">
         <h3>${save ? '或者，开始新的人生' : '创建你的 PI'}</h3>
         <div class="frow"><label>你的名字</label><input id="ng-name" maxlength="12" placeholder="比如：张教授" value="${esc(ng.name)}"></div>
@@ -824,8 +922,11 @@
         <div class="frow"><label>形象</label><img class="portrait" src="${SP.portraitURL(Object.assign({ suit: true }, ng.avatar), 'pi', 3)}" alt=""><button data-act="ngAvatar">换一个</button></div>
         <div class="frow"><label>地区</label><div class="chips-wrap">${Object.values(RS.REGIONS).map(r => chip('ngRegion', r.id, `${r.name} · ${r.sub}`, ng.region === r.id)).join('')}</div></div>
         <p class="hint">${esc(R.desc)}</p>
-        <div class="frow"><label>学校</label><div class="chips-wrap">${R.tiers.map((t, i) => chip('ngTier', i, t.name, ng.tier === i, t.desc)).join('')}</div></div>
+        <div class="frow"><label>学校档次</label><div class="chips-wrap">${R.tiers.map((t, i) => chip('ngTier', i, t.name, ng.tier === i, t.desc)).join('')}</div></div>
         <p class="hint">${esc(R.tiers[ng.tier].desc)}。起步经费 ${R.money(R.tiers[ng.tier].startup)}。</p>
+        <div class="frow"><label>你的学校</label><div class="chips-wrap">${(R.tiers[ng.tier].schools || []).map(s => chip('ngSchool', s, s, !ng.customSchool && ng.school === s)).join('')}</div></div>
+        <div class="frow"><label></label><input id="ng-school" maxlength="20" placeholder="或者输入其他学校的名字" value="${esc(ng.customSchool)}"></div>
+        <p class="hint">学校名字会出现在游戏里：你课上和学院群里招到的学生都来自这所学校。档次决定经费、生源和考核标准。</p>
         <div class="frow"><label>研究方向</label><div class="chips-wrap">${Object.values(RS.AREAS).map(a => chip('ngArea', a.id, a.name, ng.area === a.id)).join('')}</div></div>
         <p class="hint">${esc(A.desc)}</p>
         <div class="frow"><label>核心课题</label><div class="chips-wrap">${A.topics.map(t => chip('ngTopic', t.id, t.name, ng.topic === t.id)).join('')}</div></div>
@@ -848,9 +949,10 @@
     el.innerHTML = '';
   }
   function readNgInputs() {
-    const n = $('ng-name'), l = $('ng-lab');
+    const n = $('ng-name'), l = $('ng-lab'), s = $('ng-school');
     if (n) ng.name = n.value;
     if (l) ng.lab = l.value;
+    if (s) ng.customSchool = s.value;
   }
 
   // ---------- 动作 ----------
@@ -864,15 +966,17 @@
     switch (a) {
       // 开始界面
       case 'ngAvatar': readNgInputs(); ng.avatar = RS.randomAvatar(); UI.showStart(UI._save); return;
-      case 'ngRegion': readNgInputs(); ng.region = arg; UI.showStart(UI._save); return;
-      case 'ngTier': readNgInputs(); ng.tier = +arg; UI.showStart(UI._save); return;
+      case 'ngRegion': readNgInputs(); ng.region = arg; ng.school = G.defaultSchool(arg, ng.tier); UI.showStart(UI._save); return;
+      case 'ngTier': readNgInputs(); ng.tier = +arg; ng.school = G.defaultSchool(ng.region, ng.tier); UI.showStart(UI._save); return;
+      case 'ngSchool': readNgInputs(); ng.school = arg; ng.customSchool = ''; UI.showStart(UI._save); return;
       case 'ngArea': readNgInputs(); ng.area = arg; ng.topic = RS.AREAS[arg].topics[0].id; UI.showStart(UI._save); return;
       case 'ngTopic': readNgInputs(); ng.topic = arg; UI.showStart(UI._save); return;
       case 'ngPerk': readNgInputs(); ng.perk = arg; UI.showStart(UI._save); return;
       case 'start': {
         readNgInputs();
         const lab = (ng.lab || '').trim() || 'PIXEL Lab';
-        const game = G.newGame({ piName: (ng.name || '').trim() || (ng.region === 'cn' ? '张老师' : 'Prof. Zhang'), labName: lab, region: ng.region, tier: ng.tier, areaId: ng.area, coreTopic: ng.topic, perk: ng.perk, avatar: ng.avatar });
+        const school = (ng.customSchool || '').trim() || ng.school;
+        const game = G.newGame({ piName: (ng.name || '').trim() || (ng.region === 'cn' ? '张老师' : 'Prof. Zhang'), labName: lab, school, region: ng.region, tier: ng.tier, areaId: ng.area, coreTopic: ng.topic, perk: ng.perk, avatar: ng.avatar });
         hideStart();
         M.start(game, true);
         return;
@@ -889,7 +993,14 @@
     switch (a) {
       case 'pause': M.togglePause(); break;
       case 'speed': M.setSpeed(+arg); break;
-      case 'openQueue': openNextQueue(); break;
+      case 'openQueue':
+        if (modal && modal.kind === 'queue' && modal.min) { modal.min = false; modalOpenedAt = performance.now(); }
+        else openNextQueue();
+        break;
+      case 'minModal': if (modal && modal.kind === 'queue') modal.min = true; break;
+      case 'restoreModal': if (modal && modal.kind === 'queue') { modal.min = false; modalOpenedAt = performance.now(); } break;
+      case 'fold': openState[arg] = !openState[arg]; break;
+      case 'ledgerYear': ledgerYear = +arg; break;
       case 'tab': tab = arg; confirmDismiss = null; $('tabBody').scrollTop = 0; break;
       case 'compact': UI.setCompact(!document.body.classList.contains('compact')); break;
       case 'settings': modal = { kind: 'local', type: 'settings' }; break;
@@ -1088,6 +1199,7 @@
       if (e.code === 'Space') { e.preventDefault(); if (!modal) RS.Main.togglePause(); dirty = true; }
       else if (/^Digit[1-4]$/.test(e.code) && !modal) { RS.Main.setSpeed(+e.code.slice(5) - 1); }
       else if (e.code === 'Escape' && modal && modal.kind === 'local') closeModal();
+      else if (e.code === 'Escape' && modal && modal.kind === 'queue' && !modal.min) { modal.min = true; renderModal(); }
     });
     $('importFile').addEventListener('change', e => {
       const f = e.target.files && e.target.files[0];

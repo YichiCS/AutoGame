@@ -36,17 +36,39 @@
   };
 
   // ---------- 生源学校（按层次） ----------
+  // 生源学校按层次分组（只用来让能力和出身大致相关；最低一档用泛称，避免给真实学校贴标签）
   RS.SCHOOLS = {
     cn: [
-      ['某双非一本', '深圳大学', '杭州电子科技大学', '南京邮电大学', '北京工业大学', '重庆邮电大学', '燕山大学', '江南大学', '广东工业大学'],
+      ['某双非一本', '某省属高校', '某理工学院', '某师范大学', '某外省 211'],
       ['哈尔滨工业大学', '华中科技大学', '西安交通大学', '北京航空航天大学', '武汉大学', '中山大学', '东南大学', '同济大学', '电子科技大学', '北京邮电大学', '西安电子科技大学', '四川大学', '山东大学', '厦门大学', '天津大学', '大连理工大学', '华南理工大学'],
       ['清华大学', '北京大学', '浙江大学', '上海交通大学', '中国科学技术大学', '南京大学', '复旦大学'],
     ],
     us: [
-      ['深圳大学', '杭州电子科技大学', 'VIT', 'Anna University', 'Arizona State', 'UT Dallas', 'Rutgers', 'NC State', 'Penn State'],
-      ['武汉大学', '华中科技大学', '北京邮电大学', '南京大学', '复旦大学', 'IIT Madras', 'BITS Pilani', 'UIUC', 'Georgia Tech', 'UW', 'UCLA', 'UMich', 'Purdue', 'NUS', 'NTU'],
+      ['某州立大学', '某文理学院', '某海外高校', '某理工学院', '某国内双非'],
+      ['武汉大学', '华中科技大学', '北京邮电大学', '南京大学', '复旦大学', 'IIT Madras', 'BITS Pilani', 'UIUC', 'Georgia Tech', 'UW', 'UCLA', 'UMich', 'Purdue', 'Penn State', 'NUS', 'NTU'],
       ['清华大学', '北京大学', '浙江大学', '上海交通大学', '中国科学技术大学', 'IIT Bombay', 'IIT Delhi', 'MIT', 'Stanford', 'UC Berkeley', 'CMU', 'KAIST', 'Seoul National University', 'University of Toronto', 'ETH Zurich'],
     ],
+  };
+
+  // ---------- 学生的个性：专业、爱好、口头禅、职业理想 ----------
+  RS.MAJORS = ['计算机科学与技术', '软件工程', '人工智能', '数学与应用数学', '电子信息工程', '自动化', '物理学', '统计学', '信息安全', '微电子'];
+  RS.HOBBIES = {
+    篮球: '周末打了一场酣畅淋漓的篮球赛', 羽毛球: '和隔壁组约了一场羽毛球', 跑步: '跑完了一场半程马拉松', 健身: '在健身房练出了一点肌肉',
+    摄影: '拍到了一张校园日落的好照片', 打游戏: '通宵打游戏上了分', 撸猫: '在楼下撸到了学校的流浪猫', 做饭: '给全组做了一锅拿手好菜',
+    吉他: '在实验室弹了一首歌', 钢琴: '去琴房练了一下午琴', 科幻小说: '一口气读完了一本科幻小说', 追番: '补完了一整季新番',
+    登山: '周末去爬了一座山', 桌游: '组织了一场狼人杀', 手冲咖啡: '研究出了一种新的手冲配方', 围棋: '下棋赢了隔壁组的高手',
+    看电影: '去看了一部期待很久的电影', 唱歌: '去 KTV 唱了一晚上', 骑行: '骑车绕湖骑了一大圈', 养花: '养的多肉终于开花了',
+  };
+  RS.MOTTOS = ['再跑一个实验就好', '这个 baseline 不太对劲', '要不再调一下学习率？', '能不能先去吃饭', 'DDL 是第一生产力', 'GPU 又被占了？',
+    '这个 idea 一定能中', '代码在我机器上是能跑的', '再给我两周', '结果太好了，有点可疑', '我可能需要一杯咖啡', '要不换个数据集试试？',
+    '先挂 arXiv 占个坑', 'Reviewer 2 又来了', '我想毕业', '这个公式推不动了', '让我先看看 related work', '实验跑完我就去睡觉'];
+  RS.GOALS = { academia: '当教授', industry: '进大厂', startup: '自己创业', quant: '去做量化', undecided: '还没想好' };
+  RS.genBio = function (role, traits, school) {
+    let goal = U.weighted(Object.keys(RS.GOALS), k => ({ academia: 3, industry: 3.5, startup: 1, quant: 1, undecided: 1.5 }[k]));
+    if (traits.includes('academic')) goal = 'academia';
+    else if (traits.includes('industry') && goal === 'academia') goal = U.pick(['industry', 'quant']);
+    if (role === 'postdoc') goal = U.chance(0.75) ? 'academia' : 'industry';
+    return { major: U.pick(RS.MAJORS), hobbies: U.sample(Object.keys(RS.HOBBIES), U.chance(0.6) ? 2 : 1), motto: U.pick(RS.MOTTOS), goal, from: school || '' };
   };
 
   // ---------- 性格特质 ----------

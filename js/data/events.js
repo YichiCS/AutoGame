@@ -14,7 +14,7 @@
   const money = (g, v) => RS.G.money(g, v);
   const sn = n => RS.shortName(n);
   const nop = () => {};
-  const alumniIndustry = g => g.alumni.filter(a => a.reason === 'poached' || (a.reason === 'graduated' && RS.G.region(g).companies.some(co => (a.dest || '').indexOf(co) >= 0)));
+  const alumniIndustry = g => g.alumni.filter(a => a.reason === 'poached' || (a.reason === 'graduated' && (/创办|量化/.test(a.dest || '') || RS.G.region(g).companies.some(co => (a.dest || '').indexOf(co) >= 0))));
   const activeOf = (g, pred) => g.members.filter(m => m.status === 'active' && (!pred || pred(m)));
 
   RS.EVENTS = {
@@ -24,7 +24,7 @@
         const R = G().region(g), A = G().area(g);
         const tip = A.compute >= 0.3 ? '你的方向很依赖算力，记得去「设施」页面买几台 GPU，不然实验会慢得像蜗牛。' : '你的方向不太依赖算力，可以把钱花在人身上。';
         return {
-          title: `欢迎来到${G().tierCfg(g).name}！`, portrait: { pi: true },
+          title: `欢迎来到 ${g.school}！`, portrait: { pi: true },
           text: `${R.startText}<br><br>研究方向：<b>${A.name}</b>　起步经费：<b>${money(g, g.startup)}</b><br><br>实验室会自己运转——学生们会选题、做实验、写论文、投稿。你的工作是在<b>关键节点做决定</b>（申请基金、招生、处理突发状况），以及在右侧面板里调整方针、购置设备。遇到需要决定的事情，时间会自动暂停。<br><br><span class="dim">提示：${tip}</span>`,
           choices: [{ label: '开始我的科研人生！', def: true, apply: nop }],
         };
@@ -35,15 +35,31 @@
       minor: true,
       build: (g, c) => {
         const cost = G().region(g).costs.buyout;
+        const ug = g.teaching.ug || 0, target = S().ugTarget(g);
+        const ev = S().nextEval(g);
+        const slots = ev ? Math.max(1, Math.floor((ev.day - g.day) / 180)) : 6;
+        // 本科课进度落后时，推荐（也是托管时的默认）选本科课
+        const behind = target > ug && target - ug >= slots * 0.45;
         const ch = [
-          { label: `本科大课《${c.big}》`, hint: '每天精力 -0.42 · 评教难度较高', apply: g => S().setTeaching(g, c.sem, { name: c.big, energy: 0.42, mod: -0.15 }) },
-          { label: `研究生课《${c.grad}》`, hint: '每天精力 -0.28 · 评教 +0.15 · 可能发现好苗子', def: true, apply: g => S().setTeaching(g, c.sem, { name: c.grad, energy: 0.28, mod: 0.15, scout: true }) },
+          { label: `本科大课《${c.big}》`, def: behind,
+            hint: '每天精力 -0.42 · 评教难度较高 · 计入本科课程门次（考核要求）· 学生多，容易发掘本科生 · 评教 4.3 以上可获教学奖',
+            apply: g => S().setTeaching(g, c.sem, { name: c.big, kind: 'ug', energy: 0.42, mod: -0.15 }) },
+          { label: `研究生课《${c.grad}》`, def: !behind,
+            hint: '每天精力 -0.28 · 评教 +0.15 · 不计入本科课程门次 · 结课时方向积累 +0.4 · 可能吸引本校硕士生',
+            apply: g => S().setTeaching(g, c.sem, { name: c.grad, kind: 'grad', topic: c.gradTopic, energy: 0.28, mod: 0.15 }) },
         ];
         if (cost > 0) {
-          ch.push({ label: `用经费买断教学（${money(g, cost)}）`, hint: '本学期不用上课，也没有评教成绩', disabled: g.funds < cost ? '经费不足' : null,
-            apply: g => { S().spend(g, cost); S().setTeaching(g, c.sem, null); G().log(g, '用经费买断了本学期的教学任务', 'info'); } });
+          ch.push({ label: `用经费买断教学（${money(g, cost)}）`, hint: '本学期不用上课：没有评教成绩，也不计入本科课程门次', disabled: g.funds < cost ? '经费不足' : null,
+            apply: g => { S().spend(g, cost, 'teaching'); S().setTeaching(g, c.sem, null); G().log(g, '用经费买断了本学期的教学任务', 'info'); } });
         }
-        return { title: `${c.semName}排课`, portrait: { icon: 'book' }, text: '新学期快开始了，教务处发来了排课通知。这学期你想上哪门课？<br><span class="dim">教学评分会计入考核。</span>', choices: ch };
+        const prog = target
+          ? `本科课程已上 <b>${ug}</b> 门，${g.pi.tenured ? '下一次晋升' : '考核'}要求 <b>${target}</b> 门${behind ? '，<b class="warn">进度落后了</b>' : ''}。`
+          : `你已经上过 ${ug} 门本科课程。`;
+        return {
+          title: `${c.semName}排课`, portrait: { icon: 'book' },
+          text: `新学期快开始了，教务处发来了排课通知。这学期你想上哪门课？<br>${prog}<br><span class="dim">本科大课更累、评教更难，但学校考核看重本科教学；研究生课轻松，还能顺便深耕自己的方向。</span>`,
+          choices: ch,
+        };
       },
     },
 
@@ -103,17 +119,20 @@
         const m = M(g, c.mid);
         if (!m) return null;
         const yrs = S().memberYears(g, m);
+        const goal = m.bio ? RS.GOALS[m.bio.goal] : '还没想好';
+        const trust = Math.round(m.trust == null ? 55 : m.trust);
+        const moodHit = Math.round(15 * (1.5 - trust / 100));
         return {
           title: '博士毕业季', portrait: { member: m.id },
-          text: `${U.esc(m.name)} 读博 ${yrs.toFixed(1)} 年，发表论文 ${m.pubs} 篇（A 类 ${m.pubsA} 篇），觉得自己可以毕业了。<br>要让${U.esc(sn(m.name))}答辩吗？`,
+          text: `${U.esc(m.name)} 读博 ${yrs.toFixed(1)} 年，发表论文 ${m.pubs} 篇（A 类 ${m.pubsA} 篇），觉得自己可以毕业了。<br>${U.esc(sn(m.name))}的职业理想是「${goal}」，和你的信任度 ${trust}。要让${U.esc(sn(m.name))}答辩吗？`,
           choices: [
-            { label: '同意答辩，恭喜毕业！', hint: '学生毕业离组；去向越好，你的声望提升越多', def: true,
+            { label: '同意答辩，恭喜毕业！', hint: '学生毕业离组；去向越好，你的声望提升越多（信任越高，推荐信越有分量）', def: true,
               apply: g => {
                 const pl = S().graduate(g, m);
                 G().queue(g, { type: 'notice', tone: 'good', icon: 'cap', fx: 'confetti', title: `${m.name} 博士毕业！`, text: `${U.esc(m.name)} 顺利通过了答辩，成为了 <b>${U.esc(m.name)} 博士</b>！<br>去向：<b>${U.esc(pl.text)}</b>` });
               } },
-            { label: '再留一年，多发几篇', hint: '学生心情 -15', disabled: yrs >= 6.5 ? '已经读了太久，不能再拖了' : null,
-              apply: g => { S().addMood(m, -15); m.extended++; G().log(g, `${m.name} 被要求延期一年毕业，有点郁闷`, 'bad'); } },
+            { label: '再留一年，多发几篇', hint: `学生心情 -${moodHit} · 信任 -15`, disabled: yrs >= 6.5 ? '已经读了太久，不能再拖了' : null,
+              apply: g => { S().addMood(m, -moodHit); S().addTrust(m, -15); m.extended++; S().story(g, m, '被要求延期一年毕业'); G().log(g, `${m.name} 被要求延期一年毕业，有点郁闷`, 'bad'); } },
           ],
         };
       },
@@ -130,7 +149,7 @@
           text: `${U.esc(m.name)} 硕士快毕业了。${U.esc(sn(m.name))}在你这里做得不错，想继续留下来跟你读博。`,
           choices: [
             { label: '欢迎留下！', hint: `转为博士生 · 每月开销 ${money(g, cost)}`, def: true,
-              apply: g => { m.role = 'phd'; m.startDay = g.day; m.endDay = 0; m.funding = 'ra'; S().addMood(m, 15); G().log(g, `${m.name} 转为博士生，继续留在实验室`, 'good'); } },
+              apply: g => { m.role = 'phd'; m.startDay = g.day; m.endDay = 0; m.funding = 'ra'; S().addMood(m, 15); S().addTrust(m, 5); S().story(g, m, '硕士毕业，留下来读博'); G().log(g, `${m.name} 转为博士生，继续留在实验室`, 'good'); } },
             { label: '还是去工作吧', hint: '正常毕业', apply: g => { S().graduate(g, m); } },
           ],
         };
@@ -149,9 +168,9 @@
           text: `${U.esc(m.name)} 马上本科毕业了，在组里做了不少事情，想继续读你的研究生。`,
           choices: [
             { label: '收为博士生', hint: `每月开销 ${money(g, R.costs.phd)} · 能力已经知根知底`, def: avg >= 56,
-              apply: g => { m.role = 'phd'; m.startDay = g.day; m.endDay = 0; m.funding = 'ra'; S().addMood(m, 15); G().log(g, `${m.name} 留下来读博了`, 'good'); } },
+              apply: g => { m.role = 'phd'; m.startDay = g.day; m.endDay = 0; m.funding = 'ra'; S().addMood(m, 15); S().addTrust(m, 5); S().story(g, m, '本科毕业，留下来读博'); G().log(g, `${m.name} 留下来读博了`, 'good'); } },
             { label: '收为硕士生', hint: R.costs.ms ? `每月开销 ${money(g, R.costs.ms)}` : '硕士自费，不用你发钱', def: avg < 56,
-              apply: g => { m.role = 'ms'; m.startDay = g.day; m.endDay = g.day + 720; m.funding = S().defaultFunding(g, 'ms'); S().addMood(m, 10); G().log(g, `${m.name} 留下来读硕士了`, 'good'); } },
+              apply: g => { m.role = 'ms'; m.startDay = g.day; m.endDay = g.day + 720; m.funding = S().defaultFunding(g, 'ms'); S().addMood(m, 10); S().addTrust(m, 3); S().story(g, m, '本科毕业，留下来读硕士'); G().log(g, `${m.name} 留下来读硕士了`, 'good'); } },
             { label: '祝前程似锦', hint: '学生毕业离开', apply: g => { S().graduate(g, m); } },
           ],
         };
@@ -163,11 +182,11 @@
         const m = M(g, c.mid);
         if (!m) return null;
         const ch = [
-          { label: '促膝长谈', hint: '你的精力 -8 · 学生心情 +25', def: true, disabled: g.pi.energy < 8 ? '你自己都快撑不住了' : null,
-            apply: g => { S().addEnergy(g, -8); S().addMood(m, 25); G().log(g, `你和 ${m.name} 谈了很久，${sn(m.name)}决定再坚持一下`, 'info'); } },
+          { label: '促膝长谈', hint: '你的精力 -8 · 学生心情 +25 · 信任 +10', def: true, disabled: g.pi.energy < 8 ? '你自己都快撑不住了' : null,
+            apply: g => { S().addEnergy(g, -8); S().addMood(m, 25); S().addTrust(m, 10); S().story(g, m, '一度想退出，和你长谈后决定坚持'); G().log(g, `你和 ${m.name} 谈了很久，${sn(m.name)}决定再坚持一下`, 'info'); } },
           { label: '放两周假，回去休息', hint: '离开 14 天 · 心情 +35', apply: g => { m.status = 'away'; m.awayUntil = g.day + 14; m.awayWhy = '休假'; S().addMood(m, 35); } },
         ];
-        if (m.funding === 'ra') ch.push({ label: '提高补贴 20%', hint: '每月开销增加 · 心情 +20', apply: g => { m.salaryMult *= 1.2; S().addMood(m, 20); } });
+        if (m.funding === 'ra') ch.push({ label: '提高补贴 20%', hint: '每月开销增加 · 心情 +20 · 信任 +8', apply: g => { m.salaryMult *= 1.2; S().addMood(m, 20); S().addTrust(m, 8); } });
         ch.push({ label: '尊重选择，好聚好散', hint: '学生离开 · 声望 -2 · 实验室心情 -3',
           apply: g => { S().removeMember(g, m, 'quit', '中途退出'); S().addRep(g, -2); S().labMood(g, -3); G().log(g, `${m.name} 离开了实验室`, 'bad'); } });
         return {
@@ -184,8 +203,8 @@
         const bridgeUsed = (g.cooldowns.bridge || 0) > g.day;
         const ch = [
           { label: '向学院申请过渡经费', hint: `获得 ${money(g, ex * 3)} · 声望 -3 · 三年只能用一次`, def: !bridgeUsed, disabled: bridgeUsed ? '三年内已经申请过了' : null,
-            apply: g => { S().earn(g, ex * 3); S().addRep(g, -3); g.cooldowns.bridge = g.day + 3 * 360; G().log(g, '学院批了一笔过渡经费，但系主任的脸色不太好看', 'info'); } },
-          { label: '先用自己的工资垫上', hint: `获得 ${money(g, ex)} · 你的精力 -10（心累）`, def: bridgeUsed, apply: g => { S().earn(g, ex); S().addEnergy(g, -10); } },
+            apply: g => { S().earn(g, ex * 3, 'bridge'); S().addRep(g, -3); g.cooldowns.bridge = g.day + 3 * 360; G().log(g, '学院批了一笔过渡经费，但系主任的脸色不太好看', 'info'); } },
+          { label: '先用自己的工资垫上', hint: `获得 ${money(g, ex)} · 你的精力 -10（心累）`, def: bridgeUsed, apply: g => { S().earn(g, ex, 'bridge'); S().addEnergy(g, -10); } },
         ];
         if (G().region(g).hasTA) {
           const slots = G().tierCfg(g).taSlots - S().taUsed(g);
@@ -253,20 +272,22 @@
         const yr = G().calYear(g);
         const c = activeOf(g, m => m.role === 'phd' && S().memberYears(g, m) >= 1 && m.internYear !== yr);
         if (!c.length) return null;
-        const m = U.weighted(c, x => S().tMul(x, 'intern'));
+        const goalW = { industry: 1.8, quant: 1.8, startup: 1.4, academia: 0.6, undecided: 1 };
+        const m = U.weighted(c, x => S().tMul(x, 'intern') * (goalW[x.bio && x.bio.goal] || 1));
         return { mid: m.id, company: U.pick(G().region(g).companies) };
       },
       build: (g, c) => {
         const m = M(g, c.mid);
         if (!m) return null;
+        const goal = m.bio ? RS.GOALS[m.bio.goal] : '还没想好';
         return {
           title: '暑期实习邀请', portrait: { member: m.id },
-          text: `${U.esc(m.name)} 拿到了 <b>${c.company}</b> 的暑期实习 offer，想去实习三个月。<br><span class="dim">实习期间不用你发工资，但也不会干实验室的活。</span>`,
+          text: `${U.esc(m.name)} 拿到了 <b>${c.company}</b> 的暑期实习 offer，想去实习三个月。<span class="dim">（${U.esc(sn(m.name))}的职业理想：${goal}）</span><br><span class="dim">实习期间不用你发工资，但也不会干实验室的活。</span>`,
           choices: [
-            { label: '去吧，见见世面', hint: '离开 90 天 · 回来编程 +4 · 心情 +20', def: true,
-              apply: g => { m.status = 'intern'; m.awayUntil = g.day + 90; m.awayWhy = c.company + '实习'; m.internYear = G().calYear(g); S().addMood(m, 20); G().log(g, `${m.name} 去 ${c.company} 实习了`, 'info'); } },
-            { label: '只能远程兼职', hint: '90 天内效率 -30% · 心情 +5', apply: g => { m.remoteUntil = g.day + 90; m.internYear = G().calYear(g); S().addMood(m, 5); } },
-            { label: '不行，论文要紧', hint: '心情 -12', apply: g => { S().addMood(m, -12); m.internYear = G().calYear(g); } },
+            { label: '去吧，见见世面', hint: '离开 90 天 · 回来编程 +4 · 心情 +20 · 信任 +6', def: true,
+              apply: g => { m.status = 'intern'; m.awayUntil = g.day + 90; m.awayWhy = c.company + '实习'; m.internYear = G().calYear(g); S().addMood(m, 20); S().addTrust(m, 6); S().story(g, m, `去 ${c.company} 暑期实习`); G().log(g, `${m.name} 去 ${c.company} 实习了`, 'info'); } },
+            { label: '只能远程兼职', hint: '90 天内效率 -30% · 心情 +5', apply: g => { m.remoteUntil = g.day + 90; m.internYear = G().calYear(g); S().addMood(m, 5); S().addTrust(m, 1); } },
+            { label: '不行，论文要紧', hint: '心情 -12 · 信任 -10', apply: g => { S().addMood(m, -12); S().addTrust(m, -10); m.internYear = G().calYear(g); } },
           ],
         };
       },
@@ -277,20 +298,23 @@
       ctx: g => {
         const c = activeOf(g, m => (m.role === 'phd' && S().memberYears(g, m) >= 2.5 && m.pubsA >= 1) || m.role === 'postdoc');
         if (!c.length) return null;
-        const m = U.weighted(c, x => S().tMul(x, 'intern') * (1 + x.pubsA));
-        return { mid: m.id, company: U.pick(G().region(g).companies), chance: U.clamp(0.35 + m.mood / 200 + S().tAdd(m, 'academia'), 0.2, 0.9) };
+        const goalW = { industry: 1.5, quant: 1.5, startup: 1.3, academia: 0.6, undecided: 1 };
+        const m = U.weighted(c, x => S().tMul(x, 'intern') * (1 + x.pubsA) * (goalW[x.bio && x.bio.goal] || 1));
+        const trust = m.trust == null ? 55 : m.trust;
+        const goalB = { academia: 0.15, industry: -0.1, quant: -0.1, startup: -0.05, undecided: 0 }[m.bio && m.bio.goal] || 0;
+        return { mid: m.id, company: U.pick(G().region(g).companies), chance: U.clamp(0.3 + m.mood / 250 + (trust - 50) / 150 + S().tAdd(m, 'academia') + goalB, 0.15, 0.9) };
       },
       build: (g, c) => {
         const m = M(g, c.mid);
         if (!m) return null;
         const leave = g => { S().removeMember(g, m, 'poached', c.company); G().log(g, `${m.name} 加入了 ${c.company}`, 'bad'); };
         const ch = [
-          { label: '动之以情，晓之以理', hint: `你的精力 -8 · 成功率约 ${U.pct(c.chance)}`, def: true,
-            apply: g => { S().addEnergy(g, -8); if (Math.random() < c.chance) { S().addMood(m, 8); G().log(g, `${m.name} 被你说服，决定留下来`, 'good'); } else leave(g); } },
+          { label: '动之以情，晓之以理', hint: `你的精力 -8 · 成功率约 ${U.pct(c.chance)}（取决于心情、信任和 TA 的职业理想）`, def: true,
+            apply: g => { S().addEnergy(g, -8); if (Math.random() < c.chance) { S().addMood(m, 8); S().addTrust(m, 5); S().story(g, m, `拒绝了 ${c.company} 的高薪，留在实验室`); G().log(g, `${m.name} 被你说服，决定留下来`, 'good'); } else leave(g); } },
         ];
-        if (m.funding === 'ra') ch.push({ label: '提高补贴 30% 挽留', hint: '每月开销增加 · 成功率约 85%',
-          apply: g => { m.salaryMult *= 1.3; if (Math.random() < 0.85) { S().addMood(m, 12); G().log(g, `${m.name} 决定留下来`, 'good'); } else leave(g); } });
-        ch.push({ label: '尊重选择，祝福他', hint: '学生离开 · 将来可能回馈实验室', apply: leave });
+        if (m.funding === 'ra') ch.push({ label: '提高补贴 30% 挽留', hint: '每月开销增加 · 成功率约 85% · 信任 +8',
+          apply: g => { m.salaryMult *= 1.3; if (Math.random() < 0.85) { S().addMood(m, 12); S().addTrust(m, 8); S().story(g, m, `拒绝了 ${c.company} 的高薪，留在实验室`); G().log(g, `${m.name} 决定留下来`, 'good'); } else leave(g); } });
+        ch.push({ label: '尊重选择，祝福 TA', hint: '学生离开 · 将来可能回馈实验室', apply: leave });
         return {
           title: '大厂挖人', portrait: { member: m.id },
           text: `<b>${c.company}</b> 给 ${U.esc(m.name)} 开出了一个难以拒绝的 offer，想让${U.esc(sn(m.name))}${m.role === 'phd' ? '直接退学' : '马上'}入职。${U.esc(sn(m.name))}有些心动……`,
@@ -338,7 +362,7 @@
           title: '服务器硬盘坏了！', portrait: { icon: 'gpu' },
           text: `机房传来一阵异响——服务器的硬盘坏了。${exps.length ? exps.length + ' 个正在做实验的课题，数据可能全丢了。' : '还好目前没有正在跑的实验。'}<br><span class="dim">（买一台备份 NAS 就不怕这种事了）</span>`,
           choices: [
-            { label: '花钱找数据恢复', hint: `经费 -${money(g, c.cost)}，数据救回来`, def: true, disabled: g.funds < c.cost ? '经费不足' : null, apply: g => S().spend(g, c.cost) },
+            { label: '花钱找数据恢复', hint: `经费 -${money(g, c.cost)}，数据救回来`, def: true, disabled: g.funds < c.cost ? '经费不足' : null, apply: g => S().spend(g, c.cost, 'misc') },
             { label: '认了，重跑实验', hint: '实验阶段的课题进度 -40%', apply: g => { exps.forEach(p => { p.prog *= 0.6; }); S().labMood(g, -4); } },
           ],
         };
@@ -482,8 +506,8 @@
           title: '年终聚餐', portrait: { icon: 'heart' },
           text: '又到年底了，大家辛苦了一年。要不要组织一次实验室聚餐？',
           choices: [
-            { label: '豪华大餐！', hint: `经费 -${money(g, big)} · 全组心情 +12`, disabled: g.funds < big ? '经费不足' : null, apply: g => { S().spend(g, big); S().labMood(g, 12); } },
-            { label: '简单吃个火锅', hint: `经费 -${money(g, small)} · 全组心情 +6`, def: true, apply: g => { S().spend(g, small); S().labMood(g, 6); } },
+            { label: '豪华大餐！', hint: `经费 -${money(g, big)} · 全组心情 +12`, disabled: g.funds < big ? '经费不足' : null, apply: g => { S().spend(g, big, 'welfare'); S().labMood(g, 12); } },
+            { label: '简单吃个火锅', hint: `经费 -${money(g, small)} · 全组心情 +6`, def: true, apply: g => { S().spend(g, small, 'welfare'); S().labMood(g, 6); } },
             { label: '今年就算了', hint: '全组心情 -3', apply: g => S().labMood(g, -3) },
           ],
         };
@@ -536,7 +560,7 @@
         title: '技术转化', portrait: { icon: 'money' },
         text: `<b>${c.co}</b> 想获得你们一项研究成果的专利授权，开价 <b>${money(g, c.v)}</b>。`,
         choices: [
-          { label: '签授权协议', hint: `经费 +${money(g, c.v)}`, def: true, apply: g => S().earn(g, c.v) },
+          { label: '签授权协议', hint: `经费 +${money(g, c.v)}`, def: true, apply: g => S().earn(g, c.v, 'transfer') },
           { label: '直接开源，造福社区', hint: '声望 +4', apply: g => S().addRep(g, 4) },
         ],
       }),
@@ -550,7 +574,7 @@
         text: `你已经连续工作很多年了，可以申请一年的学术休假（Sabbatical）。<b>${c.co}</b> 邀请你去做访问科学家。`,
         choices: [
           { label: '去大厂访问一年', hint: `实验室获得 ${money(g, c.v)} 合作经费 · 人脉 +8 · 精力回满 · 一年内无法亲自指导学生`,
-            apply: g => { S().earn(g, c.v); g.pi.stats.network = Math.min(100, g.pi.stats.network + 8); S().addEnergy(g, 100); g.flags.sabbaticalUntil = g.day + 360; g.flags.lastSabbatical = g.day; G().milestone(g, `前往 ${c.co} 学术休假一年`); } },
+            apply: g => { S().earn(g, c.v, 'gift'); g.pi.stats.network = Math.min(100, g.pi.stats.network + 8); S().addEnergy(g, 100); g.flags.sabbaticalUntil = g.day + 360; g.flags.lastSabbatical = g.day; G().milestone(g, `前往 ${c.co} 学术休假一年`); } },
           { label: '在家休养一阵', hint: '精力回满', def: true, apply: g => { S().addEnergy(g, 100); g.flags.lastSabbatical = g.day; } },
           { label: '不休了，学生需要我', hint: '没有影响', apply: nop },
         ],
@@ -575,12 +599,12 @@
 
     ug_walkin: {
       weight: g => (g.members.length < RS.G.desks(g) ? 1.2 : 0.2), cd: 180, minor: true,
-      ctx: g => ({ cand: S().genCandidate(g, 'ug', 4) }),
+      ctx: g => ({ cand: Object.assign(S().genCandidate(g, 'ug', 4, { own: true }), { from: '读了你的论文，主动敲门加入' }) }),
       build: (g, c) => {
         const full = g.members.length >= G().desks(g);
         return {
           title: '有人敲门', portrait: { icon: 'people' },
-          text: `一位叫 <b>${U.esc(c.cand.name)}</b> 的本科生（${c.cand.school}）敲开了你的门：“老师，我读了您的论文，想跟着您做科研！”`,
+          text: `一位叫 <b>${U.esc(c.cand.name)}</b> 的本校本科生（${U.esc(c.cand.school)} · ${U.esc(c.cand.bio ? c.cand.bio.major : '计算机')}专业）敲开了你的门：“老师，我读了您的论文，想跟着您做科研！”`,
           choices: [
             { label: '收下这个学生', hint: full ? '工位已满，会有点挤' : '本科生不用发工资', def: !full, apply: g => S().addMember(g, S().memberFromCandidate(g, c.cand, g.day)) },
             { label: '婉拒', hint: '没有影响', def: full, apply: nop },
@@ -686,11 +710,13 @@
     alumni_gift: {
       weight: g => (alumniIndustry(g).length ? 0.6 : 0), cd: 500,
       ctx: g => {
-        const a = alumniIndustry(g);
-        return a.length ? { name: U.pick(a).name, v: Math.round(15000 * G().region(g).ppp * U.range(0.8, 2)) } : null;
+        const a = U.pick(alumniIndustry(g));
+        if (!a) return null;
+        const rich = /创办|量化/.test(a.dest || '') ? 2.5 : 1;
+        return { name: a.name, v: Math.round(15000 * G().region(g).ppp * U.range(0.8, 2) * rich) };
       },
       instant: (g, c) => {
-        S().earn(g, c.v);
+        S().earn(g, c.v, 'gift');
         G().log(g, `毕业生 ${c.name} 在公司里促成了一笔给实验室的捐赠：${money(g, c.v)}`, 'gold');
         RS.bus.emit('toast', { text: `校友捐赠 +${money(g, c.v)}`, kind: 'gold' });
         return true;
@@ -747,6 +773,7 @@
         m.fellowUntil = g.day + 2 * 360;
         S().addMood(m, 15);
         S().addRep(g, 1);
+        S().story(g, m, '获得企业博士生奖学金');
         G().log(g, `${m.name} 获得了企业博士生奖学金！接下来两年不用你发工资了`, 'gold');
         RS.bus.emit('toast', { text: `${m.name} 获得奖学金`, kind: 'gold' });
         return true;
@@ -803,7 +830,7 @@
         title: '咖啡机罢工了', portrait: { icon: 'coffee' },
         text: '咖啡机发出一声惨叫，然后就不动了。整个实验室陷入了恐慌。',
         choices: [
-          { label: '马上修！', hint: `经费 -${money(g, c.cost)}`, def: true, disabled: g.funds < c.cost ? '经费不足' : null, apply: g => S().spend(g, c.cost) },
+          { label: '马上修！', hint: `经费 -${money(g, c.cost)}`, def: true, disabled: g.funds < c.cost ? '经费不足' : null, apply: g => S().spend(g, c.cost, 'misc') },
           { label: '不修了，喝速溶吧', hint: '失去咖啡机 · 全组心情 -5', apply: g => { delete g.facilities.coffee; S().labMood(g, -5); } },
         ],
       }),
@@ -816,7 +843,7 @@
         title: '挖角', portrait: { icon: 'mail' },
         text: `<b>${c.univ}</b> 向你抛出了橄榄枝，开出了非常优厚的条件。你可以拿着这个 offer 和学院谈谈……`,
         choices: [
-          { label: '拿 offer 和学院谈条件', hint: `学院给一笔留任经费 ${money(g, c.v)} · 声望 +2`, def: true, apply: g => { S().earn(g, c.v); S().addRep(g, 2); G().log(g, '学院为了留住你，追加了一笔经费', 'gold'); } },
+          { label: '拿 offer 和学院谈条件', hint: `学院给一笔留任经费 ${money(g, c.v)} · 声望 +2`, def: true, apply: g => { S().earn(g, c.v, 'dept'); S().addRep(g, 2); G().log(g, '学院为了留住你，追加了一笔经费', 'gold'); } },
           { label: '婉拒，这里就是我的家', hint: '全组心情 +5', apply: g => S().labMood(g, 5) },
         ],
       }),
@@ -854,6 +881,25 @@
         pa.rate *= 1.3;
         S().addRep(g, 1 + c.stars / 5000);
         G().log(g, `《${S().short(pa.title)}》的开源代码在 GitHub 上收获了 ${c.stars / 1000}k star！`, 'good');
+        return true;
+      },
+    },
+
+    // 学生的日常：根据爱好生成一点生活气息
+    hobby: {
+      weight: g => (g.members.some(m => m.status === 'active' && m.bio && m.bio.hobbies && m.bio.hobbies.length) ? 1.5 : 0), cd: 40,
+      ctx: g => {
+        const c = activeOf(g, m => m.bio && m.bio.hobbies && m.bio.hobbies.length);
+        if (!c.length) return null;
+        const m = U.pick(c);
+        return { mid: m.id, hobby: U.pick(m.bio.hobbies) };
+      },
+      instant: (g, c) => {
+        const m = M(g, c.mid);
+        if (!m) return true;
+        const act = RS.HOBBIES[c.hobby] || `享受了一下${c.hobby}`;
+        S().addMood(m, 5);
+        G().log(g, `${m.name}（爱好：${c.hobby}）${act}，心情不错`, 'info');
         return true;
       },
     },
