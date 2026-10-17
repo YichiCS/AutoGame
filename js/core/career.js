@@ -13,6 +13,11 @@
     S.story(g, phd, '跟着你从原来的学校转了过来');
     const ug = S.createMember(g, 'ug', { q: 58, school: g.school, trust: 60 });
     S.addMember(g, ug, true);
+    // 第一个小组：你的核心方向，转来的博士生本来就做这个
+    const core = S.createGroup(g, g.policies.coreTopic, true);
+    phd.bio.interest = g.policies.coreTopic;
+    S.setMemberGroup(g, phd, core.id, true);
+    S.setMemberGroup(g, ug, core.id, true);
     // 转来的学生带着一篇快写完的论文；PI 自己也有一篇博后期间的存稿
     const p1 = S.newProject(g, phd, g.policies.coreTopic);
     p1.phase = 'write';
@@ -57,6 +62,7 @@
     }
     g.services = g.services.filter(s => s.until > g.day);
     d -= 0.12 * g.services.length;
+    if (!resting) d -= S.groupEnergyCost(g);
     for (const prop of g.proposals) {
       if (prop.status !== 'writing') continue;
       d -= prop.perDay;
@@ -112,6 +118,10 @@
     // 信任高的学生更扛得住压力
     const trust = m.trust == null ? 55 : m.trust;
     d += (trust - 50) * 0.0004;
+    // 做自己感兴趣的方向更开心；当组长有压力，但也更快成长
+    const cur = m.projectId ? G.project(g, m.projectId) : null;
+    if (cur && cur.topic === S.interestOf(m)) d += 0.01;
+    if (S.leadsGroup(g, m)) { d -= 0.004; S.bumpStat(m, 'idea', 0.004); }
     S.addMood(m, d + U.normal(0, 0.15));
     if (pol.intensity === 'crunch') S.addTrust(m, -0.01);
     else if (pol.intensity === 'chill') S.addTrust(m, 0.004);
@@ -296,12 +306,14 @@
     const traits = RS.randomTraits(q);
     if (traits.includes('mathy')) stats.idea = U.clamp(stats.idea + 6, 8, 95);
     const fellow = g.region === 'us' && role === 'phd' && q > 66 && U.chance(0.35);
+    const bio = RS.genBio(role, traits, school);
+    bio.interest = opts.interest || S.randomInterest(g);
     const accept = role === 'phd' || role === 'ms'
       ? U.clamp(0.58 + T.offer + g.rep / 500 + (g.pi.stats.network - 35) / 300 - Math.max(0, q - 55) / 70 + (fellowB ? 0.1 : 0), 0.12, 0.95)
       : 1;
     return {
       cid: G.nid(g, 'c'), name: RS.randomName(g.region), role, avatar: RS.randomAvatar(),
-      school, own, q, stats, traits, bio: RS.genBio(role, traits, school),
+      school, own, q, stats, traits, bio,
       pot: U.clamp(U.normal(1 + (q - 50) / 200, 0.15), 0.65, 1.45), fellow,
       pubs: q > 70 ? U.int(1, 3) : q > 58 ? U.int(0, 2) : U.chance(0.2) ? 1 : 0, accept,
       est: { idea: noisyRange(stats.idea), code: noisyRange(stats.code), write: noisyRange(stats.write) },
@@ -460,7 +472,7 @@
       g.expertise[tid] = Math.min(10, (g.expertise[tid] || 0) + 0.4);
       G.log(g, `准备《${T.name}》让你对「${G.topic(g, tid).name}」的理解更深了（方向积累 +0.4）`, 'info');
       if (room && U.chance(0.3)) {
-        const c = Object.assign(S.genCandidate(g, 'ms', 8, { own: true }), { from: `在你的研究生课《${T.name}》上被发掘` });
+        const c = Object.assign(S.genCandidate(g, 'ms', 8, { own: true, interest: tid }), { from: `在你的研究生课《${T.name}》上被发掘` });
         G.queue(g, { type: 'pool', role: 'ms', title: '课堂上的好苗子', text: `《${T.name}》课上有位 ${g.school} 的硕士生对你的方向特别感兴趣，想加入你的实验室。`, cands: [c], max: 1 });
       }
     }
@@ -504,10 +516,9 @@
   // 毕业去向：看成果、能力、你的声望，也看学生自己的职业理想和你们之间的信任（推荐信写得好不好）
   S.placement = function (g, m) {
     const R = G.region(g);
-    const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
     const trust = m.trust == null ? 55 : m.trust;
     const goal = m.bio ? m.bio.goal : 'undecided';
-    const score = m.pubsA * 3 + m.pubs + (avg - 50) / 5 + g.rep / 80 + (trust - 50) / 12 + U.normal(0, 3);
+    const score = S.placementScore(g, m) + U.normal(0, 3);
     let acad = 0.3 + S.tAdd(m, 'academia') - (m.traits.includes('industry') ? 0.25 : 0);
     acad += { academia: 0.35, industry: -0.2, startup: -0.25, quant: -0.25, undecided: 0 }[goal] || 0;
     if (m.role === 'ms' || m.role === 'ug') acad = 0;
@@ -793,7 +804,7 @@
   S.changeTopic = function (g, p, tid) {
     if (p.phase !== 'idea') return '只有构思阶段的课题可以换方向';
     p.topic = tid;
-    p.title = S.genTitle(g, tid);
+    p.title = S.uniqueTitle(g, tid);
     p.prog = Math.floor(p.prog * 0.5);
     p.acc.idea *= 0.5;
     p.wsum.idea *= 0.5;

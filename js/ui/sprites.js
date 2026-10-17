@@ -214,6 +214,7 @@
     pause: ['........', '.ww..ww.', '.ww..ww.', '.ww..ww.', '.ww..ww.', '.ww..ww.', '.ww..ww.', '........'],
     play: ['..w.....', '..ww....', '..www...', '..wwww..', '..www...', '..ww....', '..w.....', '........'],
     dots: ['........', '........', '........', 'kk.kk.kk', 'kk.kk.kk', '........', '........', '........'],
+    branch: ['..kkkk..', '..kyyk..', '..kkkk..', '...kk...', '.kkkkkk.', '.k.kk.k.', 'kkkkkkkk', 'ookbbkee'],
   };
   SP.ICON_NAMES = Object.keys(ICONS);
   const iconCache = new Map();

@@ -96,9 +96,13 @@
       trust: o.trust != null ? o.trust : U.int(45, 60),
       base: { idea: stats.idea, code: stats.code, write: stats.write },
       story: [],
+      groups: [], lastDone: null, ledGroup: false,
     };
+    m.bio.interest = o.interest || S.randomInterest(g);
     return m;
   };
+  // 学生感兴趣的方向：热门方向更受欢迎
+  S.randomInterest = g => U.weighted(G.area(g).topics, t => 0.5 + g.topics[t.id].heat).id;
   // 给旧存档里的成员补上个性档案
   S.normalize = function (g) {
     g.members.forEach(m => {
@@ -107,6 +111,7 @@
       if (!m.base) m.base = { idea: Math.round(m.stats.idea), code: Math.round(m.stats.code), write: Math.round(m.stats.write) };
       if (!m.story) m.story = [];
     });
+    S.normalizeGroups(g);
   };
 
   S.memberYears = (g, m) => Math.max(0, (g.day - m.startDay) / 360);
@@ -128,7 +133,10 @@
     g.stats.peak = Math.max(g.stats.peak, g.members.length);
     g.year.joined++;
     S.story(g, m, `以${S.ROLE_NAMES[m.role]}身份加入实验室`);
-    if (!silent) G.log(g, `${m.name}（${S.ROLE_NAMES[m.role]}）加入了实验室！`, 'good');
+    if (!silent) {
+      G.log(g, `${m.name}（${S.ROLE_NAMES[m.role]}）加入了实验室！`, 'good');
+      S.onJoin(g, m);
+    }
     RS.bus.emit('member_join', m);
   };
 
@@ -177,6 +185,7 @@
     if (i < 0) return;
     g.members.splice(i, 1);
     S.releaseMemberProjects(g, m);
+    S.groupsOnLeave(g, m);
     g.alumni.unshift({
       id: m.id, name: m.name, role: m.role, avatar: m.avatar, joinDay: m.joinDay, startDay: m.startDay,
       leftDay: g.day, reason, dest: dest || '', pubs: m.pubs, pubsA: m.pubsA, goal: m.bio ? m.bio.goal : '',
@@ -208,6 +217,14 @@
       .replace('{Acr}', U.pick(P.acr)).replace('{Noun}', U.pick(P.noun));
   };
 
+  // 尽量不和在研课题、已发表论文重名
+  S.uniqueTitle = function (g, tid) {
+    const used = t => g.projects.some(p => p.title === t) || g.papers.some(p => p.title === t);
+    let t = S.genTitle(g, tid);
+    for (let i = 0; i < 8 && used(t); i++) t = S.genTitle(g, tid);
+    return t;
+  };
+
   S.newProject = function (g, lead, tid) {
     const A = G.area(g);
     tid = tid || S.pickTopic(g);
@@ -215,7 +232,7 @@
     const need = {};
     S.WORK_PHASES.forEach(ph => { need[ph] = Math.round(A.need[ph] * NEED_MULT * U.range(0.85, 1.15) * scale); });
     const p = {
-      id: G.nid(g, 'p'), title: S.genTitle(g, tid), topic: tid,
+      id: G.nid(g, 'p'), title: S.uniqueTitle(g, tid), topic: tid,
       lead: lead.id, helpers: [], authors: [lead.id],
       phase: 'idea', prog: 0, need,
       acc: { idea: 0, exp: 0, write: 0 }, wsum: { idea: 0, exp: 0, write: 0 }, cf: { sum: 0, n: 0 },
@@ -228,20 +245,25 @@
     return p;
   };
 
-  // 本科生/访问学生默认去给高年级学生打下手
+  // 本科生/访问学生默认去给高年级学生打下手（优先本组的课题）；其他人在所属小组的方向里开新课题
   S.assignWork = function (g, m) {
     if (m.role === 'ug' || m.role === 'visit') {
+      const mine = S.memberTopics(g, m);
       const cands = g.projects.filter(p => S.WORK_PHASES.includes(p.phase) && p.helpers.length < 2 && p.lead !== m.id &&
         (G.member(g, p.lead) || {}).role !== 'ug');
       if (cands.length) {
-        const p = cands.reduce((a, b) => (a.helpers.length <= b.helpers.length ? a : b));
+        const cost = p => p.helpers.length * 2 - (mine.includes(p.topic) ? 1 : 0);
+        const p = cands.reduce((a, b) => (cost(a) <= cost(b) ? a : b));
         p.helpers.push(m.id);
         if (!p.authors.includes(m.id)) p.authors.push(m.id);
         m.projectId = p.id;
+        m.lastDone = null;
         return p;
       }
     }
-    return S.newProject(g, m);
+    const p = S.newProject(g, m, S.pickTopicFor(g, m));
+    S.continuity(m, p);
+    return p;
   };
 
   S.joinProject = function (g, m, p) {
@@ -274,17 +296,19 @@
     const teamMood = U.sum(g.members, m => (m.status === 'active' ? tAdd(m, 'teamMood') : 0));
     return {
       fac, labMult, units, demand, teamMood, resting, mentor,
+      alloc: S.computeAlloc(g),
       ratio: demand > 0 ? units / demand : 9,
       phaseBonus: { idea: fac.phase.idea, exp: fac.phase.exp + fac.areaBonus, write: fac.phase.write },
     };
   };
 
-  // 指导负担：PI 的精力有限，学生太多时每个人得到的指导变少；博士后可以帮忙带学生
+  // 指导负担：PI 的精力有限，学生太多时每个人得到的指导变少；博士后和组长可以帮忙带学生
   S.mentorLoad = function (g) {
     const postdocs = g.members.filter(m => m.role === 'postdoc').length;
     const load = U.sum(g.members, m => (m.role === 'postdoc' ? 0 : m.role === 'ug' || m.role === 'visit' ? 0.5 : 1));
-    const cap = 6 + 2.5 * postdocs + (g.pi.title >= 2 ? 2 : 0) + (g.policies.focus === 'mentor' ? 1 : 0);
-    return { load, cap, factor: load > cap ? Math.sqrt(cap / load) : 1 };
+    const leaders = S.leaderCap(g);
+    const cap = 6 + 2.5 * postdocs + leaders + (g.pi.title >= 2 ? 2 : 0) + (g.policies.focus === 'mentor' ? 1 : 0);
+    return { load, cap, leaders, factor: load > cap ? Math.sqrt(cap / load) : 1 };
   };
 
   S.workRate = function (g, m, ph, ctx) {
@@ -301,12 +325,13 @@
 
   S.projectDemand = (g, p) => 6 * G.area(g).compute * G.topic(g, p.topic).compute * Math.pow(1.15, Math.max(0, G.calYear(g) - G.BASE_YEAR));
   S.computeDemand = g => U.sum(g.projects, p => (p.phase === 'exp' ? S.projectDemand(g, p) : 0));
-  S.computeFactor = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : U.clamp(Math.pow(ctx.ratio, 0.6), 0.25, 1.15));
+  // 课题用所在小组的算力（没有对应小组的课题用共享池）
+  S.computeFactor = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : U.clamp(Math.pow(S.projRatio(g, p, ctx), 0.6), 0.25, 1.15));
 
   S.grow = function (g, m, ph, w) {
     const key = STAT_OF[ph];
     const s = m.stats[key];
-    const mentor = (g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1);
+    const mentor = (g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1) * S.groupGrowth(g, m);
     m.stats[key] = Math.min(100, s + GROW[ph] * w * m.pot * tMul(m, 'growth') * mentor * S.soft(s));
   };
   S.bumpStat = function (m, key, v) {
@@ -319,6 +344,8 @@
     let p = m.projectId ? G.project(g, m.projectId) : null;
     if (!p || !S.WORK_PHASES.includes(p.phase)) {
       m.projectId = null;
+      // 做完一个课题，先来找你商量下一个方向
+      if (S.wantsConsult(g, m)) { S.queueConsult(g, m); return; }
       p = S.assignWork(g, m);
     }
     if (!p) return;
@@ -327,6 +354,8 @@
     let w = S.workRate(g, m, ph, ctx);
     if (!lead) w *= 0.5 * tMul(m, 'helper');
     else if (!p.helpers.length) w *= tMul(m, 'solo');
+    if (S.interestOf(m) === p.topic) w *= 1.05; // 做自己感兴趣的方向，更有干劲
+    if (S.leadsGroup(g, m)) w *= 0.92; // 组长要花时间带组员
     if (ph === 'exp') {
       const cf = S.computeFactor(g, p, ctx);
       w *= cf;
@@ -362,7 +391,7 @@
     const exp = g.expertise[p.topic] || 0;
     const ph = p.phase;
     if (ph === 'idea') {
-      p.sc.nov = 0.72 * avg('idea') + 0.28 * pi.research + exp * 0.5 + (p.bold ? 10 : 0) + U.normal(0, 5);
+      p.sc.nov = 0.72 * avg('idea') + 0.28 * pi.research + exp * 0.5 + S.groupSynergy(g, p) + (p.bold ? 10 : 0) + U.normal(0, 5);
       p.phase = 'exp';
       if (p.bold) p.need.exp = Math.round(p.need.exp * 1.4);
       if (lead) S.bumpStat(lead, 'idea', 0.8 * lead.pot);
@@ -377,6 +406,16 @@
       if (lead) S.bumpStat(lead, 'write', 0.8 * lead.pot);
       p.phase = 'ready';
       p.readyDay = g.day;
+      [p.lead].concat(p.helpers).forEach(id => {
+        const m = G.member(g, id);
+        if (!m || m.projectId !== p.id) return;
+        // 做完之后会来找你商量下一个方向；做着做着也可能喜欢上这个方向
+        if (S.CONSULT_ROLES.includes(m.role)) m.lastDone = { title: p.title, topic: p.topic };
+        if (m.bio && m.bio.interest !== p.topic && U.chance(0.15)) {
+          m.bio.interest = p.topic;
+          S.story(g, m, `做完《${short(p.title)}》后，喜欢上了「${G.topic(g, p.topic).name}」`);
+        }
+      });
       S.releaseProject(g, p);
       G.log(g, `《${short(p.title)}》完成了写作，准备投稿`, 'info');
       if (p.rushTarget && p.rushTarget.day >= g.day) {
@@ -417,7 +456,7 @@
     const lead = G.member(g, p.lead);
     const st = lead ? lead.stats : { idea: 45, code: 45, write: 45 };
     const exp = g.expertise[p.topic] || 0;
-    const nov = p.sc.nov != null ? p.sc.nov : 0.72 * st.idea + 0.28 * pi.research + exp * 0.5;
+    const nov = p.sc.nov != null ? p.sc.nov : 0.72 * st.idea + 0.28 * pi.research + exp * 0.5 + S.groupSynergy(g, p);
     const sol = p.sc.sol != null ? p.sc.sol : 0.78 * st.code + 0.22 * pi.research + exp * 0.3;
     const cla = 0.62 * st.write + 0.38 * pi.writing;
     return S.squash(0.36 * nov + 0.38 * sol + 0.26 * cla) + p.bonus + (p.collab ? p.collab.bonus : 0) + p.est;
@@ -792,6 +831,7 @@
     const v = Math.round(spec.price * 0.25);
     g.gpus[id]--;
     if (!g.gpus[id]) delete g.gpus[id];
+    S.fixAlloc(g);
     S.earn(g, v, 'sale');
     G.log(g, `二手出售了 ${spec.name}，回收 ${G.money(g, v)}`, 'info');
     return null;

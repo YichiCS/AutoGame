@@ -136,10 +136,10 @@
       },
       members: [], alumni: [], projects: [], papers: [],
       grants: [], proposals: [], grantLog: [],
-      facilities: {}, room: 0, gpus: {}, cloud: 0,
+      facilities: {}, room: 0, gpus: {}, cloud: 0, groups: [], gpuAlloc: {},
       policies: {
         focus: 'mentor', intensity: 'normal', meeting: 'weekly', topic: 'core',
-        coreTopic: o.coreTopic || A.topics[0].id, submit: 'balanced', rebuttal: 'auto', travel: 'student', auto: 'off',
+        coreTopic: o.coreTopic || A.topics[0].id, submit: 'balanced', rebuttal: 'auto', travel: 'student', auto: 'off', consult: 'ask',
       },
       topics: {}, expertise: {},
       queue: [], schedule: [], cooldowns: {}, flags: {},
