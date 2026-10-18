@@ -143,16 +143,17 @@
         const goal = m.bio ? RS.GOALS[m.bio.goal] : '还没想好';
         const trust = Math.round(m.trust == null ? 55 : m.trust);
         const moodHit = Math.round(15 * (1.5 - trust / 100));
+        // key：「方针 → 出路与到期」的自动规则按它找选项
         return {
           title: '博士毕业季', portrait: { member: m.id },
-          text: `${U.esc(m.name)} 读博 ${yrs.toFixed(1)} 年，发表论文 ${m.pubs} 篇（一作 ${m.first || 0} 篇，其中 A 类 ${m.firstA || 0} 篇），觉得自己可以毕业了。<br>${U.esc(sn(m.name))}的职业理想是「${goal}」，和你的信任度 ${trust}。要让${U.esc(sn(m.name))}答辩吗？`,
+          text: `${U.esc(m.name)} 读博 ${yrs.toFixed(1)} 年${m.extended ? `（已经延期过 ${m.extended} 次）` : ''}，发表论文 ${m.pubs} 篇（一作 ${m.first || 0} 篇，其中 A 类 ${m.firstA || 0} 篇），觉得自己可以毕业了。<br>${U.esc(sn(m.name))}的职业理想是「${goal}」，和你的信任度 ${trust}。要让${U.esc(sn(m.name))}答辩吗？`,
           choices: [
-            { label: '同意答辩，恭喜毕业！', hint: '学生毕业离组；去向越好，你的声望提升越多（信任越高，推荐信越有分量）', def: true,
+            { key: 'grad', label: '同意答辩，恭喜毕业！', hint: '学生毕业离组；去向越好，你的声望提升越多（信任越高，推荐信越有分量）', def: true,
               apply: g => {
                 const pl = S().graduate(g, m);
                 G().queue(g, { type: 'notice', tone: 'good', icon: 'cap', fx: 'confetti', title: `${m.name} 博士毕业！`, text: `${U.esc(m.name)} 顺利通过了答辩，成为了 <b>${U.esc(m.name)} 博士</b>！<br>去向：<b>${U.esc(pl.text)}</b>` });
               } },
-            { label: '再留一年，多发几篇', hint: `学生心情 -${moodHit} · 信任 -15`, disabled: yrs >= 6.5 ? '已经读了太久，不能再拖了' : null,
+            { key: 'extend', label: '再留一年，多发几篇', hint: `学生心情 -${moodHit} · 信任 -15`, disabled: yrs >= 6.5 ? '已经读了太久，不能再拖了' : null,
               apply: g => { S().addMood(m, -moodHit); S().addTrust(m, -15); m.extended++; S().story(g, m, '被要求延期一年毕业'); G().log(g, `${m.name} 被要求延期一年毕业，有点郁闷`, 'bad'); } },
           ],
         };
@@ -169,9 +170,9 @@
           title: '硕士生想读博', portrait: { member: m.id },
           text: `${U.esc(m.name)} 硕士快毕业了。${U.esc(sn(m.name))}在你这里做得不错，想继续留下来跟你读博。`,
           choices: [
-            { label: '欢迎留下！', hint: `转为博士生 · 每月开销 ${money(g, cost)}`, def: true,
+            { key: 'phd', label: '欢迎留下！', hint: `转为博士生 · 每月开销 ${money(g, cost)}`, def: true,
               apply: g => { m.role = 'phd'; m.startDay = g.day; m.endDay = 0; m.funding = 'ra'; S().addMood(m, 15); S().addTrust(m, 5); S().story(g, m, '硕士毕业，留下来读博'); G().log(g, `${m.name} 转为博士生，继续留在实验室`, 'good'); } },
-            { label: '还是去工作吧', hint: '正常毕业', apply: g => { S().graduate(g, m); } },
+            { key: 'leave', label: '还是去工作吧', hint: '正常毕业', apply: g => { S().graduate(g, m); } },
           ],
         };
       },
@@ -189,11 +190,11 @@
           title: '本科生想读研', portrait: { member: m.id },
           text: `${U.esc(m.name)} 马上本科毕业了，在组里做了不少事情，想继续读你的研究生。<br><span class="dim">${lv}。</span>`,
           choices: [
-            { label: '收为博士生', hint: `每月开销 ${money(g, R.costs.phd)} · 能力已经知根知底`, def: avg >= S().LEVEL_PHD,
+            { key: 'phd', label: '收为博士生', hint: `每月开销 ${money(g, R.costs.phd)} · 能力已经知根知底`, def: avg >= S().LEVEL_PHD,
               apply: g => { m.role = 'phd'; m.startDay = g.day; m.endDay = 0; m.funding = 'ra'; S().addMood(m, 15); S().addTrust(m, 5); S().story(g, m, '本科毕业，留下来读博'); G().log(g, `${m.name} 留下来读博了`, 'good'); } },
-            { label: '收为硕士生', hint: R.costs.ms ? `每月开销 ${money(g, R.costs.ms)}` : '硕士自费，不用你发钱', def: avg < S().LEVEL_PHD,
+            { key: 'ms', label: '收为硕士生', hint: R.costs.ms ? `每月开销 ${money(g, R.costs.ms)}` : '硕士自费，不用你发钱', def: avg < S().LEVEL_PHD,
               apply: g => { m.role = 'ms'; m.startDay = g.day; m.endDay = g.day + 720; m.funding = S().defaultFunding(g, 'ms'); S().addMood(m, 10); S().addTrust(m, 3); S().story(g, m, '本科毕业，留下来读硕士'); G().log(g, `${m.name} 留下来读硕士了`, 'good'); } },
-            { label: '祝前程似锦', hint: '学生毕业离开', apply: g => { S().graduate(g, m); } },
+            { key: 'leave', label: '祝前程似锦', hint: '学生毕业离开', apply: g => { S().graduate(g, m); } },
           ],
         };
       },
@@ -414,10 +415,10 @@
         if (!m) return null;
         return {
           title: '博士后合同到期', portrait: { member: m.id },
-          text: `${U.esc(m.name)} 的博士后合同快到期了。${U.esc(sn(m.name))}在这里发表了 ${m.pubs} 篇论文（A 类 ${m.pubsA} 篇）。`,
+          text: `${U.esc(m.name)} 的博士后合同快到期了${m.renewed ? `（已经续约过 ${m.renewed} 次）` : ''}。${U.esc(sn(m.name))}在这里发表了 ${m.pubs} 篇论文（A 类 ${m.pubsA} 篇）。`,
           choices: [
-            { label: '续约一年', hint: `继续支付工资 ${money(g, S().salary(g, m))}/月`, apply: g => { m.endDay = g.day + 360; S().addMood(m, 5); } },
-            { label: '祝前程似锦', hint: '博后离开，去找教职或工作', def: true, apply: g => { S().graduate(g, m); } },
+            { key: 'renew', label: '续约一年', hint: `继续支付工资 ${money(g, S().salary(g, m))}/月`, apply: g => { m.endDay = g.day + 360; m.renewed = (m.renewed || 0) + 1; S().addMood(m, 5); } },
+            { key: 'leave', label: '祝前程似锦', hint: '博后离开，去找教职或工作', def: true, apply: g => { S().graduate(g, m); } },
           ],
         };
       },

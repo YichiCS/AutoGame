@@ -198,6 +198,8 @@
         S.STATS.forEach(s => { if (m.base[s.k] == null) m.base[s.k] = Math.round(m.stats[s.k]); });
       }
       if (!m.story) m.story = [];
+      // 旧存档没记博士后续约过几次（「出路方针」按它算）：按合同长度估——第一份合同两年，每续约一次加一年
+      if (m.role === 'postdoc' && m.renewed == null) m.renewed = Math.max(0, Math.round((m.endDay - m.startDay) / 360) - ROLE_YEARS.postdoc);
       // 旧存档：潜力从成长倍数换算到 0~10
       if (m.potential == null) { m.potential = S.potFromOld(m.pot); delete m.pot; }
       if (!m.gx) m.gx = { s: 0, n: 0 };
@@ -230,7 +232,7 @@
 
   S.addMember = function (g, m, silent) {
     g.members.push(m);
-    S.assignDesks(g);
+    S.reseatDesks(g);
     g.stats.peak = Math.max(g.stats.peak, g.members.length);
     g.year.joined++;
     S.story(g, m, `以${S.ROLE_NAMES[m.role]}身份加入实验室`);
@@ -242,20 +244,34 @@
   };
 
   // ---------- 工位 ----------
-  // 有固定工位的人效率正常；没有的只能找地方凑合，效率和心情都打折扣。
-  // 空出来的工位按资历分给还在等工位的人；被你收回过工位的人（noDesk）不会自动分到
+  // 有固定工位的人效率正常；没有的只能找地方凑合，效率和心情都打折扣。被你收回过工位的人（noDesk）不会自动分到。
+  // 谁先坐看「方针 → 工位分配顺序」：
+  //   keep 先到先得（默认，也是以前的分法）：已经有工位的人不会被挤掉，空出来的工位按身份、同身份按入学早晚分给还在等的人；
+  //   role 职位优先 / ability 能力优先 / senior 资历优先：所有人按这个顺序排，排在前面的人先坐，工位不够时排在后面的人让出来
   const DESK_ORDER = { jpi: 1, postdoc: 2, phd: 3, ms: 4, visit: 5, ug: 6 };
+  const deskRank = m => (m.isPlayer ? 0 : DESK_ORDER[m.role] || 9);
+  const byRole = (a, b) => deskRank(a) - deskRank(b) || a.startDay - b.startDay;
+  const joinOf = m => (m.joinDay != null ? m.joinDay : m.startDay);
+  S.DESK_NAMES = { keep: '先到先得', role: '职位优先', ability: '能力优先', senior: '资历优先' };
+  const DESK_SORT = {
+    role: byRole,
+    ability: (a, b) => S.dispOvr(b.stats) - S.dispOvr(a.stats) || byRole(a, b),
+    senior: (a, b) => joinOf(a) - joinOf(b) || byRole(a, b),
+  };
+  S.deskRule = g => (!g.phd && DESK_SORT[g.policies.desk] ? g.policies.desk : 'keep');
   S.NO_DESK_WORK = { ug: 0.92, visit: 0.92 };
   S.noDeskMult = m => (m.desk >= 0 ? 1 : S.NO_DESK_WORK[m.role] || 0.85);
   S.assignDesks = function (g) {
     const n = G.desks(g);
     const used = new Set();
+    const sort = DESK_SORT[S.deskRule(g)];
+    // 按顺序排的方针：排在前 n 位的人有工位（已经有工位的尽量坐原来的位置），其余的让出来
+    const seat = sort ? new Set(g.members.filter(m => !m.noDesk).sort(sort).slice(0, n)) : null;
     g.members.forEach(m => {
-      if (!m.noDesk && m.desk >= 0 && m.desk < n && !used.has(m.desk)) used.add(m.desk);
+      if (!m.noDesk && (!seat || seat.has(m)) && m.desk >= 0 && m.desk < n && !used.has(m.desk)) used.add(m.desk);
       else m.desk = -1;
     });
-    const wait = g.members.filter(m => m.desk === -1 && !m.noDesk)
-      .sort((a, b) => (a.isPlayer ? 0 : DESK_ORDER[a.role] || 9) - (b.isPlayer ? 0 : DESK_ORDER[b.role] || 9) || a.startDay - b.startDay);
+    const wait = g.members.filter(m => m.desk === -1 && !m.noDesk && (!seat || seat.has(m))).sort(sort || byRole);
     let i = 0;
     for (const m of wait) {
       while (i < n && used.has(i)) i++;
@@ -264,14 +280,23 @@
       used.add(i);
     }
   };
+  // 重新分一次工位，有人因此让出了工位就记在动态里（改了分配顺序、每月初、按顺序排时有人进组）
+  S.reseatDesks = function (g) {
+    const before = new Set(g.members.filter(m => m.desk >= 0));
+    S.assignDesks(g);
+    const lost = g.members.filter(m => m.desk < 0 && before.has(m));
+    if (!lost.length) return;
+    const got = g.members.filter(m => m.desk >= 0 && !before.has(m));
+    const names = list => list.slice(0, 5).map(m => m.name).join('、') + (list.length > 5 ? ` 等 ${list.length} 人` : '');
+    G.log(g, `工位按「${S.DESK_NAMES[S.deskRule(g)]}」重新分配：${names(lost)} 让出了工位${got.length ? `，${names(got)} 坐上了` : ''}`, 'info');
+  };
   S.freeDesks = g => G.desks(g) - g.members.filter(m => m.desk >= 0).length;
-  // 给新来的人腾一个工位：资历最浅、来得最晚的人先让出来
+  // 给新来的人腾一个工位：资历最浅、来得最晚的人先让出来（按顺序排的方针由排序决定谁坐，不另外腾）
   S.bumpDeskFor = function (g, m) {
-    if (m.desk >= 0) return null;
-    const rank = x => (x.isPlayer ? 0 : DESK_ORDER[x.role] || 9);
-    const seated = g.members.filter(x => x !== m && x.desk >= 0 && rank(x) > rank(m));
+    if (m.desk >= 0 || S.deskRule(g) !== 'keep') return null;
+    const seated = g.members.filter(x => x !== m && x.desk >= 0 && deskRank(x) > deskRank(m));
     if (!seated.length) return null;
-    const v = seated.sort((a, b) => rank(b) - rank(a) || b.startDay - a.startDay)[0];
+    const v = seated.sort((a, b) => deskRank(b) - deskRank(a) || b.startDay - a.startDay)[0];
     m.desk = v.desk;
     v.desk = -1;
     S.assignDesks(g);
@@ -1382,6 +1407,8 @@
       G.queue(g, { type: 'event', id: 'deficit', ctx: {} });
     }
     if (!g.phd && RS.Sim.catAuto(g, 'compute')) S.autoCompute(g);
+    // 工位按能力 / 职位 / 资历排的：每月初按最新的总评、身份重排一次（年底成长、转读博士之后）
+    if (S.deskRule(g) !== 'keep') S.reseatDesks(g);
     S.autoGroups(g);
     S.autoLeaders(g);
     if (!g.phd) S.interestDrift(g);

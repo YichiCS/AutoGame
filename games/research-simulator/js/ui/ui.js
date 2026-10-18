@@ -251,10 +251,16 @@
       ['both', '一起去', '你也一起去：声望、人脉提升，花费翻倍，你会更累'],
       ['none', '都不去', '省钱，但学生有点失落'],
     ] },
+    { k: 'desk', name: '工位分配顺序', opts: [
+      ['keep', S.DESK_NAMES.keep, '已经有工位的人不会被挤掉；空出来的工位按身份（青年教师 > 博士后 > 博士生 > 硕士生 > 访问学生 > 本科生）分给还在等的人，同身份入学早的先分。青年教师加入时，会请身份最低、来得最晚的人让一让'],
+      ['role', S.DESK_NAMES.role, '按身份排：青年教师 > 博士后 > 博士生 > 硕士生 > 访问学生 > 本科生，同身份入学早的在前；工位不够时，排在后面的人把工位让出来'],
+      ['ability', S.DESK_NAMES.ability, '按总评从高到低排（一样高的看身份）；工位不够时，总评低的人把工位让出来'],
+      ['senior', S.DESK_NAMES.senior, '按进组先后排，进组早的在前，不分身份；工位不够时，新来的人先没有工位'],
+    ] },
     { k: 'auto', name: '托管', opts: [
       ['off', '全部问我', '所有决定都由你来做'],
       ['minor', '小事托管', '学生选题和生活、小组里的事、学术机会、排课、杂事和年度总结，自动按推荐选项处理'],
-      ['all', '全部托管', '除了考核结果和跳槽时带谁走，所有事情都自动处理，算力不够还会自动添置服务器——真正的挂机模式'],
+      ['all', '全部托管', '除了考核结果和跳槽时带谁走（还有「方针」里按身份设成问我的），所有事情都自动处理，算力不够还会自动添置服务器——真正的挂机模式'],
       ['custom', '自定义', '逐类决定：下面每一类可以单独设成托管或者问我'],
     ] },
   ];
@@ -468,11 +474,23 @@
 
   // 工位
   const waitingDesk = () => g.members.some(x => x.desk < 0);
-  const deskTip = m => `没有固定工位，只能找地方凑合：效率 -${Math.round((1 - S.noDeskMult(m)) * 100)}%，心情慢慢变差。${m.noDesk ? '工位被你收回了，有空位也不会自动分给 TA。' : '有空位时会按资历自动分到。'}`;
+  const deskTip = m => `没有固定工位，只能找地方凑合：效率 -${Math.round((1 - S.noDeskMult(m)) * 100)}%，心情慢慢变差。${m.noDesk ? '工位被你收回了，有空位也不会自动分给 TA。' : `工位按「${S.DESK_NAMES[S.deskRule(g)]}」分配（「方针」里可以改），轮到 TA 时会自动分到。`}`;
   function deskLine() {
     const none = g.members.filter(m => m.desk < 0);
     if (!none.length) return '';
-    return `<p class="warn small">有 ${none.length} 人没有工位（${esc(none.slice(0, 4).map(m => RS.shortName(m.name)).join('、'))}${none.length > 4 ? ' 等' : ''}）：效率 -15%（本科生、访问学生 -8%），心情慢慢变差。可以在成员卡片上「给工位」「收回工位」决定谁坐，或者去「设施」页扩建。</p>`;
+    return `<p class="warn small">有 ${none.length} 人没有工位（${esc(none.slice(0, 4).map(m => RS.shortName(m.name)).join('、'))}${none.length > 4 ? ' 等' : ''}）：效率 -15%（本科生、访问学生 -8%），心情慢慢变差。可以在成员卡片上「给工位」「收回工位」决定谁坐，或者去「设施」页扩建；谁先坐也可以在「方针」里改工位分配顺序（现在是「${S.DESK_NAMES[S.deskRule(g)]}」）。</p>`;
+  }
+  // 持续招本科生 / 博士后：两个开关和现在的状态（名单出来以后怎么处理，看「方针 → 招人名单」）
+  function hireBar() {
+    const pickName = r => ((g.policies.pick || {})[r] === 'fill' ? '从高到低招满' : '由你挑');
+    const btn = role => {
+      const on = S.hireOn(g, role);
+      const when = role === 'ug' ? '和手动招募一样每 120 天一轮，自动发招募通知；工位满了就先暂停' : `每 120 天一轮，自动发招聘广告；工位满了、或者加上一份工资（月薪 ${money(G.region(g).costs.postdoc)}）后经费撑不到 18 个月，就先暂停`;
+      const tip = `打开后，到了能再招的时候${when}，条件恢复后自动接着招。名单出来以后${pickName(role)}（「方针 → 招人名单」可以改）`;
+      return `<button class="autocat ${on ? 'on' : ''}" data-act="autoHire" data-arg="${role}" data-tip="${esc(tip)}"><span>持续招${S.HIRE_ROLES[role]}</span><b>${on ? '开' : '关'}</b></button>`;
+    };
+    const status = Object.keys(S.HIRE_ROLES).filter(r => S.hireOn(g, r)).map(r => `${S.HIRE_ROLES[r]}：${S.hireStatus(g, r)}，名单${pickName(r)}`).join('；');
+    return `<div class="autogrid">${btn('ug')}${btn('postdoc')}</div>${status ? `<p class="small dim">持续招人 · ${esc(status)}</p>` : ''}`;
   }
   // 小导师：青年教师带了谁、负担多重；学生由谁来带
   function supLine(m) {
@@ -543,6 +561,7 @@
         <button data-act="ugPool" ${ugCd ? 'disabled' : ''} data-tip="${ugCd ? G.daysText(g.cooldowns.ug - g.day) + '后可以再招' : '本科生不用发工资，会给博士生打下手'}">招本科生</button>
         <button data-act="postdoc" ${g.flags.postdocSearch ? 'disabled' : ''} data-tip="${g.flags.postdocSearch ? '招聘中，等待申请' : `博士后能力强，还能分担指导工作；月薪 ${money(G.region(g).costs.postdoc)}`}">招博士后</button>
       </div>
+      ${hireBar()}
       ${deskLine()}
       ${list.map(memberCard).join('') || `<p class="dim">${empty}</p>`}`;
   }
@@ -942,7 +961,9 @@
     const order = POLICIES.filter(p => (p.k === 'auto') === auto);
     return order.map(p => `<div class="card"><h3>${esc(p.name)}</h3>${seg(p.k, p.opts, pol[p.k])}<p class="hint">${esc(policyDesc(p.k, pol[p.k]))}</p>
       ${p.k === 'auto' ? autoCats() : ''}
-      ${p.k === 'topic' ? `<div class="sub">核心方向</div><div class="chips-wrap">${A.topics.map(t => `<button class="chip-btn ${t.id === pol.coreTopic ? 'on' : ''}" data-act="core" data-arg="${t.id}">${esc(t.name)}</button>`).join('')}</div>` : ''}</div>`).join('');
+      ${p.k === 'desk' ? deskNow() : ''}
+      ${p.k === 'topic' ? `<div class="sub">核心方向</div><div class="chips-wrap">${A.topics.map(t => `<button class="chip-btn ${t.id === pol.coreTopic ? 'on' : ''}" data-act="core" data-arg="${t.id}">${esc(t.name)}</button>`).join('')}</div>` : ''}</div>`).join('') +
+      (auto ? '' : exitCard() + pickCard());
   }
   // 托管的每一类：点一下在「托管」和「问我」之间切换（会自动切到自定义）
   function autoCats() {
@@ -952,7 +973,75 @@
       const on = RS.Sim.catAuto(g, c.id);
       return `<button class="autocat ${on ? 'on' : ''}" data-act="autoCat" data-arg="${c.id}" data-tip="${esc(c.desc)}"><span>${esc(c.name)}</span><b>${on ? '托管' : '问我'}</b></button>`;
     }).join('')}</div>`).join('')}
-      <p class="hint">考核结果、读博时的求职、跳槽时带谁走，一直由你来定。</p></div>`;
+      <p class="hint">考核结果、读博时的求职、跳槽时带谁走，一直由你来定。</p>
+      <p class="hint">想按身份细调：本科生 / 硕士生 / 博士生 / 博士后到期时怎么处理，在「方针」栏的「出路与到期」；研究生招生季、本科生、博士后的录用名单怎么处理，在「招人名单」。那里设了「每次问我」或自动规则的，不看这里的设置。</p></div>`;
+  }
+  // 工位分配顺序：现在谁没有工位
+  function deskNow() {
+    const none = g.members.filter(m => m.desk < 0);
+    const names = none.slice(0, 6).map(m => RS.shortName(m.name)).join('、') + (none.length > 6 ? ' 等' : '');
+    return `<p class="small ${none.length ? 'warn' : 'dim'}">工位 ${G.desks(g)} 个、${g.members.length} 人：${none.length ? `${none.length} 人没有工位（${esc(names)}）` : '现在人人都有工位'}</p>
+      <p class="hint">改了马上重新分；之后有人进组、每月初也按这个顺序排。被你「收回工位」的人不参与排队，要在成员卡片上亲自「给工位」。</p>`;
+  }
+
+  // ---------- 方针：按身份定的规则（出路与到期、招人名单） ----------
+  // 每一行：跟随托管 / 每次问我 / 若干自动规则。跟随托管时，说明现在托管那边是怎么设的
+  const FOLLOW_TIP = (catId, auto, ask) => {
+    const c = RS.Sim.AUTO_CATS.find(x => x.id === catId);
+    const on = RS.Sim.catAuto(g, catId);
+    return `跟随「托管 → ${c.group} · ${c.name}」，现在是${on ? `托管：${auto}` : `问我：${ask}`}`;
+  };
+  const EXIT_ROWS = [
+    { k: 'ug', name: '本科生 · 想读研', when: '本科毕业季，研究能力达到硕士水平的本科生会来问能不能读你的研究生（没达到的直接毕业）', rec: '够博士水平的收为博士生，其余收为硕士生', opts: [
+      ['level', '按水平', '研究能力达到博士水平的收为博士生，其余收为硕士生（和弹窗里的推荐一样）'],
+      ['top', '只留尖子', '达到博士水平的收为博士生，没达到的祝前程似锦'],
+      ['phd', '都读博', '想读研的都收为博士生'],
+      ['ms', '都读硕', '想读研的都收为硕士生'],
+      ['leave', '都放走', '想读研的也祝前程似锦，毕业离开'],
+    ] },
+    { k: 'ms', name: '硕士生 · 想读博', when: '硕士毕业季，达到博士水平、发过论文的硕士生会来问能不能留下读博（其余的直接毕业）', rec: '欢迎留下读博', opts: [
+      ['stay', '留下读博', '想读博的都转为博士生'],
+      ['leave', '都去工作', '想读博的也正常毕业'],
+    ] },
+    { k: 'phd', name: '博士生 · 毕业答辩', when: '毕业季，达到毕业要求的博士生会来申请答辩', rec: '同意答辩', opts: [
+      ['grad', '直接答辩', '达到毕业要求就同意答辩'],
+      ['delay1', '先延期一年', '每人先延期一次（再留一年，心情、信任会下降），下一次再同意答辩；读满 6.5 年、不能再拖的直接答辩'],
+      ['delay2', '先延期两年', '每人最多延期两次，之后同意答辩；读满 6.5 年、不能再拖的直接答辩'],
+    ] },
+    { k: 'postdoc', name: '博士后 · 合同到期', when: '博士后合同（两年，续约一次加一年）到期时', rec: '祝前程似锦（不续约）', opts: [
+      ['renew1', '续约一次', '第一次到期续约一年，再到期就祝前程似锦'],
+      ['renew2', '续约两次', '最多续约两次（多留两年），之后祝前程似锦'],
+      ['leave', '到期放走', '合同到期就祝前程似锦，不续约'],
+    ] },
+  ];
+  function ruleRow(p, cur, act, follow, ask) {
+    const opts = [['follow', '跟随托管', follow], ask].concat(p.opts);
+    const o = opts.find(x => x[0] === cur) || opts[0];
+    return `<div class="sub"${p.when ? ` data-tip="${esc(p.when)}"` : ''}>${esc(p.name)}</div>${seg(p.k, opts, o[0], act)}<p class="hint">${esc(o[2])}</p>`;
+  }
+  function exitCard() {
+    const ask = ['ask', '每次问我', '每次都停下来问你，托管设成全部托管也照样问'];
+    return `<div class="card"><h3>出路与到期</h3>
+      <p class="hint">本科生、硕士生、博士生、博士后到了期限要决定去留时怎么处理，可以按身份定好规则：到时自动处理、不再停下来问你，动态里记一条「[出路方针]」。自动处理用的就是弹窗里原来的选项，心情、信任、工资都和亲手选一样。</p>
+      ${EXIT_ROWS.map(p => ruleRow(p, RS.Sim.exitRule(g, p.k), 'exitPolicy', FOLLOW_TIP('student', `按推荐处理（${p.rec}）`, '每次停下来问你'), ask)).join('')}
+      <p class="hint">能力不够读研的本科生、不够读博的硕士生到期直接毕业，不会来问你。博士毕业的喜报按「托管 → 消息 · 通知」处理。</p>
+    </div>`;
+  }
+  const PICK_ROWS = [
+    { k: 'grad', cat: 'recruit', name: '研究生招生季（博士 / 硕士）', auto: '按能力和接受 offer 的可能性挑人发 offer', fill: '按总评从高到低发 offer（没面试的按估计范围的中间值），直到博士、硕士名额用满；人数不超过空工位（算上一年内要毕业离开的人），工资要让经费还能撑 18 个月' },
+    { k: 'ug', cat: 'people', name: '本科生', auto: '有空工位时收下最好的一位', fill: '按总评从高到低录用，直到这次的录用上限（一般 2 人）或空工位用满' },
+    { k: 'postdoc', cat: 'people', name: '博士后', auto: '有空工位、经费撑得住时收下最好的一位', fill: '按总评从高到低录用，直到录用上限（1 人）、空工位用满，或者加上工资后经费撑不到 18 个月' },
+  ];
+  function pickCard() {
+    const ask = ['ask', '我自己挑', '名单每次都弹出来由你挑，托管设成全部托管也照样问'];
+    return `<div class="card"><h3>招人名单</h3>
+      <p class="hint">研究生招生季、本科生、博士后的候选人名单弹出来以后怎么办。「从高到低招满」按总评从高到低自动录取，直到名额、工位或经费用满，动态里记一条「[自动招满]」列出招了谁。</p>
+      ${PICK_ROWS.map(p => {
+        const hire = S.HIRE_ROLES[p.k] ? `；「持续招${S.HIRE_ROLES[p.k]}」发起的名单一直由你来挑` : '';
+        return ruleRow(Object.assign({ opts: [['fill', '从高到低招满', p.fill]] }, p), (g.policies.pick || {})[p.k] || 'follow', 'pickPolicy', FOLLOW_TIP(p.cat, p.auto + hire, '名单弹出来由你挑'), ask);
+      }).join('')}
+      <p class="hint">「成员」页的「持续招本科生 / 博士后」只管自动发起招募；名单出来以后按这里处理——没设成「从高到低招满」时，一直由你来挑。</p>
+    </div>`;
   }
 
   // ---------- 档案 ----------
@@ -1346,6 +1435,7 @@
       ${outlook}
     </div>`;
   }
+  const EXIT_EG = { ug: '比如按水平收为博士生或硕士生', ms: '比如想读博的都留下', phd: '比如都先延期一年再答辩', postdoc: '比如续约一次再放走' };
   function renderEvent(item) {
     const ev = RS.Sim.buildEvent(g, item);
     if (!ev) return null;
@@ -1357,6 +1447,8 @@
       <div class="choices">${ev.choices.map((c, i) => `<button class="choice ${c.def ? 'def' : ''}" data-act="choose" data-arg="${i}" ${c.disabled ? 'disabled' : ''}><b>${esc(c.label)}</b><small>${esc(c.disabled || c.hint || '')}</small></button>`).join('')}</div>
       ${(() => {
         if (g.phd) return def.minor ? '<div class="mnote">提示：可以在「方针 → 托管」里让这类小事自动处理。</div>' : '';
+        const exit = RS.Sim.EXIT_EVENTS[item.id];
+        if (exit) return `<div class="mnote">提示：可以在「方针」栏的「出路与到期」里给${S.ROLE_NAMES[exit]}定好规则（${EXIT_EG[exit]}），到时自动处理，不用每次停下来问你。</div>`;
         const c = RS.Sim.AUTO_CATS.find(x => x.id === RS.Sim.itemCat(item));
         return c && item.id !== 'welcome' ? `<div class="mnote">提示：这是托管里的「${esc(c.group)} · ${esc(c.name)}」，可以在「方针 → 托管」里设成自动处理。</div>` : '';
       })()}`, 'event');
@@ -1468,15 +1560,18 @@
     const cost = U.sum(item.offers.map(cid => item.cands.find(x => x.cid === cid)).filter(Boolean), c => (c.fellow ? 0 : G.region(g).costs[c.role] || 0) * 12);
     const free = G.desks(g) - g.members.length;
     return modalShell(`${head('people', item.name)}
-      <p>${esc(item.text)}${item.own ? `<br><span class="small dim">已经有 ${item.own} 个名额给了组里留下读研的学生。</span>` : ''}<br><span class="small dim">面试可以看清能力和全部特质。优秀的学生更抢手，接受 offer 的概率更低；你的声望和人脉越高，越容易招到人。</span></p>
+      <p>${esc(item.text)}${item.own ? `<br><span class="small dim">已经有 ${item.own} 个名额给了组里留下读研的学生。</span>` : ''}<br><span class="small dim">面试可以看清能力和全部特质。优秀的学生更抢手，接受 offer 的概率更低；你的声望和人脉越高，越容易招到人。</span><br><span class="small dim">提示：「方针」栏的「招人名单」里可以把研究生招生季设成「从高到低招满」。</span></p>
       ${candSortBar('recruit')}
       <div class="cgrid">${sortCands(item.cands, 'recruit').map(c => candCard(c, 'recruit', item.offers.includes(c.cid))).join('')}</div>
       <div class="mfoot"><span>名额：博士 <b>${used.phd}/${item.quota.phd}</b> · 硕士 <b>${used.ms}/${item.quota.ms}</b> · 空余工位 ${free} · 全部接受后每年约 ${money(cost)}</span><button class="primary" data-act="recruitOk">${item.offers.length ? `发出 ${item.offers.length} 个 offer` : '今年不招了'}</button></div>`, 'wide');
   }
   function renderPool(item) {
     item.pick = item.pick || [];
+    const role = S.HIRE_ROLES[item.role];
+    const note = item.hire ? `这一轮是「持续招${role}」自动发起的，收谁由你来挑（「方针」栏的「招人名单」里可以设成「从高到低招满」）；不想再招了，可以在「成员」页把开关关掉。`
+      : role ? `提示：「方针」栏的「招人名单」里可以把${role}名单设成「从高到低招满」。` : '';
     return modalShell(`${head('people', item.title)}
-      <p>${esc(item.text)}</p>
+      <p>${esc(item.text)}${note ? `<br><span class="small dim">${esc(note)}</span>` : ''}</p>
       ${item.cands.length > 2 ? candSortBar('pool') : ''}
       <div class="cgrid">${sortCands(item.cands, 'pool').map(c => candCard(c, 'pool', item.pick.includes(c.cid))).join('')}</div>
       <div class="mfoot"><span>最多录用 ${item.max} 人 · 空余工位 ${G.desks(g) - g.members.length}</span><button class="primary" data-act="poolOk">${item.pick.length ? `录用 ${item.pick.length} 人` : '都不要'}</button></div>`, 'wide');
@@ -1766,10 +1861,10 @@
         <p><b>论文质量</b>由学生的想法 / 编程 / 写作能力、你的研究和写作能力、算力、方向积累决定。A 类会议门槛高、审稿有运气成分，而且整个领域的门槛每年都在上涨。</p>
         <p><b>经费</b>：起步经费会被学生工资、算力维护慢慢花掉。及时申请基金（会消耗精力）、找企业合作，别让账户透支。</p>
         <p><b>精力</b>：教学、指导、写基金都消耗精力；精力太低会病倒。可以在「方针」里切换精力分配，或者放个假。</p>
-        <p><b>学生</b>：注意心情，长期低落会想退出。招生季面试能看清学生的真实能力。博士后能帮你分担指导工作。每个学生都有自己想做的方向，做感兴趣的课题更开心、效率更高。</p>
+        <p><b>学生</b>：注意心情，长期低落会想退出。招生季面试能看清学生的真实能力。博士后能帮你分担指导工作。每个学生都有自己想做的方向，做感兴趣的课题更开心、效率更高。「成员」页可以打开「持续招本科生」「持续招博士后」，到时候自动发起招募；工位不够时谁先坐，看「方针」里的工位分配顺序。</p>
         <p><b>小组</b>：在「小组」页把实验室分成几个子方向，给每个学生分组、任命组长、把服务器专门分给某个组。学生每做完一个课题都会来找你商量下一个方向（可以在方针里改成自动安排）。学生达到毕业要求后，可以在成员卡片上点「毕业」安排答辩。</p>
         <p><b>考核</b>：第 3 年中期、第 6 年终期。在「概览」页可以随时查看各项指标的进度。通过之后，继续冲击正教授、Fellow、院士，甚至图灵奖！</p>
-        <p><b>挂机</b>：「方针 → 托管」可以让小事甚至所有事自动处理；「迷你」模式只保留画面，适合放在屏幕角落。</p>
+        <p><b>挂机</b>：「方针 → 托管」可以让小事甚至所有事自动处理；「方针」栏里还可以按身份细调——「出路与到期」定好学生毕业、读研读博、博后续约怎么处理，「招人名单」可以让名单从高到低自动招满。「迷你」模式只保留画面，适合放在屏幕角落。</p>
         <p class="dim small">截稿日期、基金名称等参考了真实世界，但数值都是游戏化的，请勿当真。</p>
       </div>
       <div class="choices"><button class="choice def" data-act="closeLocal"><b>明白了</b></button></div>`, 'wide');
@@ -2101,7 +2196,30 @@
         if (k === 'auto') RS.Sim.autoResolve(g);
         if (k === 'autoLead') S.autoLeaders(g);
         if (k === 'autoGroup') { S.autoGroups(g); S.autoLeaders(g); }
+        if (k === 'desk') S.reseatDesks(g);
         break;
+      // 方针里按身份定的规则：改完马上处理一遍正在等你决定的事（比如刚弹出来的毕业答辩）
+      case 'exitPolicy':
+      case 'pickPolicy': {
+        const key = a === 'exitPolicy' ? 'exit' : 'pick';
+        g.policies[key] = Object.assign({}, g.policies[key], { [k]: v });
+        RS.Sim.autoResolve(g);
+        break;
+      }
+      // 持续招本科生 / 博士后：打开时如果现在就能招，马上发起一轮
+      case 'autoHire': {
+        const h = (g.policies.hire = Object.assign({ ug: false, postdoc: false }, g.policies.hire));
+        h[arg] = !h[arg];
+        if (g.flags.hirePause) delete g.flags.hirePause[arg];
+        const name = `持续招${S.HIRE_ROLES[arg]}`;
+        if (h[arg]) {
+          S.autoHire(g);
+          RS.Sim.autoResolve(g); // 名单设成从高到低招满的，马上自动录用；否则弹出来由你挑
+          setTimeout(openNextQueue, 50);
+          UI.toast(`已打开「${name}」：到了能招的时候会自动发起招募`, 'good');
+        } else UI.toast(`已关闭「${name}」`, 'info');
+        break;
+      }
       case 'core': g.policies.coreTopic = arg; break;
       // 博士阶段
       case 'phdTalk': fail(S.phdTalk(g)); break;
@@ -2143,7 +2261,11 @@
         S.dismiss(g, m);
         break;
       }
-      case 'ugPool': fail(S.ugPool(g)); setTimeout(openNextQueue, 50); break;
+      case 'ugPool':
+        fail(S.ugPool(g));
+        if (RS.Sim.pickRule(g, { type: 'pool', role: 'ug' }) === 'fill') RS.Sim.autoResolve(g); // 「招人名单」设成从高到低招满：手动招来的名单也自动录用
+        setTimeout(openNextQueue, 50);
+        break;
       case 'postdoc': fail(S.postdocSearch(g)); break;
       case 'giveUp': {
         const p = G.project(g, arg);
