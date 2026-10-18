@@ -882,19 +882,58 @@
       },
     },
 
+    // 横向课题 / 企业合作：企业主动找上门（Sys.contractPitch 每月按声望检查）、去企业跑一圈谈成的、到期续约的
     industry_contract: {
-      weight: g => (g.grants.filter(x => x.kind === 'contract').length >= 2 ? 0 : 0.7 * (G().perk(g).contract || 1)), cd: 300,
-      ctx: g => ({ company: U.pick(G().region(g).companies), mult: U.range(0.8, 1.4) }),
+      weight: g => (S().contracts(g).length >= S().contractCap(g) ? 0 : 0.7 * (G().perk(g).contract || 1)), cd: 300,
+      ctx: g => S().contractOffer(g),
       build: (g, c) => {
-        const def = G().grantDef(g, 'contract');
-        const amount = Math.round((def.amount * c.mult) / 1000) * 1000;
-        const n = g.grants.filter(x => x.kind === 'contract').length;
+        // 旧存档里排队的邀约只有公司和倍率
+        const o = c.type ? c : Object.assign({}, S().contractOffer(g, { company: c.company, mult: c.mult, type: 'joint' }), { roll: 0.5 });
+        const T = S().CONTRACT_TYPES.find(x => x.id === o.type) || S().CONTRACT_TYPES[1];
+        const label = g.region === 'cn' ? '横向课题' : '企业合作项目';
+        const n = S().contracts(g).length, cap = S().contractCap(g), full = n >= cap;
+        const monthly = (o.amount * (1 - G().overhead(g, 'contract'))) / o.months;
+        const d0 = S().contractDrag(g), d1 = S().contractDrag(g, o.load);
+        const runway = S().runway(g);
+        const need = runway < 24;
+        const effect = `全组科研效率 ×${d0.toFixed(2)} → ×${d1.toFixed(2)}`;
+        const more = Math.round((o.amount * 1.2) / 1000) * 1000;
         return {
-          title: g.region === 'cn' ? '横向课题' : '企业合作项目', portrait: { icon: 'money' },
-          text: `<b>${c.company}</b> 希望和你签一个为期两年的合作项目，经费 <b>${money(g, amount)}</b>。不过需要学生投入时间做交付，全组科研效率会下降约 7%。${n ? `<br><span class="dim">（你已经有 ${n} 个企业项目在执行）</span>` : ''}`,
+          title: o.renew ? `${o.company} 想续约` : `${label}：${o.company}`, portrait: { icon: 'money' },
+          text: `${o.renew ? `<b>${U.esc(o.company)}</b> 对上一期的合作很满意，想再签一期。` : `<b>${U.esc(o.company)}</b> 想和你签一个${label}。`}<br>类型：<b>${T.name}</b>（${T.desc}）· ${o.months} 个月 · 总额 <b>${money(g, o.amount)}</b>，扣掉管理费每月到账约 <b>${money(g, monthly)}</b>。<br><span class="dim">企业项目要占用学生的时间：${effect}（实验室人越多，影响越小）。现在有 ${n} / ${cap} 个企业项目在执行${runway < 12 ? `；账上的钱只够撑 ${Math.max(0, Math.round(runway))} 个月了` : ''}。</span>`,
           choices: [
-            { label: '签！', hint: `经费 +${money(g, amount)}（按月拨付）· 全组效率 -7%`, def: true, apply: g => S().awardGrant(g, def, amount) },
-            { label: '不签，专心科研', hint: '没有影响', apply: nop },
+            { label: '签！', hint: `每月 +${money(g, monthly)} · ${o.months} 个月 · ${effect}`, def: !full && need, disabled: full ? '手上的企业项目已经够多了' : null, apply: g => S().signContract(g, o) },
+            { label: '讨价还价', hint: `成功率约 60%：总额涨到 ${money(g, more)}；谈崩了企业就走了`, disabled: full ? '手上的企业项目已经够多了' : null,
+              apply: g => {
+                if ((o.roll != null ? o.roll : Math.random()) < 0.6) { S().signContract(g, Object.assign({}, o, { amount: more })); G().log(g, `和 ${o.company} 谈下了更高的价格`, 'good'); }
+                else G().log(g, `${o.company} 觉得要价太高，没谈成`, 'bad');
+              } },
+            { label: '不签，专心科研', hint: need ? '没有影响（不过账上的钱不太宽裕）' : '没有影响', def: full || !need, apply: nop },
+          ],
+        };
+      },
+    },
+
+    // 企业联合实验室：大公司出钱共建，五年，还捐一台服务器
+    joint_lab: {
+      weight: g => (g.rep >= 250 && !g.grants.some(x => x.id === 'jointlab') ? 0.5 : 0), cd: 720,
+      ctx: g => ({ company: U.pick(G().region(g).companies), amount: Math.round((G().grantDef(g, 'contract').amount * 6 * (1 + Math.min(1.5, g.rep / 600)) * U.range(0.9, 1.15)) / 1000) * 1000 }),
+      build: (g, c) => {
+        const monthly = (c.amount * (1 - G().overhead(g, 'contract'))) / 60;
+        const d0 = S().contractDrag(g), d1 = S().contractDrag(g, 1.2);
+        const gpu = S().bestGpu(g);
+        return {
+          title: '共建联合实验室', portrait: { icon: 'money' },
+          text: `<b>${U.esc(c.company)}</b> 想和你共建一个联合实验室：五年总额 <b>${money(g, c.amount)}</b>（扣掉管理费每月到账约 ${money(g, monthly)}），再捐一台 ${gpu ? U.esc(gpu.name) : '服务器'}。<br><span class="dim">作为交换，每年要给企业做几个合作课题：全组科研效率 ×${d0.toFixed(2)} → ×${d1.toFixed(2)}。</span>`,
+          choices: [
+            { label: '签约，挂牌！', hint: `每月 +${money(g, monthly)} · 五年 · 一台服务器 · 声望 +3`, def: true,
+              apply: g => {
+                S().signContract(g, { id: 'jointlab', name: `${c.company} 联合实验室`, company: c.company, type: 'big', amount: c.amount, months: 60, load: 1.2 });
+                if (gpu) g.gpus[gpu.id] = (g.gpus[gpu.id] || 0) + 1;
+                S().addRep(g, 3);
+                G().milestone(g, `与 ${c.company} 共建联合实验室`);
+              } },
+            { label: '婉拒，保持独立', hint: '没有影响', apply: nop },
           ],
         };
       },

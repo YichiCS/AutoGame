@@ -188,6 +188,7 @@
     { id: 'grants', group: '科研', name: '基金申请季', desc: '申请哪些基金、投入多少精力', minor: false },
     { id: 'team', group: '团队', name: '小组里的事', desc: '组长撑不住、抢算力、组会争论、聚会、熬夜、读书会', minor: true },
     { id: 'opportunity', group: '机会', name: '学术机会和合作', desc: '审稿 / PC 邀请、特邀报告、合作、媒体采访、企业项目、捐赠、学术休假', minor: true },
+    { id: 'contract', group: '机会', name: '企业合作 / 横向', desc: '企业找上门的合作项目、到期续约、共建联合实验室（托管：账上的钱不太宽裕时签，宽裕时不签）', minor: false },
     { id: 'career', group: '机会', name: '跳槽机会', desc: '别的学校来挖你（托管会拿去和学院谈条件）', minor: false },
     { id: 'teaching', group: '日常', name: '排课', desc: '每学期上哪门课', minor: true },
     { id: 'chores', group: '日常', name: '杂事', desc: '报销、监考、咖啡机坏了、机房太热、天气、家里的事', minor: true },
@@ -205,7 +206,8 @@
   cat('consult', 'hot_trend next_topic join_group group_switch interest_change');
   cat('people', 'visitor ug_walkin ug_fair jpi_join');
   cat('team', 'leader_burnout compute_rush gpu_fight meeting_debate late_night party paper_reading birthday');
-  cat('opportunity', 'pc_invite keynote collab media committee review_req tech_transfer sabbatical workshop_org interdisc industry_contract darpa seed_grant new_colleague alumni_talk big_shot_praise donation alumni_gift gpu_market');
+  cat('opportunity', 'pc_invite keynote collab media committee review_req tech_transfer sabbatical workshop_org interdisc darpa seed_grant new_colleague alumni_talk big_shot_praise donation alumni_gift gpu_market');
+  cat('contract', 'industry_contract joint_lab');
   cat('trouble', 'deficit burnout_pi server_crash cat_chaos');
   cat('chores', 'reimburse coffee_broken heatwave proctor weather spam_mail pi_family');
   cat('career', 'poach_pi');

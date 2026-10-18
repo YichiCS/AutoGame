@@ -251,6 +251,7 @@
     if (won) {
       S.awardGrant(g, def);
       const what = def.kind === 'gpu' ? '一台算力服务器' : `${G.money(g, def.amount)}（${Math.round(def.months / 12 * 10) / 10} 年）`;
+      if (def.title) S.matchFunds(g, (def.amount || 0) * (g.region === 'cn' ? 0.5 : 0.25), `拿到了「${def.title}」`);
       if (big) G.queue(g, { type: 'notice', tone: 'gold', icon: 'money', fx: 'coins', title: `${def.name} 获批！`, text: `恭喜！你的 <b>${def.name}</b> 申请获得资助：${what}。<br>${def.title ? `你获得了「${def.title}」称号！` : '经费会按月拨付到账户。'}` });
       else RS.bus.emit('toast', { text: `${def.name} 获批：${what}`, kind: 'good' });
     } else {
@@ -283,19 +284,69 @@
   };
 
   // 主动寻找企业合作
+  // ---------- 横向课题 / 企业合作 ----------
+  // 三种：技术咨询（小、短、几乎不占人）、联合研发（标准）、大型项目（钱多，要投入不少人手）。
+  // 声望越高，企业给的钱越多、主动找上门的越多；实验室人越多，能同时接的越多，摊到每个人头上的影响也越小
+  S.CONTRACT_TYPES = [
+    { id: 'consult', name: '技术咨询', mult: 0.45, months: 12, load: 0.4, desc: '帮企业解决一个具体问题，主要是你出主意' },
+    { id: 'joint', name: '联合研发', mult: 1, months: 24, load: 1, desc: '和企业一起做研究，学生要投入时间做交付' },
+    { id: 'big', name: '大型项目', mult: 2.4, months: 36, load: 2, desc: '企业的大项目，钱多，但要投入不少人手' },
+  ];
+  S.contracts = g => g.grants.filter(x => x.kind === 'contract');
+  S.contractCap = g => 2 + Math.floor(g.members.length / 8);
+  S.contractDrag = function (g, extra) {
+    const n = Math.max(4, g.members.filter(m => ['phd', 'ms', 'postdoc', 'jpi'].includes(m.role)).length);
+    const load = U.sum(S.contracts(g), x => (x.load == null ? 1 : x.load)) + (extra || 0);
+    return Math.max(0.6, 1 - 0.07 * load * Math.min(1.5, 8 / n));
+  };
+  S.contractOffer = function (g, o) {
+    o = o || {};
+    const big = g.rep >= 150 && g.members.length >= 10;
+    const type = o.type || U.weighted(S.CONTRACT_TYPES, x => (x.id === 'big' ? (big ? 1 : 0) : x.id === 'consult' ? 1.2 : 1.6)).id;
+    const T = S.CONTRACT_TYPES.find(x => x.id === type) || S.CONTRACT_TYPES[1];
+    const def = G.grantDef(g, 'contract');
+    const scale = 1 + Math.min(2.5, g.rep / 250);
+    const amount = Math.round((def.amount * T.mult * scale * (o.mult || U.range(0.85, 1.2))) / 1000) * 1000;
+    return { company: o.company || U.pick(G.region(g).companies), type, amount, months: T.months, load: T.load, renew: !!o.renew, roll: Math.random() };
+  };
+  S.signContract = function (g, c) {
+    const T = S.CONTRACT_TYPES.find(x => x.id === c.type) || S.CONTRACT_TYPES[1];
+    const oh = G.overhead(g, 'contract');
+    const net = c.amount * (1 - oh);
+    g.grants.push({ id: c.id || 'contract', name: c.name || `${c.company} · ${T.name}`, kind: 'contract', group: null, company: c.company, ctype: c.type, load: c.load, total: c.amount, net, monthly: net / c.months, months: c.months, monthsLeft: c.months, start: g.day });
+    g.stats.grantTotal += c.amount;
+    g.year.grants += c.amount;
+    g.stats.grantsWon++;
+    G.log(g, `签下${g.region === 'cn' ? '横向课题' : '企业合作项目'}「${c.name || `${c.company} · ${T.name}`}」，总额 ${G.money(g, c.amount)}${oh > 0 ? `（扣除 ${Math.round(oh * 100)}% 管理费后到账 ${G.money(g, net)}）` : ''}`, 'gold');
+    RS.bus.emit('grant', { def: G.grantDef(g, 'contract') });
+  };
+  // 企业主动找上门：声望越高越常见；账上快没钱的时候，你也会更留意这些邀约
+  S.contractPitch = function (g) {
+    if (S.contracts(g).length >= S.contractCap(g)) return;
+    if (g.queue.some(q => q.type === 'event' && q.id === 'industry_contract')) return;
+    const p = U.clamp(0.05 + g.rep / 2000, 0.05, 0.35) * (S.runway(g) < 12 ? 1.6 : 1) * (G.perk(g).contract || 1);
+    if (U.chance(p)) G.queue(g, { type: 'event', id: 'industry_contract', ctx: S.contractOffer(g) });
+  };
   S.seekContract = function (g) {
     if ((g.cooldowns.seek || 0) > g.day) return '最近刚联系过企业，过段时间再试';
-    if (g.grants.filter(x => x.kind === 'contract').length >= 2) return '手上的企业项目已经够多了';
+    if (S.contracts(g).length >= S.contractCap(g)) return '手上的企业项目已经够多了';
     if (g.pi.energy < 10) return '精力不足';
-    g.cooldowns.seek = g.day + 150;
+    g.cooldowns.seek = g.day + 90;
     S.addEnergy(g, -8);
-    const p = U.clamp(0.3 + g.rep / 300 + (g.pi.stats.network - 35) / 150, 0.2, 0.85) * (G.perk(g).contract || 1);
+    const p = U.clamp(0.3 + g.rep / 300 + (g.pi.stats.network - 35) / 150, 0.2, 0.9) * (G.perk(g).contract || 1);
     if (Math.random() < p) {
-      G.queue(g, { type: 'event', id: 'industry_contract', ctx: { company: U.pick(G.region(g).companies), mult: U.range(0.8, 1.4) } });
+      G.queue(g, { type: 'event', id: 'industry_contract', ctx: S.contractOffer(g) });
       return null;
     }
     G.log(g, '跑了几家企业，暂时没有谈成合作', 'bad');
     return null;
+  };
+  // 学校配套：人才称号、晋升、学术荣誉都会带来一笔经费
+  S.matchFunds = function (g, v, why) {
+    v = Math.round(v / 1000) * 1000;
+    if (v <= 0) return;
+    S.earn(g, v, 'dept');
+    G.log(g, `${why}，学校给了 ${G.money(g, v)} 的配套经费`, 'gold');
   };
 
   // ---------- 招生 ----------
@@ -646,6 +697,7 @@
       g.pi.title = pr.to;
       g.pi.promoDay = g.day;
       S.addRep(g, 10);
+      S.matchFunds(g, g.startup * 0.4, `晋升为${R.titles[pr.to]}`);
       G.milestone(g, `晋升为${R.titles[pr.to]}`);
       G.queue(g, { type: 'notice', tone: 'gold', icon: 'star', fx: 'confetti', title: '晋升！', text: `学校批准了你的晋升申请，你现在是 <b>${R.titles[pr.to]}</b> 了！招生名额也增加了。` });
     }
@@ -656,6 +708,7 @@
       if (!h.cond(g) || !U.chance(h.chance)) continue;
       g.honors.push({ id: h.id, name: h.name, d: g.day });
       S.addRep(g, h.rep);
+      S.matchFunds(g, h.rep * 8000 * G.region(g).ppp, `当选 / 获得「${h.name}」`);
       G.milestone(g, `获得荣誉：${h.name}`);
       G.queue(g, { type: 'notice', tone: 'gold', icon: 'trophy', fx: 'confetti', title: h.name, text: `你当选 / 获得了 <b>${h.name}</b>！<br>这是对你多年来学术贡献的高度认可。声望 +${h.rep}。` });
       break;

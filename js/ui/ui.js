@@ -730,7 +730,9 @@
         }).join('')}
       </div>
       <div class="card"><h3>${ico('people')} ${g.region === 'cn' ? '横向课题' : '企业合作'}</h3>
-        <p class="small dim">主动去找企业谈合作（精力 -8）。成功率取决于声望和人脉；企业项目会占用学生时间。</p>
+        <p class="small dim">企业会主动找上门（声望越高越常见、给的钱越多），也可以主动去企业跑一圈（精力 -8，成功率看声望和人脉）。项目分技术咨询、联合研发和大型项目，会占用学生的时间；实验室人越多，能同时接的越多，影响也越小。到期后企业可能想续约。</p>
+        <div class="kvline"><span>在执行的企业项目</span><b>${S.contracts(g).length} / ${S.contractCap(g)}</b></div>
+        <div class="kvline" data-tip="企业项目占用学生时间对全组科研效率的影响"><span>对科研效率的影响</span><b class="${S.contractDrag(g) < 0.9 ? 'warn' : ''}">×${S.contractDrag(g).toFixed(2)}</b></div>
         <button data-act="seek" ${seekCd ? 'disabled' : ''}>${seekCd ? G.daysText(g.cooldowns.seek - g.day) + '后可以再去' : '去企业跑一圈'}</button>
       </div>
       <div class="card"><h3>${ico('list')} 申请记录</h3>

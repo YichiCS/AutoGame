@@ -410,11 +410,10 @@
     const meeting = { weekly: 1.05, biweekly: 1.0, monthly: 0.95 }[pol.meeting] || 1;
     const resting = g.flags.restUntil > g.day || g.flags.sabbaticalUntil > g.day;
     const piMentor = resting ? 0.93 : pol.focus === 'mentor' && g.pi.energy >= 25 ? 1.07 : g.pi.energy < 15 ? 0.92 : 1;
-    const contracts = g.grants.filter(x => x.kind === 'contract').length;
     // 假期效率低；暴雪/台风停课的那几天也差不多
     const holiday = (S.isHoliday(g) ? 0.45 : g.flags.closedUntil > g.day ? 0.6 : 1) * (g.flags.moveUntil > g.day ? 0.7 : 1);
     const mentor = S.mentorLoad(g);
-    const labMult = intensity * meeting * piMentor * (1 + fac.prod) * Math.pow(0.93, contracts) * holiday;
+    const labMult = intensity * meeting * piMentor * (1 + fac.prod) * S.contractDrag(g) * holiday;
     const units = G.computeUnits(g);
     const demand = S.computeDemand(g);
     const teamMood = U.sum(g.members, m => (m.status === 'active' ? tAdd(m, 'teamMood') : 0));
@@ -1287,7 +1286,14 @@
     if (done.length) {
       g.grants = g.grants.filter(x => x.monthsLeft > 0);
       done.forEach(x => G.log(g, `${x.name} 执行期结束，顺利结题`, 'info'));
+      if (!g.phd) {
+        const renew = done.find(x => x.kind === 'contract' && x.company && U.chance(0.5));
+        if (renew && S.contracts(g).length < S.contractCap(g)) {
+          G.queue(g, { type: 'event', id: 'industry_contract', ctx: S.contractOffer(g, { company: renew.company, type: renew.ctype, mult: U.range(1.05, 1.25), renew: true }) });
+        }
+      }
     }
+    if (!g.phd) S.contractPitch(g);
     g.history.push({ d: g.day, f: Math.round(g.funds), r: Math.round(g.rep), c: g.stats.cites, h: g.stats.h });
     if (g.history.length > 600) g.history.shift();
     if (g.funds < 0 && (g.cooldowns.deficit || 0) <= g.day) {
