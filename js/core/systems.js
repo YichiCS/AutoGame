@@ -13,8 +13,7 @@
   S.PHASE_NAMES = { idea: '构思', exp: '实验', write: '写作', revise: '修改', ready: '待投稿', review: '审稿中' };
   S.WORK_PHASES = ['idea', 'exp', 'write'];
   const STAT_OF = { idea: 'idea', exp: 'code', write: 'write', revise: 'write' };
-  const GROW = { idea: 0.04, exp: 0.016, write: 0.035, revise: 0.035 };
-  S.NEED_MULT = 1.4;
+  S.NEED_MULT = 1.5;
   S.soft = s => Math.max(0.03, Math.pow(Math.max(0, (100 - s) / 50), 1.5));
 
   S.fundName = (g, f) => (g.region === 'cn' ? { ra: '助研补贴', ta: '助教', fellow: '奖学金', self: '无需资助' } : { ra: 'RA', ta: 'TA', fellow: 'Fellowship', self: '无需资助' })[f] || f;
@@ -67,29 +66,58 @@
 
   // ---------- 成员 ----------
   const clampStat = v => U.clamp(Math.round(v), 8, 95);
-  S.genStats = q => ({ idea: clampStat(q + U.normal(0, 9)), code: clampStat(q + U.normal(0, 9)), write: clampStat(q + U.normal(0, 9)) });
   // 属性：研究能力（想法、编程、写作、数理）+ 软实力（协作、表达、抗压）。总评以研究能力为主
   S.STATS = [
     { k: 'idea', n: '想法', tip: '构思阶段的速度，以及想法新不新' },
     { k: 'code', n: '编程', tip: '实验阶段的速度，以及实验做得扎不扎实' },
     { k: 'write', n: '写作', tip: '写作、改稿的速度，以及论文写得清不清楚' },
-    { k: 'math', n: '数理', tip: '理论功底：想法更新颖、实验结论更扎实。做构思和实验时会慢慢提高' },
-    { k: 'team', n: '协作', soft: true, tip: '给别人帮忙时出力更多；当组长时组员成长更快。在小组里、帮别人干活时会慢慢提高' },
-    { k: 'talk', n: '表达', soft: true, tip: 'Rebuttal 更有说服力，更容易拿 Oral 和最佳论文；讲得好的去开会能给实验室攒声望；毕业找工作也更顺。写论文、去开会时会提高' },
+    { k: 'math', n: '数理', tip: '理论功底：想法更新颖、实验结论更扎实' },
+    { k: 'team', n: '协作', soft: true, tip: '给别人帮忙时出力更多；当组长时组员成长更快' },
+    { k: 'talk', n: '表达', soft: true, tip: 'Rebuttal 更有说服力，更容易拿 Oral 和最佳论文；讲得好的去开会能给实验室攒声望；毕业找工作也更顺。去开会做报告时会提高一点' },
     { k: 'grit', n: '抗压', soft: true, tip: '心情不容易变差，被拒稿也扛得住，不容易想退出。每次被拒稿都会更扛打一点' },
   ];
   const OVR_W = { idea: 0.24, code: 0.22, write: 0.2, math: 0.12, team: 0.08, talk: 0.07, grit: 0.07 };
   S.st = (m, k) => (m && m.stats && m.stats[k] != null ? m.stats[k] : 50);
   S.overall = st => Math.round(U.sum(Object.keys(OVR_W), k => (st[k] == null ? 50 : st[k]) * OVR_W[k]));
-  // 显示用的分数：内部数值照旧（平衡不变），显示时换算到更直观的刻度——
-  // 博士生招生的候选人大约 60~82，硕士生大约 47~75，刚进组的本科生大约 50
-  S.disp = v => Math.round(100 * (1 - Math.pow(Math.max(0, 1 - U.clamp(v || 0, 0, 100) / 100), 1.7)));
-  S.dispOvr = st => S.disp(S.overall(st));
+  // 分数：玩家看到的是 0~100 的「显示分数」，学生的能力就按它来生成和成长（正态分布）；
+  // 游戏规则内部用的数值和显示分数一一对应（S.disp / S.undisp，一条平滑的单调曲线），
+  // 曲线是对着改动前的平衡标定的：本科生、硕士生、博士生各个分数段，干活的效率都和以前差不多
+  S.DISP_K = 1.4;
+  S.dispRaw = v => 100 * (1 - Math.pow(Math.max(0, 1 - U.clamp(v || 0, 0, 100) / 100), S.DISP_K));
+  S.disp = v => Math.round(S.dispRaw(v));
+  S.undisp = d => 100 * (1 - Math.pow(Math.max(0, 1 - U.clamp(d, 0, 100) / 100), 1 / S.DISP_K));
+  // 总评：各项显示分数的加权平均
+  S.dispOvr = st => Math.round(U.sum(Object.keys(OVR_W), k => S.dispRaw(st[k] == null ? 50 : st[k]) * OVR_W[k]));
   S.ovrGrade = v => (v >= 85 ? 'S' : v >= 75 ? 'A' : v >= 65 ? 'B' : v >= 55 ? 'C' : 'D'); // 按显示的分数
-  // 「博士水平」「硕士水平」：招生时一般的博士生、硕士生（内部数值）
-  S.LEVEL_PHD = 53;
-  S.LEVEL_MS = 42;
-  // 新属性：数理跟着整体水平走；软实力和学业水平关系不大，更多看性格
+  // 研究能力（想法、编程、写作的显示分数平均）；「博士水平」「硕士水平」= 招生时一般的博士生、硕士生
+  S.researchLevel = m => U.avg(['idea', 'code', 'write'], k => S.dispRaw(S.st(m, k)));
+  S.LEVEL_PHD = 71;
+  S.LEVEL_MS = 60;
+  // 各身份的平均水平（显示分数）：候选人的质量 q（看学校档次、实验室声望）让它上下浮动，每项能力再各自正态分布
+  // ——博士生候选人一般 61~78，硕士生 52~69，进组的本科生 40~60
+  const DISP_MID = { phd: 70, ms: 60, ug: 50, postdoc: 78, visit: 64, jpi: 82 };
+  // 本科生之间差得更多：有的已经很能干，有的还在入门
+  S.levelOf = (role, q) => (DISP_MID[role] || 60) + (role === 'ug' ? 0.8 : 0.55) * ((q == null ? 52 : q) - 52);
+  // 性格对能力的影响（显示分数）
+  const TRAIT_DISP = { mathy: { idea: 4, math: 10 }, social: { team: 10, talk: 5 }, loner: { team: -10 }, influencer: { talk: 8 }, writer: { talk: 3 }, optimist: { grit: 8 }, fragile: { grit: -12 }, grinder: { grit: 5 }, slacker: { grit: -3 } };
+  const toStat = d => Math.round(S.undisp(U.clamp(d, 5, 98)) * 10) / 10;
+  // adj：额外的加减（显示分数，比如博士开局的本科背景）
+  S.genStats = function (role, q, traits, adj) {
+    const B = S.levelOf(role, q);
+    const soft = 55 + (B - 55) * 0.35; // 软实力和学业水平关系不大，更多看性格
+    const d = { idea: B + U.normal(0, 6), code: B + U.normal(0, 6), write: B + U.normal(0, 6), math: B - 4 + U.normal(0, 8), team: soft + U.normal(0, 9), talk: soft + U.normal(0, 9), grit: soft + U.normal(0, 9) };
+    (traits || []).forEach(t => { const x = TRAIT_DISP[t]; if (x) Object.keys(x).forEach(k => { d[k] += x[k]; }); });
+    Object.keys(adj || {}).forEach(k => { if (d[k] != null) d[k] += adj[k]; });
+    const st = {};
+    Object.keys(d).forEach(k => { st[k] = toStat(d[k]); });
+    return st;
+  };
+  // 潜力（0~10）：每年成长时那个「状态」t 的均值。年轻的本科生学得快，博士后、青年教师已经比较定型
+  const POT_MID = { ug: 6, ms: 2.8, phd: 4, visit: 4, postdoc: 2.5, jpi: 2 };
+  S.genPot = (role, q) => Math.round(U.clamp(U.normal((POT_MID[role] || 4) + 0.03 * ((q == null ? 52 : q) - 52), 1.4), 0.5, 9.5) * 10) / 10;
+  // 旧存档的潜力是一个 0.65~1.45 的成长倍数
+  S.potFromOld = p => Math.round(U.clamp(4 + ((p || 1) - 1) * 8, 0.5, 9.5) * 10) / 10;
+  // 旧存档补属性用（内部数值）：数理跟着整体水平走；软实力更多看性格
   const TRAIT_STATS = { mathy: { math: 12 }, social: { team: 12, talk: 6 }, loner: { team: -12 }, influencer: { talk: 10 }, writer: { talk: 4 }, optimist: { grit: 10 }, fragile: { grit: -15 }, grinder: { grit: 6 }, slacker: { grit: -4 } };
   S.fillStats = function (st, q, traits) {
     const base = q != null ? q : U.avg(['idea', 'code', 'write'], k => (st[k] == null ? 50 : st[k]));
@@ -112,17 +140,16 @@
 
   S.createMember = function (g, role, o) {
     o = o || {};
-    const q = (o.q != null ? o.q : 50) + (o.stats ? 0 : ROLE_OFFSET[role]);
-    const traits = o.traits || RS.randomTraits(q);
-    const stats = o.stats ? Object.assign({}, o.stats) : S.genStats(q);
-    if (!o.stats && traits.includes('mathy')) stats.idea = clampStat(stats.idea + 6);
-    S.fillStats(stats, o.stats ? null : q, traits);
+    const q = o.q != null ? o.q : 52;
+    const traits = o.traits || RS.randomTraits(q + (o.stats ? 0 : ROLE_OFFSET[role]));
+    const stats = o.stats ? S.fillStats(Object.assign({}, o.stats), null, traits) : S.genStats(role, q, traits);
     const startDay = o.startDay != null ? o.startDay : g.day;
+    const potential = o.potential != null ? o.potential : o.pot != null ? S.potFromOld(o.pot) : S.genPot(role, q);
     const m = {
       id: G.nid(g, 'm'), name: o.name || RS.randomName(g.region), role,
       avatar: o.avatar || RS.randomAvatar(),
       joinDay: g.day, startDay,
-      stats, pot: o.pot || U.range(0.8, 1.25), mood: o.mood || U.int(68, 85),
+      stats, potential, gx: { s: 0, n: 0 }, mood: o.mood || U.int(68, 85),
       traits, funding: o.funding || S.defaultFunding(g, role), fellowUntil: o.fellowUntil || 0,
       projectId: null, status: 'active', awayUntil: 0, awayWhy: '', remoteUntil: 0, preUntil: o.preUntil || 0,
       pubs: 0, pubsA: 0, first: 0, firstA: 0, school: o.school || '',
@@ -171,6 +198,9 @@
         S.STATS.forEach(s => { if (m.base[s.k] == null) m.base[s.k] = Math.round(m.stats[s.k]); });
       }
       if (!m.story) m.story = [];
+      // 旧存档：潜力从成长倍数换算到 0~10
+      if (m.potential == null) { m.potential = S.potFromOld(m.pot); delete m.pot; }
+      if (!m.gx) m.gx = { s: 0, n: 0 };
       if (m.first == null) {
         // 旧存档没有记录一作，从已发表的论文里数（旧论文的作者顺序就是负责人在前）
         m.first = 0;
@@ -462,8 +492,6 @@
 
   // 能力越强干得越快，而且越往上越明显：在管理得好的组里，顶尖的学生三四个月出一篇，普通学生要八九个月，能力差的一年多
   S.statSpeed = s => 0.1 + 0.9 * Math.pow(Math.max(0, s) / 80, 3);
-  // 成长看投入的功夫，不看产出：能力差的学生虽然做得慢，但一样在进步
-  const effort = (m, ph, w) => (w * 0.88) / S.statSpeed(S.phaseStat(m, ph));
   S.workRate = function (g, m, ph, ctx) {
     let w = S.statSpeed(S.phaseStat(m, ph)) * S.noDeskMult(m);
     w *= 0.6 + (0.6 * m.mood) / 100;
@@ -497,20 +525,58 @@
   // 算力对结果扎不扎实的影响：不够时少跑几组对比实验；够用就行，再多帮助不大
   S.computeQual = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : U.clamp(Math.pow(S.projRatio(g, p, ctx), 0.6), 0.25, 1.15));
 
-  // 本科生底子薄、学得快：跟着师兄师姐打下手，成长比研究生快得多（不然一年半下来还远远够不上读研的水平）
-  S.ROLE_GROW = { ug: 1.5, ms: 0.6, visit: 1.2 };
-  S.grow = function (g, m, ph, w) {
-    const key = STAT_OF[ph];
-    const s = m.stats[key];
-    const mentor = (g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1) * S.groupGrowth(g, m) * (S.supOf(g, m) ? 1.12 : 1) *
-      (m.isPlayer && g.phd ? S.PACE[g.phd.pace].grow : 1) * (S.ROLE_GROW[m.role] || 1);
-    const k = GROW[ph] * w * m.pot * tMul(m, 'growth') * mentor;
-    m.stats[key] = Math.min(100, s + k * S.soft(s));
-    // 副属性：构思和实验练数理，写作和改稿练表达
-    const side = SIDE_GROW[ph];
-    if (side) { const v = S.st(m, side[0]); m.stats[side[0]] = Math.min(100, v + k * side[1] * S.soft(v)); }
+  // ---------- 成长：每年一次 ----------
+  // 每年年底，先从「均值 = 潜力 × 这一年的带教环境」的正态分布里抽出这一年的状态 t（0~10），
+  // 再给七项能力各自独立抽一个 0~t 之间的成长值（正态分布，平均 t/2），加到显示分数上，最后重新算总评；
+  // 这一年入组不满一年的，按在组里的时间折算
+  // 带教环境：每天记一笔，年底取平均——你的精力花在指导学生上 +30%、每周组会 +10%、小组和组长、青年教师带 +12%、
+  // 单干 -15%、指导负担太重、心情差、没有工位、当助教都会拖后腿
+  S.growEnv = function (g, m, ctx) {
+    // 以默认方针（指导学生、每周组会）为基准：潜力就是正常带教下 t 的均值
+    let e = ((g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1)) / 1.43 * S.groupGrowth(g, m) * (S.supOf(g, m) ? 1.12 : 1);
+    e *= tMul(m, 'growth') * S.mentorFactor(g, m, ctx) * ((0.6 + (0.6 * m.mood) / 100) / 1.02) * S.noDeskMult(m);
+    if (m.funding === 'ta') e *= 0.85;
+    if (S.leadsGroup(g, m)) e *= 1.05; // 当组长压力大，但也更快成长
+    if (m.isPlayer && g.phd) e *= S.PACE[g.phd.pace].grow;
+    return e;
   };
-  const SIDE_GROW = { idea: ['math', 0.35], exp: ['math', 0.25], write: ['talk', 0.25], revise: ['talk', 0.15] };
+  S.noteGrowEnv = function (g, m, ctx) {
+    const x = m.gx || (m.gx = { s: 0, n: 0 });
+    x.s += S.growEnv(g, m, ctx);
+    x.n++;
+  };
+  S.T_MAX = 10;
+  S.growOne = function (g, m, frac) {
+    const env = m.gx && m.gx.n ? m.gx.s / m.gx.n : 1;
+    m.gx = { s: 0, n: 0 };
+    const t = U.clamp(U.normal(m.potential * env, 1.2), 0, S.T_MAX);
+    const before = S.dispOvr(m.stats);
+    const gain = {};
+    S.STATS.forEach(s => {
+      const d = U.clamp(U.normal(t / 2, t / 4), 0, t) * frac;
+      const cur = S.dispRaw(S.st(m, s.k));
+      const nxt = Math.min(100, cur + d);
+      // 已经满分（内部数值比满分对应的还高）就不动，免得被「拉回」满分
+      if (nxt > cur) m.stats[s.k] = Math.max(S.st(m, s.k), Math.round(S.undisp(nxt) * 10) / 10);
+      gain[s.k] = Math.round(nxt) - Math.round(cur);
+    });
+    const after = S.dispOvr(m.stats);
+    m.lastGrow = { y: G.calYear(g), t: Math.round(t * 10) / 10, env: Math.round(env * 100) / 100, frac: Math.round(frac * 100) / 100, gain, ovr: [before, after] };
+    S.story(g, m, `${G.calYear(g)} 年的成长：总评 ${before} → ${after}（这一年的状态 t = ${t.toFixed(1)}）`);
+    return { id: m.id, name: m.name, role: m.role, d0: before, d1: after, t: Math.round(t * 10) / 10, me: !!m.isPlayer };
+  };
+  S.yearlyGrowth = function (g) {
+    const y0 = g.day - G.doy(g); // 这一年的第一天
+    const out = [];
+    g.members.forEach(m => {
+      const frac = U.clamp((g.day + 1 - Math.max(m.joinDay != null ? m.joinDay : m.startDay, y0)) / 360, 0, 1);
+      if (frac < 0.05) { m.gx = { s: 0, n: 0 }; return; }
+      out.push(S.growOne(g, m, frac));
+    });
+    out.sort((a, b) => b.d1 - b.d0 - (a.d1 - a.d0));
+    if (g.year) g.year.growth = out;
+    return out;
+  };
   S.bumpStat = function (m, key, v) {
     const s = S.st(m, key);
     m.stats[key] = Math.min(100, s + v * S.soft(s));
@@ -518,6 +584,7 @@
 
   S.memberWork = function (g, m, ctx) {
     if (m.status !== 'active') return;
+    S.noteGrowEnv(g, m, ctx);
     // 被拒的论文要按审稿意见改完才能再投：改稿会占掉一部分精力，堆得越多，手上的新课题做得越慢
     const revs = S.revisionsOf(g, m);
     let p = m.projectId ? G.project(g, m.projectId) : null;
@@ -556,7 +623,6 @@
         hs.forEach(x => { p.contrib[x.id] = (p.contrib[x.id] || 0) + extra / hs.length; });
       }
     }
-    S.grow(g, m, ph, effort(m, ph, w));
     if (p.prog >= p.need[ph]) S.completePhase(g, p);
   };
 
@@ -575,7 +641,6 @@
     const w = S.workRate(g, m, 'revise', ctx) * share * (p.rush > 0 ? 1.4 : 1);
     p.revProg = (p.revProg || 0) + w;
     if (p.contrib) p.contrib[m.id] = (p.contrib[m.id] || 0) + w;
-    S.grow(g, m, 'revise', effort(m, 'revise', w));
     if (p.revProg >= p.revNeed) S.finishRevision(g, p, 1);
   };
   // 被拒（或撤稿）之后先按审稿意见改，工作量是写作量的三到四成半；投太多次的直接挂 arXiv
@@ -694,16 +759,13 @@
       p.sc.nov = 0.72 * avg('idea') + 0.28 * pi.research + exp * 0.5 + S.groupSynergy(g, p) + (p.bold ? 10 : 0) + (lead ? (S.st(lead, 'math') - 50) * 0.08 : 0) + U.normal(0, 5);
       p.phase = 'exp';
       if (p.bold) p.need.exp = Math.round(p.need.exp * 1.4);
-      if (lead) S.bumpStat(lead, 'idea', 0.8 * lead.pot);
     } else if (ph === 'exp') {
       const cf = p.cf.n ? p.cf.sum / p.cf.n : 1;
       p.sc.sol = 0.78 * avg('exp') + 0.22 * pi.research + (Math.min(cf, 1.15) - 0.85) * 18 + exp * 0.3 + (lead ? (S.st(lead, 'math') - 50) * 0.1 : 0) + U.normal(0, 5);
       p.phase = 'write';
-      if (lead) S.bumpStat(lead, 'code', 0.8 * lead.pot);
     } else if (ph === 'write') {
       p.sc.cla = 0.62 * avg('write') + 0.38 * pi.writing + (lead ? tAdd(lead, 'cla') : 0) + (p.rush > 0 ? -3 : 0) + U.normal(0, 4);
       p.q = S.calcQuality(g, p);
-      if (lead) S.bumpStat(lead, 'write', 0.8 * lead.pot);
       p.phase = 'ready';
       p.readyDay = g.day;
       [p.lead].concat(p.helpers).forEach(id => {

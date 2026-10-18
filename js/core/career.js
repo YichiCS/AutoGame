@@ -11,7 +11,7 @@
     const mt = F && F.mentee;
     const fromPool = RS.SCHOOLS[g.region][1].filter(s => s !== g.school);
     const phd = mt
-      ? S.createMember(g, 'phd', { name: mt.name, avatar: mt.avatar, stats: mt.stats, traits: mt.traits, pot: mt.pot, startDay: g.day - (mt.role === 'phd' ? 360 : 0), trust: 78, school: F.school })
+      ? S.createMember(g, 'phd', { name: mt.name, avatar: mt.avatar, stats: mt.stats, traits: mt.traits, potential: mt.potential, pot: mt.pot, startDay: g.day - (mt.role === 'phd' ? 360 : 0), trust: 78, school: F.school })
       : S.createMember(g, 'phd', { q: 52 + G.tierCfg(g).cand * 0.5, startDay: g.day - 360, trust: 70, school: U.pick(fromPool) });
     if (mt && mt.bio) phd.bio = Object.assign({}, mt.bio);
     S.addMember(g, phd, true);
@@ -117,7 +117,6 @@
     d += ctx.fac.mood + Math.min(0.02, ctx.teamMood) + (G.perk(g).moodBonus || 0);
     d += S.tAdd(m, 'mood');
     if (m.traits.includes('gamer') && g.facilities.console) d += 0.02;
-    if (g.facilities.pingpong) S.bumpStat(m, 'team', 0.002); // 打着球就熟了
     if (m.funding === 'ta') d -= 0.015;
     if (g.funds < 0) d -= 0.04;
     if (g.pi.energy < 20) d -= 0.03;
@@ -129,12 +128,10 @@
     // 做自己感兴趣的方向更开心；当组长有压力，但也更快成长
     const cur = m.projectId ? G.project(g, m.projectId) : null;
     if (cur) d += 0.01 * S.interestFit(m, cur.sub);
-    if (S.leadsGroup(g, m)) { d -= 0.004; S.bumpStat(m, 'idea', 0.004); }
+    if (S.leadsGroup(g, m)) d -= 0.004;
     if (m.isPlayer && g.phd) d += S.PACE[g.phd.pace].mood;
     if (d < 0) d *= 1.3 - S.st(m, 'grit') / 166;
     S.addMood(m, d + U.normal(0, 0.15));
-    // 在小组里天天讨论，协作能力慢慢提高
-    if ((m.groups || []).length) S.bumpStat(m, 'team', 0.002);
     if (pol.intensity === 'crunch') S.addTrust(m, -0.01);
     else if (pol.intensity === 'chill') S.addTrust(m, 0.004);
     if (pol.focus === 'mentor' && g.pi.energy >= 25) S.addTrust(m, 0.003);
@@ -351,7 +348,6 @@
   };
 
   // ---------- 招生 ----------
-  const ROLE_Q = { phd: 0, ms: -8, ug: -23, postdoc: 12, visit: -4 };
   function noisyRange(v) {
     return { lo: U.clamp(Math.round(v - U.int(4, 12)), 1, 99), hi: U.clamp(Math.round(v + U.int(4, 12)), 1, 99) };
   }
@@ -366,10 +362,8 @@
     const own = !!opts.own || ((role === 'phd' || role === 'ms') && U.chance(0.15));
     const pool = RS.SCHOOLS[g.region][st].filter(s => s !== g.school);
     const school = own ? g.school : U.pick(pool.length ? pool : RS.SCHOOLS[g.region][st]);
-    const stats = S.genStats(q + ROLE_Q[role]);
     const traits = RS.randomTraits(q);
-    if (traits.includes('mathy')) stats.idea = U.clamp(stats.idea + 6, 8, 95);
-    S.fillStats(stats, q + ROLE_Q[role], traits);
+    const stats = S.genStats(role, q, traits);
     const est = {};
     S.STATS.forEach(s => { est[s.k] = noisyRange(stats[s.k]); });
     const fellow = g.region === 'us' && role === 'phd' && q > 66 && U.chance(0.35);
@@ -381,7 +375,7 @@
     return {
       cid: G.nid(g, 'c'), name: RS.randomName(g.region), role, avatar: RS.randomAvatar(),
       school, own, q, stats, traits, bio,
-      pot: U.clamp(U.normal(1 + (q - 50) / 200, 0.15), 0.65, 1.45), fellow,
+      potential: S.genPot(role, q), fellow,
       pubs: q > 70 ? U.int(1, 3) : q > 58 ? U.int(0, 2) : U.chance(0.2) ? 1 : 0, accept,
       est,
       shown: traits.filter(() => U.chance(0.5)), interviewed: false,
@@ -433,7 +427,7 @@
   };
 
   S.memberFromCandidate = function (g, c, startDay) {
-    const m = S.createMember(g, c.role, { name: c.name, avatar: c.avatar, stats: c.stats, traits: c.traits, pot: c.pot, school: c.school, startDay, trust: c.own ? 62 : undefined });
+    const m = S.createMember(g, c.role, { name: c.name, avatar: c.avatar, stats: c.stats, traits: c.traits, potential: c.potential, pot: c.pot, school: c.school, startDay, trust: c.own ? 62 : undefined });
     if (c.bio) m.bio = c.bio;
     if (c.fellow) { m.funding = 'fellow'; m.fellowUntil = startDay + 3 * 360; }
     if (c.from) S.story(g, m, c.from);
@@ -583,11 +577,11 @@
         const ready = (yrs >= 3.8 && ((m.firstA || 0) >= 2 || (m.first || 0) >= 4)) || yrs >= 5.6;
         if (ready) G.queue(g, { type: 'event', id: 'phd_grad', ctx: { mid: m.id } });
       } else if (m.role === 'ms' && yrs >= 1.7) {
-        const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
+        const avg = S.researchLevel(m);
         if (avg >= S.LEVEL_PHD && m.pubs >= 1 && G.region(g).recruit.length) G.queue(g, { type: 'event', id: 'ms_to_phd', ctx: { mid: m.id } });
         else S.graduate(g, m);
       } else if (m.role === 'ug' && g.day >= m.endDay - 40) {
-        const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
+        const avg = S.researchLevel(m);
         if (avg >= S.LEVEL_MS) G.queue(g, { type: 'event', id: 'ug_to_phd', ctx: { mid: m.id } });
         else S.graduate(g, m);
       }

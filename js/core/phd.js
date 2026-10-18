@@ -116,11 +116,12 @@
     }
     // 你
     const ug = RS.UG_BG.find(b => b.id === g.phd.ugbg) || RS.UG_BG[RS.UG_BG.length - 1];
-    const stats = S.genStats(54 + T.cand * 0.5);
-    for (const k in ug.stats || {}) stats[k] = U.clamp(Math.round(stats[k] + ug.stats[k]), 15, 95);
+    // 本科背景的加减按显示分数算；潜力加成直接加在 0~10 的潜力上
+    const stats = S.genStats('phd', 49 + T.cand * 0.6, null, ug.stats);
     const me = S.createMember(g, 'phd', { name: g.phd.name, avatar: g.phd.avatar, stats, startDay: g.day, trust: 60 });
     me.isPlayer = true;
-    me.pot = U.clamp(me.pot + (ug.pot || 0), 0.85, 1.5);
+    // 你是主角：潜力比一般的博士生高一些，再加上本科背景的加成
+    me.potential = Math.round(U.clamp(U.normal(7, 0.8) + (ug.pot || 0), 5, 9.5) * 10) / 10;
     me.bio.goal = 'academia';
     me.bio.interest = core.sub;
     me.funding = 'ra';
@@ -317,7 +318,7 @@
     const kv = (k, v) => `<div class="kvline"><span>${k}</span><b>${v}</b></div>`;
     G.queue(g, {
       type: 'notice', player: true, tone: 'info', icon: 'calendar', title: `${G.calYear(g)} 年 · 读博第 ${yr} 年`,
-      text: `<div class="summary"><div class="grow">${kv('今年发表', `${thisYear.length} 篇（一作 ${firsts.length}）`)}${kv('累计论文', `${m.pubs} 篇（一作 ${m.first || 0}，一作 A 类 ${m.firstA || 0}）`)}${kv('论文总引用', U.fmtInt(cites))}${kv('人脉', Math.round(g.phd.network))}${kv('导师信任', Math.round(m.trust))}</div></div><p class="center">${comment}</p>`,
+      text: `<div class="summary"><div class="grow">${kv('今年发表', `${thisYear.length} 篇（一作 ${firsts.length}）`)}${kv('累计论文', `${m.pubs} 篇（一作 ${m.first || 0}，一作 A 类 ${m.firstA || 0}）`)}${kv('论文总引用', U.fmtInt(cites))}${kv('人脉', Math.round(g.phd.network))}${kv('导师信任', Math.round(m.trust))}${m.lastGrow && m.lastGrow.y === G.calYear(g) ? kv('能力成长', `总评 ${m.lastGrow.ovr[0]} → ${m.lastGrow.ovr[1]}（这一年的状态 t = ${m.lastGrow.t}，潜力 ${m.potential.toFixed(1)}）`) : ''}</div></div><p class="center">${comment}</p>`,
     });
   };
 
@@ -592,7 +593,7 @@
     const follow = mentee && (P.bond[mentee.id] || 0) >= 2 && P.extraYears === 0;
     pg.flags.fromPhd = {
       school: g.school, advisor: g.pi.name, path: P.path, pathPlace: P.pathPlace,
-      mentee: follow ? { name: mentee.name, avatar: mentee.avatar, stats: Object.assign({}, mentee.stats), traits: mentee.traits.slice(), pot: mentee.pot, role: mentee.role, bio: mentee.bio } : null,
+      mentee: follow ? { name: mentee.name, avatar: mentee.avatar, stats: Object.assign({}, mentee.stats), traits: mentee.traits.slice(), potential: mentee.potential, role: mentee.role, bio: mentee.bio } : null,
     };
     // 大事记：读博期间的经历都带过来
     pg.timeline = g.timeline.slice();

@@ -166,7 +166,7 @@
     { id: 'aquarium', name: '鱼缸', cost: 1500, maint: 30, desc: '心情 +，看鱼放松', mood: 0.004 },
     { id: 'beanbags', name: '懒人沙发', cost: 900, maint: 0, desc: '心情 +，午休更舒服', mood: 0.004 },
     { id: 'fridge', name: '冰箱和饮水机', cost: 1200, maint: 40, desc: '心情 +，加班也有吃的', mood: 0.004 },
-    { id: 'pingpong', name: '乒乓球桌', cost: 2500, maint: 0, desc: '心情 ++，大家打着球就熟了（协作慢慢提高）', mood: 0.006 },
+    { id: 'pingpong', name: '乒乓球桌', cost: 2500, maint: 0, desc: '心情 ++，大家打着球就熟了', mood: 0.006 },
     { id: 'treadmill', name: '跑步机', cost: 3000, maint: 10, desc: '你的精力恢复 +0.05/天，心情 +', energy: 0.05, mood: 0.002 },
   ];
   RS.ROOMS = [

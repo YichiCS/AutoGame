@@ -31,9 +31,9 @@
   RS.UG_BG = [
     { id: 'elite', name: '名校本科', desc: '想法 +5、写作 +3', stats: { idea: 5, write: 3 } },
     { id: 'contest', name: '竞赛选手', desc: '编程 +10，但写作 -3', stats: { code: 10, write: -3 } },
-    { id: 'cross', name: '跨专业转来', desc: '想法 +8、编程 -5，成长潜力更高', stats: { idea: 8, code: -5 }, pot: 0.12 },
+    { id: 'cross', name: '跨专业转来', desc: '想法 +8、编程 -5，潜力 +1', stats: { idea: 8, code: -5 }, pot: 1 },
     { id: 'intern', name: '实习过的', desc: '编程 +5，人脉 +8', stats: { code: 5 }, network: 8 },
-    { id: 'blank', name: '科研小白', desc: '各项一般，但成长潜力最高', stats: {}, pot: 0.2 },
+    { id: 'blank', name: '科研小白', desc: '各项一般，但潜力最高（+1.6）', stats: {}, pot: 1.6 },
   ];
 
   // ---------- 小工具 ----------

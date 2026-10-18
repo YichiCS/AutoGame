@@ -140,7 +140,7 @@
   function statGrid(st) {
     return `<div class="statgrid">${S.STATS.map(s => `<span class="st" data-tip="${esc(s.n)}：${esc(s.tip)}"><label>${s.n}</label>${smini(st[s.k], s.soft ? 'soft' : '')}</span>`).join('')}</div>`;
   }
-  const OVR_TIP = '总评：研究能力为主（想法 24%、编程 22%、写作 20%、数理 12%），软实力为辅（协作 8%、表达 7%、抗压 7%）。S ≥ 85 · A ≥ 75 · B ≥ 65 · C ≥ 55。博士生招生的一般水平约 72，硕士生约 60';
+  const OVR_TIP = '总评：研究能力为主（想法 24%、编程 22%、写作 20%、数理 12%），软实力为辅（协作 8%、表达 7%、抗压 7%）。S ≥ 85 · A ≥ 75 · B ≥ 65 · C ≥ 55。各项能力在 0~100 上大致呈正态分布：博士生候选人一般 61~78，硕士生 52~69，进组的本科生 40~60；每年年底按潜力成长一次';
   function ovrTag(st) {
     const v = S.dispOvr(st), gr = S.ovrGrade(v);
     return `<span class="ovr g${gr}" data-tip="${OVR_TIP}">总评 <b>${v}</b> ${gr}</span>`;
@@ -451,6 +451,13 @@
       <div class="kvline" data-tip="做自己最想做的子方向：心情更好、效率 +5%；同一个方向下的其他子方向也有一半的效果。做完一个课题后，兴趣有时会转向刚做的子方向。"><span>感兴趣的方向</span><b>${esc(dirName(bio.interest))}</b></div>
       <div class="kvline"><span>爱好</span><b>${esc((bio.hobbies || []).join('、') || '—')}</b></div>
       <div class="kvline"><span>口头禅</span><b>“${esc(bio.motto || '……')}”</b></div>
+      <div class="kvline" data-tip="${esc(POT_TIP)}"><span>潜力</span><b class="gold">${potText(m.potential)}</b></div>
+      ${(() => {
+        const L = m.lastGrow;
+        if (!L) return '<div class="kvline" data-tip="每年年底成长一次：先抽出这一年的状态 t，再给每项能力各加 0~t 之间的成长值"><span>年度成长</span><b class="dim">年底才会成长</b></div>';
+        const tip = `${L.y} 年：状态 t = ${L.t}（潜力 ${m.potential.toFixed(1)} × 带教环境 ${L.env}）${L.frac < 0.95 ? `\n入组不满一年，按 ${Math.round(L.frac * 100)}% 折算` : ''}\n${S.STATS.map(s => `${s.n} +${L.gain[s.k] || 0}`).join('、')}`;
+        return `<div class="kvline" data-tip="${esc(tip)}"><span>${L.y} 年的成长</span><b>t = ${L.t} · 总评 ${L.ovr[0]} → ${L.ovr[1]}${L.ovr[1] > L.ovr[0] ? ` <b class="good">+${L.ovr[1] - L.ovr[0]}</b>` : ''}</b></div>`;
+      })()}
       <div class="kvline" data-tip="入组时的能力 → 现在"><span>成长</span><b class="growline">${(() => { const b0 = S.dispOvr(Object.assign({}, m.stats, base)), b1 = S.dispOvr(m.stats); return `<span>总评 ${b0}→${b1}${b1 > b0 ? ` <b class="good">+${b1 - b0}</b>` : ''}</span>`; })()}${S.STATS.map(s => grow(s.k, s.n)).join('')}</b></div>
       <div class="sub">成长轨迹</div>
       ${(m.story || []).slice().reverse().map(s => `<div class="story"><span class="dim">${G.monthStr(s.d)}</span>${esc(s.t)}</div>`).join('') || '<div class="dim small">还没有什么故事。</div>'}
@@ -1334,7 +1341,7 @@
       <div class="row"><b class="name">${esc(m.name)}</b>${ovrTag(m.stats)}${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}${bio.goal && m.role !== 'jpi' ? tag('想' + RS.GOALS[bio.goal].replace('还没想好', '再看看'), 't-mid', '职业理想') : ''}${m.desk < 0 ? tag('没有工位', 't-warn') : ''}</div>
       ${m.traits && m.traits.length ? `<div class="row traits">${traitTags(m)}</div>` : ''}
       ${statGrid(m.stats)}
-      <div class="row small"><span>心情 <b class="${moodCls(m.mood)}">${Math.round(m.mood)}</b></span><span>信任 <b class="${trust < 35 ? 'bad' : trust < 60 ? 'warn' : 'good'}">${trust}</b></span><span>论文 ${m.pubs}（一作 ${m.first || 0} · A 类 ${m.pubsA}）</span>${m.status !== 'active' ? `<span class="warn">${esc(m.awayWhy || '不在组里')}</span>` : ''}</div>
+      <div class="row small"><span>心情 <b class="${moodCls(m.mood)}">${Math.round(m.mood)}</b></span><span>信任 <b class="${trust < 35 ? 'bad' : trust < 60 ? 'warn' : 'good'}">${trust}</b></span>${m.potential != null ? `<span data-tip="${esc(POT_TIP)}">潜力 <b class="gold">${m.potential.toFixed(1)}</b></span>` : ''}<span>论文 ${m.pubs}（一作 ${m.first || 0} · A 类 ${m.pubsA}）</span>${m.status !== 'active' ? `<span class="warn">${esc(m.awayWhy || '不在组里')}</span>` : ''}</div>
       <div class="row small">${groups}<span class="dim">想做「${esc(topicName(bio.interest))}」${sup ? ` · 由 ${esc(sup.name)} 带` : ''}</span></div>
       ${outlook}
     </div>`;
@@ -1393,9 +1400,13 @@
     };
     return `<div class="statgrid wide">${S.STATS.map(row).join('')}</div>`;
   }
-  function potStars(p) {
-    const n = p >= 1.25 ? 3 : p >= 1.05 ? 2 : 1;
-    return '★'.repeat(n) + '☆'.repeat(3 - n);
+  // 潜力（0~10）：每年成长时那个「状态」t 的均值；旧存档里还在排队的候选人是旧刻度（成长倍数）
+  const potOf = c => (c.potential != null ? c.potential : c.pot != null ? S.potFromOld(c.pot) : null);
+  const POT_TIP = '潜力（0~10）：每年年底，学生先抽出这一年的状态 t（均值就是潜力，最高 10），再给每项能力各加 0~t 之间的成长值（平均 t/2）。年轻的本科生学得快，博士后、青年教师已经比较定型；带教环境（你的精力、组会、组长、青年教师、心情、工位）会让 t 偏高或偏低一些';
+  function potText(p) {
+    if (p == null) return '—';
+    const n = U.clamp(Math.round(p / 2), 0, 5);
+    return `${p.toFixed(1)} <span class="stars">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`;
   }
   function candCard(c, mode, selected) {
     const exact = mode !== 'recruit' || c.interviewed;
@@ -1404,7 +1415,7 @@
     return `<div class="ccard ${selected ? 'sel' : ''}" data-key="${c.cid}">
       <div class="row"><img class="portrait" src="${SP.portraitURL(c.avatar, c.role, 3)}" alt=""><div class="grow"><b>${esc(c.name)}</b> ${exact ? ovrTag(c.stats) : (() => { const e = c.est || {}; if (!e.math) return ''; const lo = {}, hi = {}; S.STATS.forEach(s => { lo[s.k] = e[s.k].lo; hi[s.k] = e[s.k].hi; }); return `<span class="ovr" data-tip="${OVR_TIP}">总评 约 ${S.dispOvr(lo)}~${S.dispOvr(hi)}</span>`; })()}<div class="row">${tag(S.ROLE_NAMES[c.role], 'role-' + c.role)}${c.own ? tag('本校', 'gold', `来自你所在的 ${g.school}`) : ''}${c.fellow ? tag('自带奖学金', 'gold', '前三年不用你发工资') : ''}</div><div class="small dim">${esc(c.school)}${c.bio ? ' · ' + esc(c.bio.major) : ''}${c.pubs ? ` · 已有 ${c.pubs} 篇论文` : ''}</div></div></div>
       ${candStats(c, exact)}
-      <div class="row small"><span>潜力 <b class="gold">${exact ? potStars(c.pot) : '？？？'}</b></span>${c.bio ? `<span>职业理想 <b>${exact ? esc(RS.GOALS[c.bio.goal]) : '？'}</b></span>` : ''}</div>
+      <div class="row small"><span data-tip="${esc(POT_TIP)}">潜力 <b class="gold">${exact ? potText(potOf(c)) : '？？？'}</b></span>${c.bio ? `<span>职业理想 <b>${exact ? esc(RS.GOALS[c.bio.goal]) : '？'}</b></span>` : ''}</div>
       ${c.bio && c.bio.interest ? `<div class="row small" data-tip="研究计划里写的方向。分到对应的小组、做这个子方向时更开心、效率更高"><span>想做 <b>${esc(dirName(c.bio.interest))}</b></span>${S.groupOfSub(g, c.bio.interest) ? groupTag(S.groupOfSub(g, c.bio.interest)) : '<span class="dim">（还没有这个子方向的小组）</span>'}</div>` : ''}
       ${c.bio && exact ? `<div class="small dim">爱好：${esc(c.bio.hobbies.join('、'))} · “${esc(c.bio.motto)}”</div>` : ''}
       <div class="row traits">${traitTags(c, traits)}${hidden ? tag('？', 't-mid', '面试后才能看到全部特质') : ''}</div>
@@ -1430,7 +1441,7 @@
       for (const s of S.STATS) { const v = st(s.k); if (v == null) return null; o[s.k] = v; }
       return S.overall(o);
     }
-    if (k === 'pot') return exact ? c.pot : null;
+    if (k === 'pot') return exact ? potOf(c) : null;
     if (k === 'accept') return c.accept;
     return st(k);
   }
@@ -1696,6 +1707,8 @@
         ${kv('年末经费', money(d.funds))}${kv('声望 / h-index', `${Math.floor(d.rep)} / ${d.h}`)}
       </div></div>
       ${d.ledger ? `<div class="small dim center">主要花销：${Object.keys(d.ledger.out).sort((a, b) => d.ledger.out[b] - d.ledger.out[a]).slice(0, 3).map(k => `${esc(G.ledgerName(g, 'out', k))} ${money(d.ledger.out[k])}`).join('、') || '—'}</div>` : ''}
+      ${d.growth && d.growth.length ? `<div class="growlist"><div class="small gold" data-tip="${esc(POT_TIP)}">这一年的成长（全组 ${d.growth.length} 人，总评平均 +${(U.avg(d.growth, x => x.d1 - x.d0)).toFixed(1)}）</div>
+        ${d.growth.slice(0, 5).map(x => `<div class="kvline small"><span class="grow">${esc(x.name)} <span class="dim">${esc(S.ROLE_NAMES[x.role] || '')}</span></span><span class="dim">t = ${x.t}</span><b>${x.d0} → ${x.d1}${x.d1 > x.d0 ? ` <span class="good">+${x.d1 - x.d0}</span>` : ''}</b></div>`).join('')}</div>` : ''}
       <p class="center">${comment}</p>
       <div class="choices"><button class="choice def" data-act="ok"><b>新的一年，继续加油</b></button></div>`, 'tone-info');
   }

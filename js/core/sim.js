@@ -47,7 +47,7 @@
     S.checkGrantCalls(g);
     if (doy === G.dayOf(R.gradDate[0], R.gradDate[1])) S.graduationSeason(g);
     if (doy === G.dayOf(R.evalDate[0], R.evalDate[1])) S.annualCheck(g);
-    if (doy === 359) S.yearEnd(g);
+    if (doy === 359) { S.yearlyGrowth(g); S.yearEnd(g); }
   };
 
   Sim.runSchedule = function (g) {
@@ -280,11 +280,13 @@
         return;
       }
       case 'recruit': {
+        // 空位：现在空着的工位；博士生读五六年，还要算上一年内要毕业离开的人（新生入学时他们差不多也走了）
+        const leaving = g.members.filter(m => !m.isPlayer && ((m.endDay && m.endDay - g.day < 330) || (m.role === 'phd' && S.memberYears(g, m) >= 4.3))).length;
         const free = Math.max(1, G.desks(g) - g.members.length + 1);
         const left = Object.assign({}, item.quota);
         item.offers = [];
         item.cands.slice().sort((a, b) => b.q * b.accept - a.q * a.accept).forEach(c => {
-          if (item.offers.length >= free || left[c.role] <= 0) return;
+          if (item.offers.length >= free + (c.role === 'phd' ? leaving : 0) || left[c.role] <= 0) return;
           left[c.role]--;
           item.offers.push(c.cid);
         });

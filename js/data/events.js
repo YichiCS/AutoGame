@@ -183,7 +183,7 @@
         const m = M(g, c.mid);
         if (!m) return null;
         const R = G().region(g);
-        const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
+        const avg = S().researchLevel(m);
         const lv = avg >= S().LEVEL_PHD ? '已经达到博士生的招生水平' : '达到了硕士生的招生水平，还不到博士';
         return {
           title: '本科生想读研', portrait: { member: m.id },

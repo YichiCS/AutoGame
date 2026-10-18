@@ -424,6 +424,10 @@ select:focus { border-color: var(--sky); }
 .venue-sec { display: flex; align-items: center; gap: 6px; padding: 8px 4px 2px; color: var(--warn); border-bottom: 1px dashed #3d4677; }
 .venue-sec:first-child { padding-top: 0; }
 .summary { display: flex; gap: 16px; align-items: center; margin: 4px 0 8px; }
+/* 年度总结里「这一年的成长」；潜力的星星 */
+.growlist { margin: 6px 0 4px; padding: 4px 8px; background: var(--card); clip-path: var(--notch); }
+.growlist .kvline { gap: 10px; }
+.stars { color: var(--gold); letter-spacing: -1px; }
 .grade { width: 72px; height: 72px; display: flex; align-items: center; justify-content: center; font-size: 48px; line-height: 48px; clip-path: var(--notch); flex: 0 0 auto; }
 .grade.gS { background: #b0781e; color: #fff4d6; }
 .grade.gA { background: #2f8f55; }
