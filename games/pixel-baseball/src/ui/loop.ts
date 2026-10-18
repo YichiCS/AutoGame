@@ -1,9 +1,8 @@
-// 主循环：模拟用 setInterval（后台也能跑），观战时按事件逐个重演比赛
-import type { PendingMatch } from '../core/types';
-import type { PlayEvent, Snap } from '../sim/types';
+// 主循环：模拟用 setInterval（后台也能跑）。比赛日要亲自指挥的比赛会打开比赛画面，其他的直接出结果
 import { G, hasG, onLog } from '../core/state';
 import { tick, blocked, finishPending, catchUp } from '../core/sim';
 import { simulatePending, type SimResult } from '../core/matchday';
+import { MatchSession, shouldCommand } from './match/session';
 import { saveGame } from '../core/save';
 import { settings, saveSettings } from './settings';
 import { refresh, toast, ui } from './store';
@@ -13,22 +12,8 @@ export const SPEEDS = [1, 2, 4, 10];
 /** 1 倍速下，游戏里的一天 = 1.5 秒 */
 export const MS_PER_DAY = 1500;
 
-export interface Live {
-  res: SimResult;
-  i: number;
-  wait: number;
-  lines: { t: string; big: boolean; side: 0 | 1 }[];
-  snap: Snap | null;
-  /** 每局得分（[客队, 主队]）与安打数 */
-  line: [number[], number[]];
-  hits: [number, number];
-  /** 新事件的回调（画面用来播动画） */
-  onEvent: ((e: PlayEvent) => void) | null;
-}
-
 export const loop = {
   paused: false,
-  live: null as Live | null,
 };
 
 let acc = 0;
@@ -56,18 +41,6 @@ export function markDirty(): void {
   dirty = true;
 }
 
-/** 这场比赛要不要观战 */
-export function shouldWatch(pm: PendingMatch): boolean {
-  if (settings.watch === 'off') return false;
-  if (settings.watch === 'all') return true;
-  if (!pm.tour) return false;
-  const t = G.tours[pm.tour];
-  if (!t) return false;
-  if (pm.tour === 'koshien' || pm.tour === 'senbatsu' || pm.tour === 'jingu') return true;
-  if (pm.tour === 'summerPref') return pm.round >= t.rounds.length - 3;
-  return pm.round >= t.rounds.length - 2;
-}
-
 function announce(res: SimResult): void {
   const pm = res.pm;
   const mine = res.summary.score[res.mySide];
@@ -79,77 +52,21 @@ function announce(res: SimResult): void {
   }
 }
 
+/** 比赛日：要亲自指挥的打开比赛画面，其余直接出结果 */
 function startPending(): void {
   const pm = G.pending!;
-  const res = simulatePending(pm);
-  if (shouldWatch(pm) && !document.hidden) {
-    loop.live = { res, i: 0, wait: 600, lines: [], snap: null, line: [[], []], hits: [0, 0], onEvent: null };
-    sfx('siren');
-    refresh();
+  if (pm.live || shouldCommand(pm)) {
+    if (!ui.match) {
+      ui.match = new MatchSession(pm);
+      sfx('siren');
+      refresh();
+    }
     return;
   }
+  const res = simulatePending(pm);
   finishPending(res);
   announce(res);
   dirty = true;
-}
-
-/** 每个事件之后停多久（毫秒，1 倍速） */
-function eventDelay(e: PlayEvent): number {
-  switch (e.k) {
-    case 'pitch':
-      return e.pitch?.res === 'inplay' ? 300 : 850;
-    case 'play':
-      return e.big ? 2600 : 1900;
-    case 'half':
-      return 1500;
-    case 'end':
-      return 2500;
-    case 'steal':
-    case 'wp':
-    case 'pickoff':
-      return 1400;
-    default:
-      return 700;
-  }
-}
-
-function liveStep(dt: number): void {
-  const L = loop.live!;
-  if (loop.paused) return;
-  L.wait -= dt * speed();
-  let guard = 0;
-  while (L.wait <= 0 && guard++ < 20) {
-    const ev = L.res.events[L.i++];
-    if (!ev) {
-      finishLive();
-      return;
-    }
-    if (ev.snap) {
-      L.snap = ev.snap;
-      const inn = ev.snap.inning - 1;
-      if (L.line[ev.side][inn] === undefined) for (let k = L.line[ev.side].length; k <= inn; k++) L.line[ev.side][k] = 0;
-      if (ev.runs) L.line[ev.side][inn] += ev.runs;
-    }
-    if (ev.bip && ['1B', '2B', '3B', 'HR', 'IH'].includes(ev.bip.res)) L.hits[ev.side]++;
-    if (ev.k !== 'pitch' || ev.big) {
-      L.lines.push({ t: ev.text, big: !!ev.big, side: ev.side });
-      if (L.lines.length > 60) L.lines.shift();
-    }
-    L.onEvent?.(ev);
-    if (ev.k === 'play' && ev.bip?.res === 'HR') sfx('hr');
-    L.wait += eventDelay(ev);
-    dirty = true;
-  }
-}
-
-/** 跳过观战，直接出结果 */
-export function finishLive(): void {
-  const L = loop.live;
-  if (!L) return;
-  loop.live = null;
-  finishPending(L.res);
-  announce(L.res);
-  refresh();
 }
 
 function pump(): void {
@@ -162,8 +79,9 @@ function pump(): void {
     saveAcc = 0;
     saveGame();
   }
-  if (loop.live) liveStep(dt);
-  else if (G.pending && !G.queue.length) startPending();
+  if (ui.match) {
+    // 比赛进行中：时间停住
+  } else if (G.pending && !G.queue.length) startPending();
   else if (loop.paused || blocked()) acc = 0;
   else {
     acc += dt * speed();
@@ -189,12 +107,13 @@ function pump(): void {
 /** 读档后：离线进度 */
 export function resumeGame(): void {
   ui.screen = 'game';
-  loop.live = null;
+  ui.match = null;
   loop.paused = false;
   if (settings.offline && G.savedAt) {
     const days = Math.min(120, Math.floor((Date.now() - G.savedAt) / MS_PER_DAY));
     if (days >= 2) {
-      const n = catchUp(days);
+      // 要亲自指挥的比赛不会被离线进度打掉：补到那一天就停下
+      const n = catchUp(days, shouldCommand);
       if (n > 0) setTimeout(() => toast(`你不在的时候，球队又练习了 ${n} 天`, 'info', 5000), 600);
     }
   }

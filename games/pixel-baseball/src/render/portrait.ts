@@ -11,6 +11,14 @@ const SKIN = [
 ];
 const HAIR = ['#1a1c2c', '#1a1c2c', '#2b2118', '#3d2b1f', '#5a3a22', '#26203a'];
 
+/** 和头像一致的肤色、发色（比赛画面的人物用） */
+export function faceColors(face: number): { skin: string; hair: string } {
+  const R = localRng(face);
+  const ri = (n: number) => Math.floor(R() * n);
+  const [skin] = SKIN[ri(SKIN.length)];
+  return { skin, hair: HAIR[ri(HAIR.length)] };
+}
+
 const cache = new Map<string, string>();
 
 function shade(hex: string, f: number): string {

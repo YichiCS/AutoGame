@@ -228,7 +228,11 @@ export function dailyTeam(matchToday: boolean): void {
     const velBefore = p.a.velocity;
     const got = autoSpend(p, p.plan, 30);
     const pts = Object.values(got).reduce((a, b) => a + (b ?? 0), 0);
-    if (pts) p.gains = (p.gains ?? 0) + pts;
+    if (pts) {
+      p.gains = (p.gains ?? 0) + pts;
+      const gw = (p.gw ??= {});
+      for (const [k, v] of Object.entries(got)) gw[k as keyof typeof gw] = (gw[k as keyof typeof gw] ?? 0) + (v ?? 0);
+    }
     if (isPitcher(p)) trackVelocity(p, velBefore);
     // 学新球种
     if (p.learning) {
@@ -265,6 +269,9 @@ export function dailyTeam(matchToday: boolean): void {
 function weekly(players: Player[]): void {
   const c = G.club;
   for (const p of players) {
+    // 成长记录往前滚一周
+    p.gwp = p.gw ?? {};
+    p.gw = {};
     const sd = p.pers === 'calm' ? 0.6 : p.pers === 'hot' ? 1.15 : 0.9;
     p.cond = clamp(Math.round(p.cond * 0.45 + gauss(0, sd) + (p.morale - 60) / 45), -2, 2);
   }

@@ -75,15 +75,26 @@ export function Policies() {
           desc={{ merit: '谁强谁上', seniors: '三年级优先上场（他们会更有干劲）', youth: '练习赛多给低年级机会（比赛经验帮助成长）' }[pol.lineup]}
         />
         <Choice
-          label="观战"
-          value={settings.watch}
-          options={[['important', '重要比赛'], ['all', '全部比赛'], ['off', '不观战']]}
+          label="亲自指挥"
+          value={settings.command}
+          options={[['official', '正式比赛'], ['big', '重要比赛'], ['all', '全部比赛'], ['off', '都不指挥']]}
           onChange={(v) => {
-            settings.watch = v;
+            settings.command = v;
             saveSettings();
             refresh();
           }}
-          desc="观战时，比赛会在画面里一球一球地进行（可以随时跳过）。重要比赛：甲子园、神宫、选拔，以及县大会的八强以后。"
+          desc="亲自指挥的比赛会打开比赛画面，以打席为单位下指令（打者视角 / 投手视角）。不指挥的比赛按阵容和方针直接出结果。重要比赛：甲子园、神宫、选拔，以及县大会的八强以后。"
+        />
+        <Choice
+          label="打席自动化"
+          value={settings.matchAuto}
+          options={[['off', '全部亲自'], ['key', '关键时刻才问我'], ['bat', '只指挥进攻'], ['pitch', '只指挥防守'], ['all', '全交给教练']]}
+          onChange={(v) => {
+            settings.matchAuto = v;
+            saveSettings();
+            refresh();
+          }}
+          desc="亲自指挥时，哪些打席交给教练（教练按看得到的情报下指令）。比赛中也可以随时切换。"
         />
       </Panel>
       <Panel title="招生">

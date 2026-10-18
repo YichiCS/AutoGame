@@ -11,7 +11,7 @@ import { queue } from './queue';
 import { schoolBudget } from './economy';
 import './events';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export interface NewGameOpts {
   mgrName: string;
@@ -92,6 +92,8 @@ export function prepareWorld(o: NewGameOpts): { state: GameState; offers: School
     achievements: {},
     lastBlockDay: 0,
     senbatsuPick: [],
+    lineup: null,
+    nextStarter: null,
   };
   setG(state);
   clearWorldCache();

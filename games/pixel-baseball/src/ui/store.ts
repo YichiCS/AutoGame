@@ -1,7 +1,8 @@
 // 界面状态（不存档）与刷新机制
 import { useEffect, useState } from 'preact/hooks';
+import type { MatchSession } from './match/session';
 
-export type Tab = 'overview' | 'players' | 'games' | 'facilities' | 'policies' | 'records';
+export type Tab = 'overview' | 'players' | 'lineup' | 'games' | 'facilities' | 'policies' | 'records';
 
 export type Modal =
   | { kind: 'box'; gameId: number }
@@ -25,6 +26,8 @@ export const ui = {
   toasts: [] as Toast[],
   /** 事件弹窗暂时收起（可以先看看球员再决定） */
   queueMin: false,
+  /** 正在亲自指挥的比赛 */
+  match: null as MatchSession | null,
 };
 
 let version = 0;

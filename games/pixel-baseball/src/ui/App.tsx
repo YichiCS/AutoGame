@@ -17,11 +17,14 @@ import { Games } from './tabs/Games';
 import { Facilities } from './tabs/Facilities';
 import { Policies } from './tabs/Policies';
 import { Records } from './tabs/Records';
+import { Lineup } from './tabs/Lineup';
+import { MatchScreen } from './match/MatchScreen';
 import { Emblem } from './components/common';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'overview', label: '概览', icon: '◆' },
   { id: 'players', label: '球员', icon: '●' },
+  { id: 'lineup', label: '阵容', icon: '▦' },
   { id: 'games', label: '比赛', icon: '★' },
   { id: 'facilities', label: '设施', icon: '■' },
   { id: 'policies', label: '方针', icon: '▲' },
@@ -52,7 +55,7 @@ function Topbar() {
           </button>
         ))}
         {(waiting || loop.paused) && <span class="tb-wait">{waiting ? '等你决定' : '已暂停'}</span>}
-        {loop.live && <span class="tb-wait live">比赛中</span>}
+        {ui.match && <span class="tb-wait live">比赛中</span>}
       </span>
       <span class="tb-stats">
         <span title="部费">¥ {moneyStr(G.funds)}</span>
@@ -130,6 +133,8 @@ function TabBody() {
       return <Policies />;
     case 'records':
       return <Records />;
+    case 'lineup':
+      return <Lineup />;
     default:
       return <Overview />;
   }
@@ -139,7 +144,7 @@ function Game() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || ui.modal) return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || ui.modal || ui.match) return;
       if (e.code === 'Space') {
         e.preventDefault();
         togglePause();
@@ -179,6 +184,7 @@ function Game() {
           </div>
         </aside>
       </div>
+      {ui.match && <MatchScreen />}
       <EventModal />
       <UIModal />
       <Toasts />
