@@ -274,7 +274,7 @@
         return {
           title: c.forced ? '该毕业了' : '可以毕业了', portrait: { pi: true },
           text: c.forced
-            ? `你已经读了 ${yrs.toFixed(1)} 年，学校规定博士最多读六年。是时候带着你的成果去找工作了。`
+            ? `你已经读了 ${yrs.toFixed(1)} 年，学校规定博士最多读 ${S().PHD_MAX_YEARS} 年。是时候带着你的成果去找工作了。`
             : `${U.esc(g.pi.name)} 翻了翻你的成果：论文 ${m.pubs} 篇（一作 ${m.first || 0} 篇，其中 A 类 ${m.firstA || 0} 篇）。“我觉得你可以毕业了，今年就去找教职吧？”`,
           choices: ch,
         };

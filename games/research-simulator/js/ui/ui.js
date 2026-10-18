@@ -485,8 +485,8 @@
     const pickName = r => ((g.policies.pick || {})[r] === 'fill' ? '从高到低招满' : '由你挑');
     const btn = role => {
       const on = S.hireOn(g, role);
-      const when = role === 'ug' ? '和手动招募一样每 120 天一轮，自动发招募通知；工位满了就先暂停' : `每 120 天一轮，自动发招聘广告；工位满了、或者加上一份工资（月薪 ${money(G.region(g).costs.postdoc)}）后经费撑不到 18 个月，就先暂停`;
-      const tip = `打开后，到了能再招的时候${when}，条件恢复后自动接着招。名单出来以后${pickName(role)}（「方针 → 招人名单」可以改）`;
+      const when = role === 'ug' ? '和手动招募一样每 120 天一轮，自动发招募通知' : `每 120 天一轮，自动发招聘广告（月薪 ${money(G.region(g).costs.postdoc)}；经费偏紧时动态里提醒一句，照样接着招）`;
+      const tip = `打开后，到了能再招的时候${when}，不管工位够不够。名单出来以后${pickName(role)}（「方针 → 招人名单」可以改）`;
       return `<button class="autocat ${on ? 'on' : ''}" data-act="autoHire" data-arg="${role}" data-tip="${esc(tip)}"><span>持续招${S.HIRE_ROLES[role]}</span><b>${on ? '开' : '关'}</b></button>`;
     };
     const status = Object.keys(S.HIRE_ROLES).filter(r => S.hireOn(g, r)).map(r => `${S.HIRE_ROLES[r]}：${S.hireStatus(g, r)}，名单${pickName(r)}`).join('；');
@@ -1005,10 +1005,11 @@
     ] },
     { k: 'phd', name: '博士生 · 毕业答辩', when: '毕业季，达到毕业要求的博士生会来申请答辩', rec: '同意答辩', opts: [
       ['grad', '直接答辩', '达到毕业要求就同意答辩'],
-      ['delay1', '先延期一年', '每人先延期一次（再留一年，心情、信任会下降），下一次再同意答辩；读满 6.5 年、不能再拖的直接答辩'],
-      ['delay2', '先延期两年', '每人最多延期两次，之后同意答辩；读满 6.5 年、不能再拖的直接答辩'],
+      ['delay1', '先延期一年', `每人先延期一次（再留一年，心情、信任会下降），下一次再同意答辩；博士最多读 ${S.PHD_MAX_YEARS} 年，再延期就超过的直接答辩`],
+      ['delay2', '先延期两年', `每人最多延期两次，之后同意答辩；博士最多读 ${S.PHD_MAX_YEARS} 年，再延期就超过的直接答辩`],
     ] },
     { k: 'postdoc', name: '博士后 · 合同到期', when: '博士后合同（两年，续约一次加一年）到期时', rec: '祝前程似锦（不续约）', opts: [
+      ['always', '一直续约', '每次到期都续约一年，不限次数（和亲手点「续约一年」一样）'],
       ['renew1', '续约一次', '第一次到期续约一年，再到期就祝前程似锦'],
       ['renew2', '续约两次', '最多续约两次（多留两年），之后祝前程似锦'],
       ['leave', '到期放走', '合同到期就祝前程似锦，不续约'],
@@ -1028,14 +1029,14 @@
     </div>`;
   }
   const PICK_ROWS = [
-    { k: 'grad', cat: 'recruit', name: '研究生招生季（博士 / 硕士）', auto: '按能力和接受 offer 的可能性挑人发 offer', fill: '按总评从高到低发 offer（没面试的按估计范围的中间值），直到博士、硕士名额用满；人数不超过空工位（算上一年内要毕业离开的人），工资要让经费还能撑 18 个月' },
-    { k: 'ug', cat: 'people', name: '本科生', auto: '有空工位时收下最好的一位', fill: '按总评从高到低录用，直到这次的录用上限（一般 2 人）或空工位用满' },
-    { k: 'postdoc', cat: 'people', name: '博士后', auto: '有空工位、经费撑得住时收下最好的一位', fill: '按总评从高到低录用，直到录用上限（1 人）、空工位用满，或者加上工资后经费撑不到 18 个月' },
+    { k: 'grad', cat: 'recruit', name: '研究生招生季（博士 / 硕士）', auto: '按能力和接受 offer 的可能性挑人发 offer', fill: '按总评从高到低发 offer（没面试的按估计范围的中间值），直到博士、硕士名额用满；工资要让经费还能撑 18 个月' },
+    { k: 'ug', cat: 'people', name: '本科生', auto: '有空工位时收下最好的一位', fill: '按总评从高到低录用，直到这次的录用上限（一般 2 人）' },
+    { k: 'postdoc', cat: 'people', name: '博士后', auto: '有空工位、经费撑得住时收下最好的一位', fill: '按总评从高到低录用，直到录用上限（1 人），或者加上工资后经费撑不到 18 个月' },
   ];
   function pickCard() {
     const ask = ['ask', '我自己挑', '名单每次都弹出来由你挑，托管设成全部托管也照样问'];
     return `<div class="card"><h3>招人名单</h3>
-      <p class="hint">研究生招生季、本科生、博士后的候选人名单弹出来以后怎么办。「从高到低招满」按总评从高到低自动录取，直到名额、工位或经费用满，动态里记一条「[自动招满]」列出招了谁。</p>
+      <p class="hint">研究生招生季、本科生、博士后的候选人名单弹出来以后怎么办。「从高到低招满」按总评从高到低自动录取，直到名额或经费用满（不看工位，没工位的人照常凑合），动态里记一条「[自动招满]」列出招了谁。</p>
       ${PICK_ROWS.map(p => {
         const hire = S.HIRE_ROLES[p.k] ? `；「持续招${S.HIRE_ROLES[p.k]}」发起的名单一直由你来挑` : '';
         return ruleRow(Object.assign({ opts: [['fill', '从高到低招满', p.fill]] }, p), (g.policies.pick || {})[p.k] || 'follow', 'pickPolicy', FOLLOW_TIP(p.cat, p.auto + hire, '名单弹出来由你挑'), ask);
@@ -2210,7 +2211,6 @@
       case 'autoHire': {
         const h = (g.policies.hire = Object.assign({ ug: false, postdoc: false }, g.policies.hire));
         h[arg] = !h[arg];
-        if (g.flags.hirePause) delete g.flags.hirePause[arg];
         const name = `持续招${S.HIRE_ROLES[arg]}`;
         if (h[arg]) {
           S.autoHire(g);
