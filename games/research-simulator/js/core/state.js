@@ -60,7 +60,19 @@
     const m = G.member(g, id) || g.alumni.find(a => a.id === id);
     return m ? m.name : '前成员';
   };
-  G.desks = g => RS.ROOMS[g.room].desks;
+  // 实验室规模：前几级按 RS.ROOMS；最后一级（研究中心）之后可以一期一期一直扩建下去——
+  // 每期多 8 个工位，费用每期 ×1.4、声望要求每期 +250，还要施工：第一期 30 天，之后每期多 15 天，最长 180 天
+  G.ROOM_GROW = { desks: 8, cost: 1.4, rep: 250, days: 30, daysStep: 15, daysMax: 180 };
+  G.roomDef = i => {
+    const T = RS.ROOMS, top = T[T.length - 1];
+    if (i < T.length) return T[Math.max(0, i)];
+    const k = i - (T.length - 1), X = G.ROOM_GROW;
+    return {
+      name: `${top.name} ${k + 1} 期`, desks: top.desks + X.desks * k, rep: top.rep + X.rep * k,
+      cost: Math.round((top.cost * Math.pow(X.cost, k)) / 1000) * 1000, days: Math.min(X.daysMax, X.days + X.daysStep * (k - 1)),
+    };
+  };
+  G.desks = g => G.roomDef(g.room).desks;
   G.computeUnits = g => {
     let u = 0;
     for (const id in g.gpus) {
