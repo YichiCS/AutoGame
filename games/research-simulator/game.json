@@ -1,0 +1,22 @@
+{
+  "id": "research-simulator",
+  "name": "科研模拟器",
+  "subtitle": "Research Simulator",
+  "version": "0.1.0",
+  "description": "从计算机方向的博士生做起，读完博士找教职，再经营自己的实验室：申基金、招学生、发论文、熬过 Tenure，一路冲向院士和图灵奖。像素风挂机经营。",
+  "tags": ["挂机", "经营模拟", "科研"],
+  "entry": "index.html",
+  "cover": "docs/screenshot.png",
+  "color": "#41a6f6",
+  "source": "https://github.com/YichiCS/Research-Simulator",
+  "saves": {
+    "localStorage": ["research-sim-save-v1", "research-sim-settings-v1"],
+    "indexedDB": [],
+    "adapter": "save-adapter.js",
+    "inGameExport": {
+      "match": ["version", "region", "areaId", "labName", "pi"],
+      "hint": "游戏右上角齿轮「设置 → 导入存档」"
+    }
+  },
+  "dock": { "y": 0.5 }
+}

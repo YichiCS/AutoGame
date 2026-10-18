@@ -2,7 +2,9 @@
 
 一个像素风的桌面挂机小游戏：你从一名**计算机方向的博士生**开始，读完博士凭成果找教职，然后作为 PI 从一间空荡荡的实验室开始，申请基金、招学生、发论文、熬过 Tenure / “非升即走”，一路冲向 Fellow、院士，甚至图灵奖。
 
-### 👉 [点这里直接在浏览器里玩](https://yichics.github.io/Research-Simulator/)
+### 👉 [点这里直接在浏览器里玩](https://yichics.github.io/AutoGame/games/research-simulator/)
+
+> 本游戏收录在 [AutoGame 像素游戏厅](https://yichics.github.io/AutoGame/)（原仓库 [YichiCS/Research-Simulator](https://github.com/YichiCS/Research-Simulator)）。更新规则见仓库根目录的 `CONTRIBUTING.md`，版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ![游戏截图](docs/screenshot.png)
 
@@ -10,11 +12,11 @@
 
 **方式一：在线玩（零安装）**
 
-打开 **<https://yichics.github.io/Research-Simulator/>** 即可（推荐 Chrome / Edge）。存档自动保存在浏览器本地，下次打开接着玩。
+打开 **<https://yichics.github.io/AutoGame/games/research-simulator/>** 即可（推荐 Chrome / Edge），也可以从 [游戏厅首页](https://yichics.github.io/AutoGame/) 进入。存档自动保存在浏览器本地，下次打开接着玩；游戏厅的「存档中心」可以导出 / 导入存档（单独或和其他游戏一起）。
 
 **方式二：本地打开**
 
-下载仓库后双击 `index.html`。
+下载仓库后双击 `index.html`（本地打开时不显示返回游戏厅的悬浮标签）。
 
 **方式三：桌面版（Electron）**
 
@@ -73,13 +75,17 @@ npm start
 | 点击荣誉墙 | 查看 A 类论文 |
 | 顶栏「迷你」 | 只保留实验室画面 |
 | 设置 | 音效、离线进度、导出 / 导入存档 |
+| 屏幕左边缘的小标签 | 返回游戏厅、跳到存档管理（可上下拖动） |
 
 关掉游戏期间，实验室会按 1 倍速继续运转（最多 120 天，遇到需要决定的事会停下），可以在设置里关闭。
 
 ## 项目结构
 
 ```
-index.html            入口
+index.html            入口（末尾引入游戏厅的悬浮标签 ../../hub/dock.js）
+game.json             游戏厅清单：名字、版本、封面、存档位置
+save-adapter.js       给游戏厅用的存档适配器（显示存档详情、导入时不触发离线快进）
+CHANGELOG.md          更新日志
 css/style.css         像素风界面
 js/core/              游戏逻辑（与界面无关，可以在 Node 里跑）
   state.js            存档结构、日期换算

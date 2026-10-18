@@ -3,5 +3,5 @@
   "title": "AutoGame 像素游戏厅",
   "version": "1.0.0",
   "repository": "https://github.com/YichiCS/AutoGame",
-  "games": []
+  "games": ["research-simulator"]
 }
