@@ -1329,19 +1329,31 @@
   };
   S.setCloud = (g, n) => { g.cloud = U.clamp(n, 0, 30); };
   S.roomCost = (g, r) => Math.round(r.cost * G.region(g).ppp);
+  // 正在施工的扩建（研究中心之后的每一期都要施工一段时间，完工时排在 g.schedule 里）
+  S.building = g => g.schedule.find(s => s.kind === 'roomDone') || null;
   S.expandRoom = function (g) {
-    const r = RS.ROOMS[g.room + 1];
-    if (!r) return '已经是最大的实验室了';
+    if (S.building(g)) return '上一期扩建还在施工';
+    const r = G.roomDef(g.room + 1);
     if (g.rep < r.rep) return `需要声望 ≥ ${r.rep}`;
     const cost = S.roomCost(g, r);
     if (g.funds < cost) return '经费不足';
     S.spend(g, cost, 'build');
-    g.room++;
+    if (r.days) {
+      G.schedule(g, g.day + r.days, 'roomDone', { room: g.room + 1, cost });
+      G.log(g, `「${r.name}」开工了：${r.days} 天后完工，到时工位增加到 ${r.desks} 个`, 'info');
+      return null;
+    }
+    S.finishRoom(g, g.room + 1);
+    return null;
+  };
+  S.finishRoom = function (g, room) {
+    if (room <= g.room) return;
+    const r = G.roomDef(room);
+    g.room = room;
     S.assignDesks(g);
     G.log(g, `实验室扩建为「${r.name}」，工位增加到 ${r.desks} 个`, 'good');
     G.milestone(g, `实验室扩建为「${r.name}」`);
     RS.bus.emit('expand', {});
-    return null;
   };
 
   // ---------- 财务 ----------

@@ -29,10 +29,11 @@
     { wall: '#c7d3cf', line: '#bac7c3', trim: '#5f7470', base: '#4c5f5b', ceil: '#e8efed', floor: '#6d5a7e', floorL: '#7a6790', floorD: '#5c4b6b' },
     { wall: '#e2ddd3', line: '#d6d0c4', trim: '#7d7466', base: '#5e564a', ceil: '#f4f1ea', floor: '#d8d4cc', floorL: '#e6e3dc', floorD: '#bdb8ad' },
   ];
-  // 一层画得下 16 个工位；更大的实验室分成两层，画面左上角切换
+  // 一层画得下 16 个工位；更大的实验室分成几层（一楼有 PI 办公桌、沙发、荣誉墙，楼上是讨论区），画面左上角切换。
+  // 实验室可以一直扩建，楼层数没有上限：楼层不多时每层一个按钮，多了就用「◀ 3F/9 ▶」翻
   const FLOOR_N = 16;
   let floor = 0;
-  const floorPing = [0, 0];
+  let floorPing = {};
 
   let cv = null, ctx = null, g = null;
   let T = 0;
@@ -55,12 +56,13 @@
   }
   function deskSeat(d) {
     const p = deskPos(d);
-    return { kind: 'desk', d, fl: d >= FLOOR_N ? 1 : 0, x: p.x + 17, y: p.y + 36 };
+    return { kind: 'desk', d, fl: Math.floor(d / FLOOR_N), x: p.x + 17, y: p.y + 36 };
   }
-  const twoFloors = () => !!g && RS.G.desks(g) > FLOOR_N;
-  // 没有工位的人坐在地上：实验室分两层时都挤在二楼
+  const floorCount = () => (g ? Math.max(1, Math.ceil(RS.G.desks(g) / FLOOR_N)) : 1);
+  const multiFloor = () => floorCount() > 1;
+  // 没有工位的人坐在地上：实验室分几层时都挤在最上面一层
   function floorSeat(i) {
-    return { kind: 'floor', d: -1 - i, fl: twoFloors() ? 1 : 0, x: 84 + (i % 12) * 26, y: 236 };
+    return { kind: 'floor', d: -1 - i, fl: floorCount() - 1, x: 84 + (i % 12) * 26, y: 236 };
   }
   const flOf = a => (!a || a.isPI ? 0 : a.seat.fl || 0);
   const here = a => flOf(a) === floor;
@@ -175,8 +177,8 @@
     const f = g.facilities;
     const m = a.m;
     const p = m.projectId ? RS.G.project(g, m.projectId) : null;
-    // 沙发、零食柜、荣誉墙和猫都在一楼；二楼只有窗户、白板和咖啡机
-    const up = flOf(a) === 1;
+    // 沙发、零食柜、荣誉墙和猫都在一楼；楼上只有窗户、白板和咖啡机
+    const up = flOf(a) >= 1;
     const opts = [['window', 1]];
     if (f.coffee) opts.push(['coffee', 3]);
     if (p && p.phase === 'idea') opts.push(['whiteboard', 3]);
@@ -363,8 +365,9 @@
   function actorOf(id) {
     return id === 'pi' ? pi : actors.get(id);
   }
-  // 楼层切换按钮的位置：别的楼层发生的事，特效画在按钮旁边，按钮也会闪一会儿
-  const TAB_POS = f => ({ x: 4 + f * 17, y: 1 });
+  // 楼层切换按钮的位置：别的楼层发生的事，特效画在按钮旁边，按钮也会闪一会儿（翻页时画在中间的楼层标签旁边）
+  const TABS_MAX = 6;
+  const TAB_POS = f => (floorCount() <= TABS_MAX ? { x: 4 + f * 17, y: 1 } : { x: 20, y: 1 });
   function headPos(a) {
     if (!a) return { x: W / 2, y: 120 };
     if (!here(a)) {
@@ -447,11 +450,11 @@
     pi = null; cat = null;
     sofaUsed[0] = sofaUsed[1] = null;
     floor = 0;
-    floorPing[0] = floorPing[1] = 0;
+    floorPing = {};
     if (g) sync(true);
   };
   Scene.setFloor = function (f) {
-    if (!twoFloors()) f = 0;
+    f = U.clamp(Math.floor(f) || 0, 0, floorCount() - 1);
     if (f === floor) return;
     floor = f;
     parts = []; floats = [];
@@ -514,7 +517,7 @@
       R(x - 3, 17, 7, 1, L.night ? P.yellow : '#e8e0c0');
     });
     // 实验室门牌
-    const name = ((g.labName || 'LAB').toUpperCase().replace(/[^A-Z0-9 &+\-!.#]/g, '').slice(0, 18) || 'LAB') + (twoFloors() ? ` ${floor + 1}F` : '');
+    const name = ((g.labName || 'LAB').toUpperCase().replace(/[^A-Z0-9 &+\-!.#]/g, '').slice(0, 18) || 'LAB') + (multiFloor() ? ` ${floor + 1}F` : '');
     const tw = SP.textWidth(name);
     R(236 - tw / 2 - 4, 1, tw + 8, 8, P.dark);
     R(236 - tw / 2 - 3, 2, tw + 6, 6, P.navy);
@@ -1073,7 +1076,7 @@
   }
   function floorPattern(th) {
     R(0, WALL_B, W, H - WALL_B, th.floor);
-    if (g.room === 5) {
+    if (g.room >= 5) {
       // 研究中心：大块石材地砖
       for (let r = 0, y = WALL_B; y < H; r++, y += 24) {
         R(0, y, W, 1, th.floorD);
@@ -1130,9 +1133,9 @@
       R(0, 0, W, H, P.black);
       return;
     }
-    if (floor && !twoFloors()) floor = 0;
-    const up = floor === 1;
-    const th = THEMES[g.room] || THEMES[0];
+    if (floor >= floorCount()) floor = floorCount() - 1;
+    const up = floor >= 1;
+    const th = THEMES[Math.min(g.room, THEMES.length - 1)] || THEMES[0];
     const L = lighting();
     drawWall(th, L);
     drawWindow(76, 18, 44, 44, L);
@@ -1190,21 +1193,42 @@
     drawFloorTabs();
   };
 
-  // ---------- 两层楼 ----------
-  // 左上角的楼层按钮：另一层有人中稿、毕业时按钮会闪
+  // ---------- 多层楼 ----------
+  // 左上角的楼层按钮：别的楼层有人中稿、毕业时按钮会闪。楼层多了就只放「◀ 当前楼层 ▶」，哪边有事哪边的箭头亮红点
   function drawFloorTabs() {
-    if (!twoFloors()) return;
-    for (let f = 0; f < 2; f++) {
-      const p = TAB_POS(f), on = f === floor;
-      const ping = !on && floorPing[f] > T;
-      R(p.x, p.y, 15, 9, P.black);
-      R(p.x + 1, p.y + 1, 13, 7, on ? P.navy : P.dark);
-      SP.text(ctx, (f + 1) + 'F', p.x + 4, p.y + 2, on || (ping && Math.floor(T * 4) % 2) ? P.yellow : P.silver);
-      if (ping) R(p.x + 12, p.y + 1, 2, 2, P.red);
-      hits.push({ x: p.x - 1, y: 0, w: 17, h: 12, info: { kind: 'floor', f } });
+    const n = floorCount();
+    if (n <= 1) return;
+    const blink = Math.floor(T * 4) % 2;
+    if (n <= TABS_MAX) {
+      for (let f = 0; f < n; f++) {
+        const p = TAB_POS(f), on = f === floor;
+        const ping = !on && floorPing[f] > T;
+        R(p.x, p.y, 15, 9, P.black);
+        R(p.x + 1, p.y + 1, 13, 7, on ? P.navy : P.dark);
+        SP.text(ctx, (f + 1) + 'F', p.x + 4, p.y + 2, on || (ping && blink) ? P.yellow : P.silver);
+        if (ping) R(p.x + 12, p.y + 1, 2, 2, P.red);
+        hits.push({ x: p.x - 1, y: 0, w: 17, h: 12, info: { kind: 'floor', f } });
+      }
+      return;
     }
+    const pinged = side => Object.keys(floorPing).some(f => floorPing[f] > T && (side < 0 ? +f < floor : +f > floor));
+    const arrow = (x, dir) => {
+      const f = floor + dir, ok = f >= 0 && f < n, ping = pinged(dir);
+      R(x, 1, 13, 9, P.black);
+      R(x + 1, 2, 11, 7, ok ? P.dark : '#2a2d3e');
+      const c = !ok ? P.gray : ping && blink ? P.yellow : P.silver;
+      for (let i = 0; i < 3; i++) R(x + (dir < 0 ? 5 + i : 7 - i), 5 - i, 1, 1 + i * 2, c);
+      if (ping) R(x + 10, 2, 2, 2, P.red);
+      if (ok) hits.push({ x: x - 1, y: 0, w: 15, h: 12, info: { kind: 'floor', f } });
+    };
+    const label = `${floor + 1}F/${n}`, w = SP.textWidth(label) + 7;
+    arrow(4, -1);
+    R(19, 1, w, 9, P.black);
+    R(20, 2, w - 2, 7, P.navy);
+    SP.text(ctx, label, 23, 3, P.yellow);
+    arrow(19 + w + 2, 1);
   }
-  // 二楼：荣誉墙换成公告板，机柜换成书架，PI 办公桌的位置是讨论区
+  // 楼上：荣誉墙换成公告板，机柜换成书架，PI 办公桌的位置是讨论区
   function drawNoticeBoard() {
     const x0 = 310, y0 = 10;
     R(x0, y0, 94, 64, P.woodD);
@@ -1243,12 +1267,11 @@
     }
   }
   // ---------- 装饰 ----------
-  // 墙上的画和落地灯两层都有；鱼缸、懒人沙发、冰箱、乒乓球桌、跑步机放在二楼，只有一层的时候摆在一楼前排。
-  // 二楼本身也有饮水机、长椅和一棵大盆栽
+  // 墙上的画和落地灯每层都有；鱼缸、懒人沙发、冰箱、乒乓球桌、跑步机放在二楼，只有一层的时候摆在一楼前排。
+  // 楼上每层本身也有饮水机、长椅和一棵大盆栽
   function drawDecor(list, up) {
     const f = g.facilities;
-    const two = twoFloors();
-    const show = up || !two; // 二楼的东西：有二楼就放二楼，没有就放一楼
+    const show = multiFloor() ? floor === 1 : true; // 二楼的东西：有二楼就放二楼，没有就放一楼
     if (f.posters) list.push({ z: 60, fn: () => { poster(61, 22, 0); if (up) poster(248, 52, 1); } });
     if (f.lamps) {
       list.push({ z: 186, fn: () => lamp(66, 150) });

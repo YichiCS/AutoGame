@@ -1044,6 +1044,13 @@
     if (o.tenure && !g.pi.tenured) { g.pi.tenured = true; g.pi.tenureDay = g.day; g.evalDone.mid = true; g.evalDone.final = true; }
     if (o.title > g.pi.title) { g.pi.title = o.title; g.pi.promoDay = g.day; }
     S.earn(g, o.startup, 'startup');
+    // 原来学校还在施工的扩建停掉，退回一半费用（实验室规模照旧跟着你走）
+    const b = S.building(g);
+    if (b) {
+      g.schedule = g.schedule.filter(s => s !== b);
+      S.earn(g, Math.round(b.data.cost / 2), 'other');
+      G.log(g, `${old} 的扩建工程停了，退回一半费用 ${G.money(g, Math.round(b.data.cost / 2))}`, 'info');
+    }
     if (o.room > g.room) g.room = o.room;
     S.assignDesks(g);
     let ta = 0;
@@ -1059,7 +1066,7 @@
     G.log(g, `你离开了 ${old}，以${G.titleName(g)}的身份加入 ${g.school}${left}`, 'gold');
     G.milestone(g, `离开 ${old}，加入 ${g.school}（${G.titleName(g)}）`);
     G.queue(g, { type: 'notice', tone: 'gold', icon: 'home', fx: 'confetti', title: `你好，${g.school}！`,
-      text: `你正式加入了 <b>${U.esc(g.school)}</b>（${U.esc(G.tierCfg(g).name)}），职称：<b>${U.esc(G.titleName(g))}</b>${g.pi.tenured ? '' : '（考核按新学校的标准，时间照旧）'}。<br>启动经费 ${G.money(g, o.startup)} 已经到账，实验室是「${RS.ROOMS[g.room].name}」（${G.desks(g)} 个工位）。<br>${g.members.length ? `跟着你过来的有 ${g.members.length} 人` : '这次是一个人过来的'}${left}。搬家的这一个多月，大家的效率都会打折扣。` });
+      text: `你正式加入了 <b>${U.esc(g.school)}</b>（${U.esc(G.tierCfg(g).name)}），职称：<b>${U.esc(G.titleName(g))}</b>${g.pi.tenured ? '' : '（考核按新学校的标准，时间照旧）'}。<br>启动经费 ${G.money(g, o.startup)} 已经到账，实验室是「${G.roomDef(g.room).name}」（${G.desks(g)} 个工位）。<br>${g.members.length ? `跟着你过来的有 ${g.members.length} 人` : '这次是一个人过来的'}${left}。搬家的这一个多月，大家的效率都会打折扣。` });
   };
 
   // ---------- 青年教师（小导师） ----------

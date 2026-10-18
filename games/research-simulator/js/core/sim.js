@@ -63,6 +63,7 @@
         else if (it.kind === 'postdocPool') S.postdocPool(g, it.data);
         else if (it.kind === 'scandal') Sim.scandal(g, it.data);
         else if (it.kind === 'phdMarket') S.phdMarketResult(g);
+        else if (it.kind === 'roomDone') S.finishRoom(g, it.data.room);
       } catch (e) {
         console.error('schedule error', it, e);
       }
@@ -377,7 +378,7 @@
 
   // ---------- 招人名单：从高到低自动招满 ----------
   // 按总评从高到低（研究生招生季没面试的人只看得到范围，按范围的中间值）录用 / 发 offer，直到名额或经费用满：
-  // 本科生、博士后：这次最多录用几个人；研究生招生季：博士 / 硕士各自的名额。不看工位（没工位的人照常凑合）。
+  // 本科生、博士后：这次最多录用几个人；研究生招生季：博士 / 硕士各自的名额。不看工位（没工位的人照常凑合，实验室可以一直扩建）。
   // 要发工资的（博士后、博士生、国内的硕士生；自带奖学金的不算）还要看经费：加上这些人的工资，账上的钱至少还能撑 18 个月
   Sim.autoFill = function (g, item) {
     const recruit = item.type === 'recruit';

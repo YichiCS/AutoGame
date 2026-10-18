@@ -911,16 +911,18 @@
   function tabFacility() {
     const ctx = S.dayContext(g);
     const R = G.region(g);
-    const room = RS.ROOMS[g.room], next = RS.ROOMS[g.room + 1];
+    const room = G.roomDef(g.room), next = G.roomDef(g.room + 1), build = S.building(g);
     const owned = Object.keys(g.gpus).map(id => ({ s: G.gpuSpec(g, id), n: g.gpus[id] })).filter(x => x.s);
     const shop = S.gpuAvailable(g);
     const factor = S.avgSpeed(g, ctx.alloc);
     const pane = sub('facility');
+    const floors = Math.ceil(room.desks / 16);
     if (pane === 'space') return `
       <div class="card"><h3>${ico('home')} 实验室空间</h3>
-        <div class="kvline"><span>当前</span><b>${esc(room.name)}（${room.desks} 个工位，${g.members.length} 人${g.members.length > room.desks ? `，${g.members.filter(m => m.desk < 0).length} 人没工位` : ''}）</b></div>
-        <p class="small dim">有固定工位的人效率正常；没有工位的只能找地方凑合，效率 -15%（本科生、访问学生 -8%），心情也会慢慢变差。工位按资历自动分配，也可以在成员卡片上亲自安排。超过 16 个工位的实验室分成两层，画面左上角可以切换楼层。</p>
-        ${next ? `<button class="wide" data-act="expand" ${g.rep < next.rep || g.funds < S.roomCost(g, next) ? 'disabled' : ''}>扩建为「${esc(next.name)}」· ${next.desks} 工位 · ${money(S.roomCost(g, next))}${g.rep < next.rep ? `（需要声望 ${next.rep}）` : ''}</button>` : '<p class="dim small">已经是最大的实验室了。</p>'}
+        <div class="kvline"><span>当前</span><b>${esc(room.name)}（${room.desks} 个工位${floors > 1 ? `，${floors} 层` : ''}，${g.members.length} 人${g.members.length > room.desks ? `，${g.members.filter(m => m.desk < 0).length} 人没工位` : ''}）</b></div>
+        <p class="small dim">有固定工位的人效率正常；没有工位的只能找地方凑合，效率 -15%（本科生、访问学生 -8%），心情也会慢慢变差。谁先坐看「方针」里的工位分配顺序，也可以在成员卡片上亲自安排。每层放 16 个工位，更大的实验室分成几层，画面左上角可以切换楼层。「${esc(RS.ROOMS[RS.ROOMS.length - 1].name)}」之后还能一期一期扩建下去：每期多 ${G.ROOM_GROW.desks} 个工位，费用和声望要求越来越高，还要施工一段时间。</p>
+        ${build ? `<p class="small warn">「${esc(G.roomDef(build.data.room).name)}」正在施工，${G.daysText(build.day - g.day)}完工（${G.dateStr(build.day)}），到时工位增加到 ${G.roomDef(build.data.room).desks} 个。</p>`
+          : `<button class="wide" data-act="expand" ${g.rep < next.rep || g.funds < S.roomCost(g, next) ? 'disabled' : ''}>扩建为「${esc(next.name)}」· ${next.desks} 工位 · ${money(S.roomCost(g, next))}${next.days ? ` · 施工 ${next.days} 天` : ''}${g.rep < next.rep ? `（需要声望 ${next.rep}）` : ''}</button>`}
       </div>
       <div class="card"><h3>${ico('trophy')} 大型投资</h3>
         ${S.BIG.map(b => { const st = S.bigState(g, b); const done = (g.flags.big || {})[b.id]; return `<div class="shop-row"><div class="grow"><b>${esc(b.name)}</b>${b.once && done ? tag('已完成', 't-good') : ''}<div class="small dim">${esc(b.desc)}</div></div><button data-act="big" data-arg="${b.id}" ${st ? 'disabled' : ''} data-tip="${esc(st || '')}">${b.once && done ? '✓' : money(S.bigCost(g, b))}</button></div>`; }).join('')}
@@ -1036,7 +1038,7 @@
   function pickCard() {
     const ask = ['ask', '我自己挑', '名单每次都弹出来由你挑，托管设成全部托管也照样问'];
     return `<div class="card"><h3>招人名单</h3>
-      <p class="hint">研究生招生季、本科生、博士后的候选人名单弹出来以后怎么办。「从高到低招满」按总评从高到低自动录取，直到名额或经费用满（不看工位，没工位的人照常凑合），动态里记一条「[自动招满]」列出招了谁。</p>
+      <p class="hint">研究生招生季、本科生、博士后的候选人名单弹出来以后怎么办。「从高到低招满」按总评从高到低自动录取，直到名额或经费用满（不看工位，没工位的人照常凑合；实验室可以一直扩建），动态里记一条「[自动招满]」列出招了谁。</p>
       ${PICK_ROWS.map(p => {
         const hire = S.HIRE_ROLES[p.k] ? `；「持续招${S.HIRE_ROLES[p.k]}」发起的名单一直由你来挑` : '';
         return ruleRow(Object.assign({ opts: [['fill', '从高到低招满', p.fill]] }, p), (g.policies.pick || {})[p.k] || 'follow', 'pickPolicy', FOLLOW_TIP(p.cat, p.auto + hire, '名单弹出来由你挑'), ask);
@@ -1723,7 +1725,7 @@
     const cards = item.offers.map((o, i) => {
       const T = R.tiers[o.tier];
       const est = U.sum(others, m => S.followChance(g, m, o));
-      const room = RS.ROOMS[Math.max(g.room, o.room)];
+      const room = G.roomDef(Math.max(g.room, o.room));
       const notes = [
         o.tier < g.tier ? '档次更高：生源更好，考核要求也更高' : o.tier > g.tier ? '档次低一些：考核宽松，但生源差一点' : '和现在同一档次',
         o.tenure && !g.pi.tenured ? '<b class="good">直接给长聘，不用再考核</b>' : !g.pi.tenured ? '考核按新学校的标准，时间照旧' : null,
@@ -1755,7 +1757,7 @@
         : `<button data-act="movePersuade" data-arg="${m.id}" ${item.tried[m.id] || g.pi.energy < 4 ? 'disabled' : ''}>${item.tried[m.id] ? '劝过了' : `劝劝 TA（精力 -4，约 ${pct(S.persuadeChance(item, m.id))}）`}</button>`;
       return `<div class="venue-row" data-key="${m.id}">${memberRowHead(m)}<div class="small">${will ? '<span class="good">愿意跟你走</span>' : `<span class="bad">想留在 ${esc(g.school)}</span>`}</div></div>${btn}</div>`;
     }).join('');
-    const room = RS.ROOMS[Math.max(g.room, o.room)];
+    const room = G.roomDef(Math.max(g.room, o.room));
     return modalShell(`${head('people', `去 ${o.school}：带谁一起走？`)}
       <p class="small dim">没跟你走的人会留在 ${esc(g.school)}（算作离开实验室），手上的课题交给一起走的同门，没人接手就只能放弃。新实验室是「${esc(room.name)}」，有 ${room.desks} 个工位。</p>
       <div class="venue-list">${rows || '<p class="dim">实验室里没有别人，你一个人轻装上阵。</p>'}</div>
