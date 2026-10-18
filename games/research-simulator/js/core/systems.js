@@ -218,6 +218,9 @@
   };
 
   S.memberYears = (g, m) => Math.max(0, (g.day - m.startDay) / 360);
+  // 博士最多读 8 年：再延期一年就会超过的，不能再延期（实验室里的博士生、博士阶段的你都一样）
+  S.PHD_MAX_YEARS = 8;
+  S.phdCanExtend = yrs => yrs + 1 <= S.PHD_MAX_YEARS + 0.01;
   S.memberYearLabel = (g, m) => {
     if (m.preUntil && g.day < m.preUntil) return '预备生';
     return `第 ${Math.floor(S.memberYears(g, m)) + 1} 年`;

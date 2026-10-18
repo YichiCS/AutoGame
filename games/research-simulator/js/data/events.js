@@ -153,7 +153,7 @@
                 const pl = S().graduate(g, m);
                 G().queue(g, { type: 'notice', tone: 'good', icon: 'cap', fx: 'confetti', title: `${m.name} 博士毕业！`, text: `${U.esc(m.name)} 顺利通过了答辩，成为了 <b>${U.esc(m.name)} 博士</b>！<br>去向：<b>${U.esc(pl.text)}</b>` });
               } },
-            { key: 'extend', label: '再留一年，多发几篇', hint: `学生心情 -${moodHit} · 信任 -15`, disabled: yrs >= 6.5 ? '已经读了太久，不能再拖了' : null,
+            { key: 'extend', label: '再留一年，多发几篇', hint: `学生心情 -${moodHit} · 信任 -15`, disabled: S().phdCanExtend(yrs) ? null : `博士最多读 ${S().PHD_MAX_YEARS} 年，不能再拖了`,
               apply: g => { S().addMood(m, -moodHit); S().addTrust(m, -15); m.extended++; S().story(g, m, '被要求延期一年毕业'); G().log(g, `${m.name} 被要求延期一年毕业，有点郁闷`, 'bad'); } },
           ],
         };

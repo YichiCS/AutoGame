@@ -264,7 +264,7 @@
       const ok = S.gradStatus(g, m).ok;
       if ((ok && yrs >= 3.8) || yrs >= 5.8) {
         P.readyAsk = g.day + 360;
-        G.queue(g, { type: 'event', id: 'phd_ready', ctx: { forced: yrs >= 5.8 } });
+        G.queue(g, { type: 'event', id: 'phd_ready', ctx: { forced: !S.phdCanExtend(yrs) } }); // 再读一年就超过 8 年：该毕业了
       }
     }
   };

@@ -249,8 +249,9 @@
       const ext = ev.choices.find(c => c.key === 'extend');
       return (m.extended || 0) < n && ext && !ext.disabled ? 'extend' : 'grad';
     },
-    // 续约 N 次：按续约过几次（m.renewed）算，续满就祝前程似锦
+    // 一直续约（不限次数，和亲手点「续约一年」一样）；续约 N 次：按续约过几次（m.renewed，只用来计数）算，续满就祝前程似锦
     postdoc: (rule, m) => {
+      if (rule === 'always') return 'renew';
       const n = { renew1: 1, renew2: 2 }[rule];
       if (!n) return rule === 'leave' ? 'leave' : null;
       return (m.renewed || 0) < n ? 'renew' : 'leave';
@@ -375,8 +376,8 @@
   };
 
   // ---------- 招人名单：从高到低自动招满 ----------
-  // 按总评从高到低（研究生招生季没面试的人只看得到范围，按范围的中间值）录用 / 发 offer，直到名额、空工位或经费用满：
-  // 本科生、博士后：这次最多录用几个人 + 现在的空工位；研究生招生季：博士 / 硕士各自的名额 + 空工位（算上一年内要毕业离开的人）。
+  // 按总评从高到低（研究生招生季没面试的人只看得到范围，按范围的中间值）录用 / 发 offer，直到名额或经费用满：
+  // 本科生、博士后：这次最多录用几个人；研究生招生季：博士 / 硕士各自的名额。不看工位（没工位的人照常凑合）。
   // 要发工资的（博士后、博士生、国内的硕士生；自带奖学金的不算）还要看经费：加上这些人的工资，账上的钱至少还能撑 18 个月
   Sim.autoFill = function (g, item) {
     const recruit = item.type === 'recruit';
@@ -384,18 +385,15 @@
     const list = item.cands.map(c => ({ c, r: S.candRating(c, !recruit || c.interviewed) }))
       .sort((a, b) => b.r.v - a.r.v || (b.c.accept || 0) - (a.c.accept || 0));
     const left = recruit ? Object.assign({}, item.quota) : null;
-    let room = G.desks(g) - g.members.length + (recruit ? S.leavingSoon(g) : 0);
     let extra = 0;
     const took = [];
     const why = new Set();
     for (const x of list) {
       const c = x.c;
       if (!recruit && took.length >= item.max) { why.add(`这次最多录用 ${item.max} 人`); break; }
-      if (room <= 0) { why.add(took.length ? '工位用满了' : '没有空工位'); break; }
       if (recruit && !(left[c.role] > 0)) { why.add(`${S.ROLE_NAMES[c.role]}名额用满了`); continue; }
       if (cost(c) && !S.affordable(g, extra + cost(c))) { why.add('经费撑不起更多人的工资'); continue; }
       took.push(x);
-      room--;
       extra += cost(c);
       if (recruit) left[c.role]--;
     }
