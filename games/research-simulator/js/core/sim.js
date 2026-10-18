@@ -142,6 +142,7 @@
           break;
         case 'pool':
           S.hirePool(g, item, payload || []);
+          if (!g.phd && item.role === 'postdoc') S.autoHire(g, 'postdoc'); // 持续招博士后：名单处理完当天就发下一份广告
           break;
         case 'venue': {
           const p = G.project(g, item.pid);

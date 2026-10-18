@@ -485,8 +485,8 @@
     const pickName = r => ((g.policies.pick || {})[r] === 'fill' ? '从高到低招满' : '由你挑');
     const btn = role => {
       const on = S.hireOn(g, role);
-      const when = role === 'ug' ? '和手动招募一样每 120 天一轮，自动发招募通知' : `每 120 天一轮，自动发招聘广告（月薪 ${money(G.region(g).costs.postdoc)}；经费偏紧时动态里提醒一句，照样接着招）`;
-      const tip = `打开后，到了能再招的时候${when}，不管工位够不够。名单出来以后${pickName(role)}（「方针 → 招人名单」可以改）`;
+      const when = role === 'ug' ? `一轮接一轮地发招募通知：通知一发出名单就出来，处理完以后隔 ${S.UG_HIRE_GAP} 天发下一轮（免得名单一个接一个刷屏）` : `一份接一份地发招聘广告：每份广告 25～45 天收到申请，名单处理完当天就发下一份，始终有广告在招（月薪 ${money(G.region(g).costs.postdoc)}；经费偏紧时动态里提醒一句，照样接着招）`;
+      const tip = `打开后${when}，不管工位够不够。名单出来以后${pickName(role)}（「方针 → 招人名单」可以改）`;
       return `<button class="autocat ${on ? 'on' : ''}" data-act="autoHire" data-arg="${role}" data-tip="${esc(tip)}"><span>持续招${S.HIRE_ROLES[role]}</span><b>${on ? '开' : '关'}</b></button>`;
     };
     const status = Object.keys(S.HIRE_ROLES).filter(r => S.hireOn(g, r)).map(r => `${S.HIRE_ROLES[r]}：${S.hireStatus(g, r)}，名单${pickName(r)}`).join('；');
