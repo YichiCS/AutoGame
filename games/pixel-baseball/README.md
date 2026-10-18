@@ -2,13 +2,20 @@
 
 一款以日本高中棒球为题材的**像素风经营模拟游戏**。你将以「监督」的身份开始执教生涯：招募新生、制定训练、亲自指挥比赛、经营球队财务、应对各种突发事件——目标是站上甲子园的舞台。名声提升后，名门学校会向你抛出橄榄枝，你也可以选择跳槽，书写属于自己的监督传奇。
 
+### 👉 [点这里直接在浏览器里玩](https://yichics.github.io/AutoGame/games/pixel-baseball/dist/)
+
+> 本游戏收录在 [AutoGame 像素游戏厅](https://yichics.github.io/AutoGame/)（原仓库 [YichiCS/Pixel-Baseball](https://github.com/YichiCS/Pixel-Baseball)）。更新规则见仓库根目录的 `CONTRIBUTING.md`，版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+![游戏截图](docs/screenshot.png)
+
 ## 快速开始
 
-直接用浏览器打开 **`dist/index.html`** 即可游玩（单文件，无需安装任何东西，可离线运行）。也可以部署到 GitHub Pages，用手机打开网址游玩（见下文「部署到 GitHub Pages」）。
+在线游玩：<https://yichics.github.io/AutoGame/games/pixel-baseball/dist/>，也可以从 [游戏厅首页](https://yichics.github.io/AutoGame/) 进入。离线游玩：直接用浏览器打开 **`dist/index.html`**（单文件，无需安装任何东西）。
 
 - 电脑：推荐最新版 Chrome / Edge / Firefox，窗口宽度 1280 以上。
 - 手机 / 平板：支持竖屏和横屏。竖屏时导航栏在屏幕底部（可左右滑动），比赛中「下一球 / 下一打席 / 自动」按钮固定在屏幕底部；宽表格可以左右滑动查看。
-- 存档保存在浏览器本地（IndexedDB），每周结束时自动存档，也可以在「系统」页面导出 / 导入存档文件。
+- 存档保存在浏览器本地（IndexedDB），每周结束时自动存档，也可以在「系统」页面导出 / 导入存档文件。游戏厅的「存档中心」可以把全部栏位（和其他游戏的存档一起）导出 / 导入。
+- 屏幕左边缘的小标签：返回游戏厅、跳到存档管理（可上下拖动）。
 - 界面缩放可在「系统 → 设定」中调整（像素字体在 100% / 200% 时最清晰）。
 
 ## 新手入门
@@ -62,18 +69,14 @@
 ### 随机事件
 40 多种带选项的事件：投手肘部异样、霸凌传闻、OB 会长的请求、电视台纪录片、酷暑、低潮、恋爱、转学念头、职业球探来访、台风、职业 OB 回校指导、球员开窍、自主夜练、伤员想提前复出、大雪、球探发现的原石、媒体批评投手过度使用、宿敌的挑衅、文化祭、不祥事、教练被挖角、新年参拜、甲子园之土……
 
-## 部署到 GitHub Pages
+## 发布
 
-仓库已包含 GitHub Actions 工作流 `.github/workflows/deploy.yml`：每次推送到 `main` 分支，会自动安装依赖、类型检查、构建 `dist/index.html` 并发布到 GitHub Pages。
-
-1. 把代码推送到 GitHub 仓库的 `main` 分支。
-2. 打开仓库的 **Settings → Pages**，把 **Build and deployment → Source** 设为 **GitHub Actions**（只需设置一次）。
-3. 在 **Actions** 页面等待「Deploy to GitHub Pages」运行完成，网址形如 `https://<用户名>.github.io/<仓库名>/`。之后每次推送都会自动更新，也可以在 Actions 页面手动运行。
+本游戏随 AutoGame 一起发布：GitHub Pages 直接发布 AutoGame 仓库 main 分支的根目录，**不会替你构建**，所以修改源码后要运行 `npm run build`，把新的 `dist/index.html` 一起提交。AutoGame 的检查（`node scripts/check.mjs --build`，GitHub Actions 每次推送都会跑）会重新构建并确认提交的 `dist/index.html` 是最新的。更新流程见仓库根目录的 `CONTRIBUTING.md`（分支名 `pixel-baseball-v<版本号>`）。
 
 注意事项：
 
-- 构建结果是一个资源全部内联的 HTML 文件，不依赖仓库名或子路径，放在任何路径下都能运行。
-- 存档跟着「浏览器 + 网址」走：GitHub Pages 上的存档与本地打开 `dist/index.html` 的存档互不相通，换设备或换浏览器也看不到之前的存档。需要转移时请用「系统 → 导出存档 / 导入存档」。
+- 构建结果是一个资源全部内联的 HTML 文件，末尾引入游戏厅的悬浮标签 `../../../hub/dock.js`；单独拿出来放在任何路径下也能运行（只是没有悬浮标签）。
+- 存档跟着「浏览器 + 网址的域名」走：yichics.github.io 上的存档与本地打开 `dist/index.html` 的存档互不相通，换设备或换浏览器也看不到之前的存档。需要转移时用游戏厅的「存档中心」或游戏内「系统 → 导出存档 / 导入存档」。
 - iOS：可以在 Safari 中「分享 → 添加到主屏幕」，以全屏方式游玩。从主屏幕打开与在 Safari 中打开是两份独立的存档；Safari 对长时间未访问的网站可能会清除本地数据，建议定期导出存档备份。
 
 ## 开发
@@ -120,7 +123,11 @@ src/
 tests/         无界面测试脚本
 scripts/       构建脚本
 assets/fonts/  像素字体
-.github/       GitHub Pages 自动部署工作流
+dist/          构建产物（单文件 index.html，要提交）
+docs/          截图
+game.json      游戏厅清单：名字、版本、封面、构建命令、存档位置
+save-adapter.js 给游戏厅用的存档适配器（在游戏厅里显示各栏位的学校和日期）
+CHANGELOG.md   更新日志
 ```
 
 ## 致谢与许可

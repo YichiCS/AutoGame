@@ -2,6 +2,7 @@
 //   node scripts/build.mjs          → 生成单文件 dist/index.html（双击即可游玩）
 //   node scripts/build.mjs --serve  → 开发服务器 http://localhost:5173 （保存自动刷新）
 // 若依赖装在别处，可通过环境变量 PB_TOOLING 指向含 node_modules 的目录。
+// 页面末尾引入 AutoGame 游戏厅的悬浮标签（../../../hub/dock.js，相对 dist/index.html）；双击打开本地文件时它不显示。
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -51,6 +52,7 @@ ${head}
 <body>
 <div id="app"></div>
 ${body}
+<script src="../../../hub/dock.js" data-game="pixel-baseball" defer></script>
 </body>
 </html>
 `;
