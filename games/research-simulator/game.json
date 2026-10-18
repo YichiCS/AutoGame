@@ -2,7 +2,7 @@
   "id": "research-simulator",
   "name": "科研模拟器",
   "subtitle": "Research Simulator",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "从计算机方向的博士生做起，读完博士找教职，再经营自己的实验室：申基金、招学生、发论文、熬过 Tenure，一路冲向院士和图灵奖。像素风挂机经营。",
   "tags": ["挂机", "经营模拟", "科研"],
   "entry": "index.html",

@@ -462,14 +462,10 @@
     S.addMember(g, m);
   };
 
-  // hire：「持续招本科生」自动发起的这一轮（名单默认由你来挑，不交给托管）。
-  // 自动的这一轮不受手动招募 120 天冷却的限制（也不占用它），节奏看 S.UG_HIRE_GAP
+  // hire：「持续招本科生」替你点的这一次（名单默认由你来挑，不交给托管）。冷却和手动点完全一样：120 天
   S.ugPool = function (g, hire) {
-    if (hire) g.cooldowns.ugHire = g.day + S.UG_HIRE_GAP;
-    else {
-      if ((g.cooldowns.ug || 0) > g.day) return `${G.daysText(g.cooldowns.ug - g.day)}才能再次招募`;
-      g.cooldowns.ug = g.day + 120;
-    }
+    if ((g.cooldowns.ug || 0) > g.day) return `${G.daysText(g.cooldowns.ug - g.day)}才能再次招募`;
+    g.cooldowns.ug = g.day + 120;
     const cands = [0, 1, 2].map(() => Object.assign(S.genCandidate(g, 'ug', -2, { own: true }), { from: '响应招募通知加入' }));
     const item = { type: 'pool', role: 'ug', title: '招募本科生科研助理', text: `在 ${g.school} 的学院群里发了招募通知，有几位本科生报名。本科生不需要发工资，可以给博士生打下手；表现好的话还能留下来读研。`, cands, max: 2 };
     if (hire) item.hire = true;
@@ -513,38 +509,35 @@
   };
 
   // ---------- 持续招人（「成员」页的两个开关） ----------
-  // 一轮接一轮、不留空档：
-  //   博士后：招聘广告收完申请、名单处理完，马上发下一份广告（每份广告照原来的规则 25～45 天收到申请），始终有一份广告在招；
-  //   本科生：招募通知一发出名单就出来了（一轮几乎是瞬间结束的），所以两轮之间留 S.UG_HIRE_GAP 天，免得名单一个接一个刷屏。
-  // 名单弹出来以后照常由你来挑（「方针 → 招人名单」设成「从高到低招满」的才自动录用）。
-  // 不管工位够不够、经费紧不紧都接着招；博后的工资让经费撑不到 18 个月时只在动态里提醒一次
-  S.UG_HIRE_GAP = 15;
+  // 持续招人就是自动替你点手动按钮：开关开着、对应的「招本科生」「招博士后」按钮现在能点，就替你点一下，效果和亲手点一样。
+  // 没有别的调度：冷却、限制都和手动一样（本科生 120 天冷却；博士后发出的广告收到申请之前不能再发）。每天检查一次；
+  // 有事在等你决定的时候（弹窗挡着按钮）先不点，处理完再说。
+  // 点出来的名单照常由你来挑（「方针 → 招人名单」设成「从高到低招满」的才自动录用）。博后的工资让经费撑不到 18 个月时只在动态里提醒一次
   S.HIRE_ROLES = { ug: '本科生', postdoc: '博士后' };
   S.hireOn = (g, role) => !g.phd && !!(g.policies.hire || {})[role];
-  // 这一轮还没完（名单在等你挑、博士后广告还没收到申请），或者本科生还没到下一轮的时间：返回状态说明；可以发起下一轮时返回 null
-  S.hireWait = function (g, role) {
-    if (g.queue.some(q => q.type === 'pool' && q.role === role)) return '这一轮：名单等你挑';
-    if (role === 'postdoc' && g.flags.postdocSearch) {
-      const s = g.schedule.find(x => x.kind === 'postdocPool');
-      return `这一轮：广告已发出，${s ? `预计 ${G.mdStr(s.day)} 收到申请` : '等申请'}`;
+  // 手动按钮现在为什么不能点（和「成员」页按钮的禁用条件一样）；能点时是 null
+  S.hireBtnWhy = function (g, role) {
+    if (role === 'ug') {
+      const cd = (g.cooldowns.ug || 0) - g.day;
+      return cd > 0 ? `冷却中，还剩 ${cd} 天（${G.mdStr(g.cooldowns.ug)} 可以再招）` : null;
     }
-    const cd = role === 'ug' ? g.cooldowns.ugHire || 0 : 0;
-    return cd > g.day ? `下一轮：${G.daysText(cd - g.day)}（${G.mdStr(cd)}）` : null;
+    if (!g.flags.postdocSearch) return null;
+    const s = g.schedule.find(x => x.kind === 'postdocPool');
+    return `广告已发出，${s ? `预计 ${G.mdStr(s.day)} 收到申请` : '等申请'}，收到之前不能再发`;
   };
-  // 界面上显示的状态
-  S.hireStatus = (g, role) => (S.hireOn(g, role) ? S.hireWait(g, role) || '马上发起下一轮' : '');
-  // only：只看某一种身份（博士后名单处理完时马上接下一轮用）
-  S.autoHire = function (g, only) {
-    if (g.phd) return;
-    Object.keys(S.HIRE_ROLES).filter(r => !only || r === only).forEach(role => {
-      if (!S.hireOn(g, role) || S.hireWait(g, role)) return;
+  // 状态行
+  S.hireStatus = (g, role) => (S.hireOn(g, role) ? `开启中，按钮可用时自动招人；现在${S.hireBtnWhy(g, role) || '按钮可用'}` : '');
+  S.autoHire = function (g) {
+    if (g.phd || g.queue.length) return;
+    Object.keys(S.HIRE_ROLES).forEach(role => {
+      if (!S.hireOn(g, role) || S.hireBtnWhy(g, role)) return;
       if (role === 'postdoc') {
         // 经费偏紧只提醒一次（缓过来以后再紧才会再提醒），不拦着
         const tight = !S.affordable(g, G.region(g).costs.postdoc);
         if (tight && !g.flags.hireWarn) G.log(g, '[持续招人] 提醒：经费有点紧，再加一份博后工资就撑不到 18 个月了（照样接着招）', 'auto');
         g.flags.hireWarn = tight || undefined;
       }
-      G.log(g, `[持续招人] 发起新一轮${role === 'ug' ? '本科生招募' : '博士后招聘'}`, 'auto');
+      G.log(g, `[持续招人] 按钮可用，替你点了「招${S.HIRE_ROLES[role]}」`, 'auto');
       if (role === 'ug') S.ugPool(g, true);
       else S.postdocSearch(g, true);
     });

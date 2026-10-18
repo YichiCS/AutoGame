@@ -1,6 +1,6 @@
 {
   "name": "research-simulator",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "description": "科研模拟器：像素风桌面挂机小游戏，扮演计算机方向的 PI 经营实验室",
   "main": "electron/main.js",
