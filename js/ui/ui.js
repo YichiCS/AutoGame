@@ -171,6 +171,7 @@
     ] },
     { k: 'travel', name: '会议出差', opts: [
       ['student', '学生去', '论文被接收后，第一作者去开会（花差旅费，学生开心）'],
+      ['one', '只派一个代表', '同一个会议同一年只去一个人：这些论文的作者里中稿最多的那位（论文数量优先，一样多看资历），把实验室的论文都讲了。差旅费最省，去的人表达练得最快；没去成的一作会有点失落'],
       ['both', '一起去', '你也一起去：声望、人脉提升，花费翻倍，你会更累'],
       ['none', '都不去', '省钱，但学生有点失落'],
     ] },
@@ -1224,6 +1225,42 @@
       </div>
     </div>`;
   }
+  // 候选人排序：按总评、某一项能力、潜力或接受 offer 的概率重排（再点一次反过来排）。
+  // 没面试的候选人只看得到能力范围，按范围的中间值算；潜力面试后才知道，没面试的排在最后
+  const CAND_SORTS = () => [['default', '默认'], ['ovr', '总评']].concat(S.STATS.map(s => [s.k, s.n]), [['pot', '潜力'], ['accept', '接受率']]);
+  const candSortState = () => {
+    const s = RS.settings.candSort;
+    return s && s.k ? s : { k: 'default', dir: -1 };
+  };
+  const candExact = (c, mode) => mode !== 'recruit' || c.interviewed;
+  function candVal(c, k, exact) {
+    const st = key => (exact ? c.stats[key] : c.est && c.est[key] ? (c.est[key].lo + c.est[key].hi) / 2 : null);
+    if (k === 'ovr') {
+      const o = {};
+      for (const s of S.STATS) { const v = st(s.k); if (v == null) return null; o[s.k] = v; }
+      return S.overall(o);
+    }
+    if (k === 'pot') return exact ? c.pot : null;
+    if (k === 'accept') return c.accept;
+    return st(k);
+  }
+  function sortCands(cands, mode) {
+    const cur = candSortState();
+    if (cur.k === 'default') return cands;
+    return cands.map((c, i) => ({ c, i, v: candVal(c, cur.k, candExact(c, mode)) }))
+      .sort((a, b) => (a.v == null) - (b.v == null) || (a.v == null ? 0 : (b.v - a.v) * (cur.dir < 0 ? 1 : -1)) || a.i - b.i)
+      .map(x => x.c);
+  }
+  function candSortBar(mode) {
+    const cur = candSortState();
+    const opts = CAND_SORTS().filter(o => (mode === 'recruit' ? true : o[0] !== 'accept'));
+    const tip = k => (k === 'default' ? '按原来的顺序' : k === 'pot' ? '潜力面试后才知道，没面试的排在最后' : k === 'accept' ? '按接受 offer 的概率' : mode === 'recruit' ? '没面试的按能力范围的中间值算' : '');
+    return `<div class="sortbar"><span class="small dim">排序</span>${opts.map(([k, n]) => {
+      const on = cur.k === k;
+      const arrow = on && k !== 'default' ? (cur.dir < 0 ? ' ↓' : ' ↑') : '';
+      return `<button class="chip-btn ${on ? 'on' : ''}" data-act="candSort" data-arg="${k}" data-tip="${esc(tip(k) + (on && k !== 'default' ? '（再点一次反过来排）' : ''))}">${esc(n)}${arrow}</button>`;
+    }).join('')}</div>`;
+  }
   function renderRecruit(item) {
     const used = { phd: 0, ms: 0 };
     item.offers.forEach(cid => { const c = item.cands.find(x => x.cid === cid); if (c) used[c.role]++; });
@@ -1231,14 +1268,16 @@
     const free = G.desks(g) - g.members.length;
     return modalShell(`${head('people', item.name)}
       <p>${esc(item.text)}<br><span class="small dim">面试可以看清能力和全部特质。优秀的学生更抢手，接受 offer 的概率更低；你的声望和人脉越高，越容易招到人。</span></p>
-      <div class="cgrid">${item.cands.map(c => candCard(c, 'recruit', item.offers.includes(c.cid))).join('')}</div>
+      ${candSortBar('recruit')}
+      <div class="cgrid">${sortCands(item.cands, 'recruit').map(c => candCard(c, 'recruit', item.offers.includes(c.cid))).join('')}</div>
       <div class="mfoot"><span>名额：博士 <b>${used.phd}/${item.quota.phd}</b> · 硕士 <b>${used.ms}/${item.quota.ms}</b> · 空余工位 ${free} · 全部接受后每年约 ${money(cost)}</span><button class="primary" data-act="recruitOk">${item.offers.length ? `发出 ${item.offers.length} 个 offer` : '今年不招了'}</button></div>`, 'wide');
   }
   function renderPool(item) {
     item.pick = item.pick || [];
     return modalShell(`${head('people', item.title)}
       <p>${esc(item.text)}</p>
-      <div class="cgrid">${item.cands.map(c => candCard(c, 'pool', item.pick.includes(c.cid))).join('')}</div>
+      ${item.cands.length > 2 ? candSortBar('pool') : ''}
+      <div class="cgrid">${sortCands(item.cands, 'pool').map(c => candCard(c, 'pool', item.pick.includes(c.cid))).join('')}</div>
       <div class="mfoot"><span>最多录用 ${item.max} 人 · 空余工位 ${G.desks(g) - g.members.length}</span><button class="primary" data-act="poolOk">${item.pick.length ? `录用 ${item.pick.length} 人` : '都不要'}</button></div>`, 'wide');
   }
   // 投稿目标的筛选：全部 / A / B / C 和 Workshop / 期刊 / 跨方向
@@ -2013,6 +2052,12 @@
         break;
       }
       case 'grantsOk': { const item = g.queue.find(q => modal && q.qid === modal.qid); resolveCurrent(item ? item.sel || {} : {}); return; }
+      case 'candSort': {
+        const cur = candSortState();
+        RS.settings.candSort = cur.k === arg && arg !== 'default' ? { k: arg, dir: -cur.dir } : { k: arg, dir: -1 };
+        G.saveSettings(RS.settings);
+        break;
+      }
       case 'interview': { const item = g.queue.find(q => modal && q.qid === modal.qid); if (item) S.interview(g, item, arg); break; }
       case 'offer': {
         const item = g.queue.find(q => modal && q.qid === modal.qid);

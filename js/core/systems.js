@@ -987,7 +987,7 @@
       RS.bus.emit('arxiv', { paper });
       return paper;
     }
-    S.travel(g, v, lead);
+    S.travel(g, v, lead, paper);
     const tag = best ? '（最佳论文奖！）' : oral ? '（Oral）' : '';
     G.log(g, `论文《${short(p.title)}》被 ${v.name} ${year} 接收${tag}${info.scores ? '，评分 ' + info.scores.join('/') : ''}`, best ? 'gold' : 'good');
     if (best) {
@@ -1031,11 +1031,35 @@
     if (r.paper) S.sidePaper(g, m, r.partner, r.paper, r.lead);
   };
 
-  S.travel = function (g, v, lead) {
+  // 只派一个代表时选谁：中稿最多的（数量优先），一样多看资历
+  const SENIOR = { jpi: 6, postdoc: 5, phd: 4, ms: 3, visit: 2, ug: 1 };
+  S.travelRep = list => list.filter(Boolean).sort((a, b) => (b.pubs || 0) - (a.pubs || 0) || (SENIOR[b.role] || 0) - (SENIOR[a.role] || 0) || a.startDay - b.startDay)[0] || null;
+  S.travel = function (g, v, lead, paper) {
     if (v.type !== 'conf' || v.tier === 'W') return;
     const pol = g.policies.travel;
     const cost = G.region(g).costs.travel;
     if (pol === 'none') { S.addMood(lead, -4); return; }
+    if (pol === 'one') {
+      // 同一个会议同一年只派一个代表，把实验室中的论文都讲了：作者里中稿最多、资历最深的那位
+      const year = paper ? paper.year : G.calYear(g);
+      const trips = g.flags.trips || (g.flags.trips = {});
+      Object.keys(trips).forEach(k => { if (+k.split(':')[1] < G.calYear(g) - 1) delete trips[k]; });
+      const key = v.id + ':' + year;
+      const going = trips[key] && G.member(g, trips[key]);
+      if (going) {
+        if (lead && lead !== going) S.addMood(lead, -2); // 代表已经要去了，这篇也交给 TA 讲
+        return;
+      }
+      const rep = S.travelRep((paper ? paper.authors : []).map(id => G.member(g, id)).concat(lead));
+      if (!rep) return;
+      trips[key] = rep.id;
+      S.spend(g, cost, 'travel');
+      S.addMood(rep, 6);
+      S.bumpStat(rep, 'talk', 1.2);
+      if (S.st(rep, 'talk') >= 70) S.addRep(g, 0.3);
+      if (lead && lead !== rep) { S.addMood(lead, -2); G.log(g, `${rep.name} 代表实验室去 ${v.name} 讲论文`, 'info'); }
+      return;
+    }
     S.spend(g, cost, 'travel');
     S.addMood(lead, 6);
     // 去开会讲论文：表达越练越好；讲得好的，大家会记住这个实验室
