@@ -1,0 +1,24 @@
+#!/bin/sh
+# AutoGame 更新规则（见 CONTRIBUTING.md）：
+#   不直接在 main 上修改；每次更新一个游戏，从 main 拉一个「<游戏id>-v<版本号>」分支，在分支上改完再合并回 main。
+# 启用：在仓库根目录运行一次  git config core.hooksPath .githooks
+
+branch=$(git symbolic-ref --short -q HEAD)
+[ -z "$branch" ] && exit 0                                    # 分离头指针（rebase 等过程中）
+[ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] && exit 0      # 正在完成一次合并（解决冲突后的提交）
+
+case "$branch" in
+  main|master)
+    echo "✗ 不要直接在 $branch 上提交。" >&2
+    echo "  先拉分支再改：git switch -c <游戏id>-v<版本号>   例如 pixel-baseball-v0.2.0；改游戏厅框架用 hub-v1.1.0" >&2
+    echo "  改完后合并回 main：git switch main && git merge --no-ff <分支名>" >&2
+    exit 1
+    ;;
+esac
+
+if ! printf '%s' "$branch" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+  echo "✗ 分支名「$branch」不符合规则：应为 <游戏id>-v<版本号>，例如 research-simulator-v0.2.0；改游戏厅框架用 hub-v1.1.0" >&2
+  echo "  改名：git branch -m <新分支名>" >&2
+  exit 1
+fi
+exit 0

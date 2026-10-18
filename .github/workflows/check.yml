@@ -1,0 +1,64 @@
+# 每次推送 / PR 都会跑：清单与文件校验、分支规则（分支名 = <游戏id>-v<版本号>，版本号要提升）、构建产物是否已提交。
+# 网站本身由 GitHub Pages 直接从 main 分支根目录发布（Settings → Pages → Deploy from a branch → main / root），
+# 不依赖这个工作流；这里只负责把关。
+name: 检查
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: 校验清单、文件与存档声明
+        run: node scripts/check.mjs
+
+      - name: 校验分支规则（推送分支）
+        if: github.event_name == 'push' && github.ref_name != 'main'
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if git merge-base --is-ancestor HEAD origin/main; then
+            echo "分支已经合并进 main，跳过分支规则检查"
+            exit 0
+          fi
+          node scripts/check.mjs --branch "$BRANCH" --base origin/main
+
+      - name: 校验分支规则（PR）
+        if: github.event_name == 'pull_request'
+        env:
+          BRANCH: ${{ github.head_ref }}
+          BASE: ${{ github.base_ref }}
+        run: node scripts/check.mjs --branch "$BRANCH" --base "origin/$BASE"
+
+      - name: main 上只应有合并提交
+        if: github.event_name == 'push' && github.ref_name == 'main'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            exit 0
+          fi
+          direct=$(git log --oneline --first-parent --no-merges "$BEFORE..HEAD")
+          if [ -n "$direct" ]; then
+            echo "::warning::main 上出现了不是通过合并分支进来的提交（规则：在 <游戏id>-v<版本号> 分支上修改，再合并回 main）"
+            echo "$direct"
+          fi
+
+      - name: 构建游戏并确认构建产物已提交
+        run: node scripts/check.mjs --build
