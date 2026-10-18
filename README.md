@@ -8,10 +8,10 @@
 
 ## 游戏
 
-| 游戏 | 版本 | 简介 |
+| 游戏 | 简介 | 更新日志 |
 | --- | --- | --- |
-| [科研模拟器](https://yichics.github.io/AutoGame/games/research-simulator/)（[目录](games/research-simulator)） | 0.1.0 | 从博士生做到 PI，经营计算机实验室的像素挂机游戏 |
-| [像素甲子园](https://yichics.github.io/AutoGame/games/pixel-baseball/dist/)（[目录](games/pixel-baseball)） | 1.0.0 | 当高中棒球队的监督：定方针、修设施，球队自己训练、自己比赛的像素挂机游戏，目标甲子园 |
+| [科研模拟器](https://yichics.github.io/AutoGame/games/research-simulator/)（[目录](games/research-simulator)） | 从博士生做到 PI，经营计算机实验室的像素挂机游戏：招人、申基金、发论文，实验室可以一直扩建 | [CHANGELOG](games/research-simulator/CHANGELOG.md) |
+| [像素甲子园](https://yichics.github.io/AutoGame/games/pixel-baseball/dist/)（[目录](games/pixel-baseball)） | 当高中棒球队的监督：平时球队按方针训练成长，比赛以打席为单位亲自指挥（打者 / 投手视角），目标甲子园 | [CHANGELOG](games/pixel-baseball/CHANGELOG.md) |
 
 ## 存档
 
