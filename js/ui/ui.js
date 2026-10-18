@@ -14,7 +14,6 @@
   let confirmDismiss = null;
   let confirmGroupDel = null;
   let confirmGiveUp = null;
-  let paperFilter = 'all';
   let venueFilter = 'all';
   let paperLimit = 30;
   let selMember = null;
@@ -37,25 +36,95 @@
     tpl.innerHTML = html;
     morphChildren(el, tpl.content);
   }
+  // 带 data-key 的节点按 key 对应（有人进组、离开、新论文插在最前面时，其他卡片原地保留，不会整排被替换）
+  const keyOf = n => (n.nodeType === 1 && n.hasAttribute('data-key') ? n.nodeName + '|' + n.getAttribute('data-key') : null);
   function morphChildren(from, to) {
-    const fc = Array.from(from.childNodes), tc = Array.from(to.childNodes);
-    for (let i = 0; i < tc.length; i++) {
-      const t = tc[i], f = fc[i];
-      if (!f) { from.appendChild(t); continue; }
-      if (f.nodeType !== t.nodeType || f.nodeName !== t.nodeName || (f.nodeType === 1 && f.getAttribute('data-key') !== t.getAttribute('data-key'))) {
-        from.replaceChild(t, f);
-        continue;
+    const keyed = new Map();
+    from.childNodes.forEach(n => { const k = keyOf(n); if (k && !keyed.has(k)) keyed.set(k, n); });
+    let cur = from.firstChild;
+    Array.from(to.childNodes).forEach(t => {
+      const tk = keyOf(t);
+      let f = cur;
+      if (tk) {
+        const match = keyed.get(tk);
+        if (!match) { from.insertBefore(t, cur); return; }
+        keyed.delete(tk);
+        if (match !== cur) from.insertBefore(match, cur);
+        f = match;
+      } else if (cur && keyOf(cur)) {
+        // 旧的带 key 的节点可能等下还用得上：新节点插在它前面，不替换它
+        from.insertBefore(t, cur);
+        return;
       }
+      if (!f) { from.appendChild(t); return; }
+      if (f.nodeType !== t.nodeType || f.nodeName !== t.nodeName) {
+        from.replaceChild(t, f);
+        cur = t.nextSibling;
+        return;
+      }
+      cur = f.nextSibling;
       if (f.nodeType !== 1) {
         if (f.nodeValue !== t.nodeValue) f.nodeValue = t.nodeValue;
-        continue;
+        return;
       }
       const fa = f.attributes, ta = t.attributes;
       for (let j = fa.length - 1; j >= 0; j--) if (!t.hasAttribute(fa[j].name)) f.removeAttribute(fa[j].name);
       for (let j = 0; j < ta.length; j++) if (f.getAttribute(ta[j].name) !== ta[j].value) f.setAttribute(ta[j].name, ta[j].value);
       morphChildren(f, t);
+    });
+    while (cur) { const nx = cur.nextSibling; from.removeChild(cur); cur = nx; }
+  }
+
+  // ---------- 鼠标指着的东西不乱跑 ----------
+  // 界面每隔一会儿刷新一次：上面的内容变长变短时，自动滚动补偿，让鼠标正指着的那一行留在原地；
+  // 已经滚到顶、没法再往上滚时，用页面顶部的一段空白垫着，鼠标移开侧栏后收回。
+  let ptr = null;
+  let apad = 0;
+  const APAD = () => `<div class="apad" data-key="apad" style="height:${apad}px"></div>`;
+  function anchorAt(box) {
+    const hit = ptr && document.elementFromPoint(ptr.x, ptr.y);
+    let n = null, soft = false;
+    if (hit && hit !== box && box.contains(hit)) {
+      n = hit;
+      while (n && n !== box && !(n.id || n.hasAttribute('data-act') || n.hasAttribute('data-key'))) n = n.parentElement;
+      if (!n || n === box) n = hit;
+    } else if (box.scrollTop > 0) {
+      soft = true;
+      // 鼠标不在侧栏上：让最上面那张看得见的卡片留在原地（往下翻着看的时候，上面多了一条、少了一条都不会跳）
+      const nav = box.querySelector(':scope > .subnav');
+      const top = nav ? nav.getBoundingClientRect().bottom : box.getBoundingClientRect().top;
+      n = Array.from(box.querySelectorAll('[data-key]')).find(x => x.className !== 'apad' && !x.closest('.subnav') && x.getBoundingClientRect().top >= top) || null;
     }
-    for (let i = fc.length - 1; i >= tc.length; i--) from.removeChild(fc[i]);
+    if (!n) return null;
+    let sel = n.id ? '#' + CSS.escape(n.id) : n.tagName.toLowerCase();
+    if (!n.id) ['data-act', 'data-arg', 'data-k', 'data-v', 'data-key'].forEach(a => { if (n.hasAttribute(a)) sel += `[${a}="${CSS.escape(n.getAttribute(a))}"]`; });
+    return { n, sel, top: n.getBoundingClientRect().top, soft };
+  }
+  function keepAnchor(box, a) {
+    if (!a) return;
+    const n = a.n.isConnected && box.contains(a.n) ? a.n : box.querySelector(a.sel);
+    if (!n || n.closest('.subnav')) return;
+    const dy = n.getBoundingClientRect().top - a.top;
+    if (Math.abs(dy) < 0.5) return;
+    let pad = box.querySelector(':scope > .apad');
+    if (a.soft || (pad && !(pad.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING))) pad = null;
+    if (dy > 0) {
+      const used = pad ? Math.min(apad, dy) : 0;
+      if (used) { apad -= used; pad.style.height = apad + 'px'; }
+      if (dy - used > 0) box.scrollTop += dy - used;
+    } else {
+      const up = Math.min(box.scrollTop, -dy);
+      if (up) box.scrollTop -= up;
+      if (pad && -dy - up >= 0.5) { apad += -dy - up; pad.style.height = apad + 'px'; }
+    }
+  }
+  function releasePad() {
+    if (!apad) return;
+    const box = $('tabBody'), pad = box && box.querySelector(':scope > .apad');
+    const back = box ? Math.min(box.scrollTop, apad) : 0;
+    apad = 0;
+    if (pad) pad.style.height = '0px';
+    if (back) box.scrollTop -= back;
   }
 
   // ---------- 小组件 ----------
@@ -285,6 +354,7 @@
   }
 
   function tabLab() {
+    if (sub('lab') === 'map') return researchMap();
     const pi = g.pi, pol = g.policies;
     const ctx = S.dayContext(g);
     const net = S.income(g).total - S.expenses(g).total;
@@ -320,7 +390,7 @@
         <div class="kvline"><span>每月净收支</span><b class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}</b></div>
       </div>
       <div class="card"><h3>${ico('calendar')} 近期日程</h3>${upcoming().map(u => `<div class="kvline">${ico(u.icon)}<span class="grow">${esc(u.text)}</span><span class="dim small">${G.mdStr(u.day)} · ${G.daysText(u.day - g.day)}</span></div>`).join('')}</div>
-      ${researchMap()}`;
+      `;
   }
   // 研究版图：领域 → 方向 → 子方向。热度看子方向，积累算在方向上；核心方向默认展开
   function researchMap() {
@@ -434,32 +504,40 @@
         <div class="actions">
           <button data-act="talk" data-arg="${m.id}" ${talkCd || m.status !== 'active' ? 'disabled' : ''} data-tip="${talkCd ? '最近刚谈过' : '精力 -4，心情 +10~16，信任 +6'}">谈心</button>
           ${m.role === 'jpi' ? `<button data-act="jpiStudents" data-arg="${m.id}" data-tip="指定哪些学生由 TA 来带">分配学生</button>` : `<button data-act="bonus" data-arg="${m.id}" ${bonusCd ? 'disabled' : ''} data-tip="${bonusCd ? '最近刚发过' : `经费 -${money(S.bonusCost(g, m))}，心情 +18，信任 +4`}">发奖金</button>`}
-          ${S.STUDENT_ROLES.includes(m.role) && S.jpis(g).length ? `<button data-act="supPick" data-arg="${m.id}" data-tip="指定 TA 由你还是哪位青年教师来带">换导师</button>` : ''}
-          ${canTA ? `<button data-act="fund" data-arg="${m.id}" data-tip="${m.funding === 'ta' ? '改回 RA：由你发工资，效率恢复' : `当助教：系里发工资，但效率 -35%（名额 ${S.taUsed(g)}/${G.tierCfg(g).taSlots}）`}">${m.funding === 'ta' ? '改回 RA' : '去当助教'}</button>` : ''}
-          ${m.desk < 0 ? `<button data-act="giveDesk" data-arg="${m.id}" ${S.freeDesks(g) <= 0 ? 'disabled' : ''} data-tip="${S.freeDesks(g) <= 0 ? '工位都满了：先收回别人的工位，或者去「设施」页扩建' : `把空着的工位给 TA（心情 +4）。有工位效率才正常`}">给工位</button>` : waitingDesk() ? `<button data-act="takeDesk" data-arg="${m.id}" data-tip="把 TA 的工位收回来，让给没有工位的人（心情 -6，信任 -2；以后有空位也不会自动分给 TA，要你亲自给）">收回工位</button>` : ''}
           <button data-act="memberGroups" data-arg="${m.id}" data-tip="把 TA 分到某个（最多两个）子方向小组">分组</button>
           ${m.role === 'jpi' ? '' : `<button data-act="grad" data-arg="${m.id}" data-tip="查看毕业要求和去向预估，由你安排毕业">毕业</button>`}
           <button data-act="fold" data-arg="${key}">${open ? '收起档案' : '档案'}</button>
+          ${S.STUDENT_ROLES.includes(m.role) && S.jpis(g).length ? `<button data-act="supPick" data-arg="${m.id}" data-tip="指定 TA 由你还是哪位青年教师来带">换导师</button>` : ''}
+          ${canTA ? `<button data-act="fund" data-arg="${m.id}" data-tip="${m.funding === 'ta' ? '改回 RA：由你发工资，效率恢复' : `当助教：系里发工资，但效率 -35%（名额 ${S.taUsed(g)}/${G.tierCfg(g).taSlots}）`}">${m.funding === 'ta' ? '改回 RA' : '去当助教'}</button>` : ''}
           <button class="danger" data-act="dismiss" data-arg="${m.id}" data-tip="让 TA 离开实验室（声望 -1，全组心情 -5）">${confirmDismiss === m.id ? '确定劝退？' : '劝退'}</button>
+          ${m.desk < 0 ? `<button data-act="giveDesk" data-arg="${m.id}" ${S.freeDesks(g) <= 0 ? 'disabled' : ''} data-tip="${S.freeDesks(g) <= 0 ? '工位都满了：先收回别人的工位，或者去「设施」页扩建' : `把空着的工位给 TA（心情 +4）。有工位效率才正常`}">给工位</button>` : waitingDesk() ? `<button data-act="takeDesk" data-arg="${m.id}" data-tip="把 TA 的工位收回来，让给没有工位的人（心情 -6，信任 -2；以后有空位也不会自动分给 TA，要你亲自给）">收回工位</button>` : ''}
         </div>
         ${open ? memberDetail(m) : ''}
       </div>
     </div>`;
   }
+  // 成员页的分栏：博士 / 硕士 / 本科 / 其他（博士后、青年教师、访问学生）
+  const memberSub = m => (m.role === 'phd' || m.role === 'ms' || m.role === 'ug' ? m.role : 'other');
   function tabMembers() {
+    const s = sub('members');
+    const reasons = { graduated: '毕业', quit: '退出', poached: '被挖走', dismissed: '劝退', visit_end: '访问结束', independent: '独立建组', followed: '跟随导师离开', stayed: '留在原校' };
+    if (s === 'alumni') {
+      return `<div class="card"><h3>${ico('people')} 已离开的成员（${g.alumni.length}）</h3>
+        ${g.alumni.slice(0, 120).map(a => `<div class="kvline alum" data-key="${a.id}"><img class="portrait tiny" src="${SP.portraitURL(a.avatar, a.role, 2)}" alt=""><span class="grow">${esc(a.name)}<span class="dim small"> ${S.ROLE_NAMES[a.role]} · ${reasons[a.reason] || a.reason} · ${G.yearOfDay(a.leftDay)} · 论文 ${a.pubs || 0}（一作 ${a.first || 0} · A ${a.pubsA || 0}）</span></span><span class="small">${esc(a.dest || '')}</span></div>`).join('') || '<p class="dim small">还没有人离开过实验室。</p>'}
+        ${g.alumni.length > 120 ? `<p class="small dim">……更早的还有 ${g.alumni.length - 120} 人</p>` : ''}</div>`;
+    }
     const ugCd = (g.cooldowns.ug || 0) > g.day;
     const roleOrder = { jpi: -1, postdoc: 0, phd: 1, ms: 2, visit: 3, ug: 4 };
-    const list = g.members.slice().sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.startDay - b.startDay);
-    const reasons = { graduated: '毕业', quit: '退出', poached: '被挖走', dismissed: '劝退', visit_end: '访问结束', independent: '独立建组', followed: '跟随导师离开', stayed: '留在原校' };
+    const list = g.members.filter(m => s === 'all' || memberSub(m) === s).sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.startDay - b.startDay);
+    const empty = { all: '实验室空空荡荡……', phd: '现在没有博士生。', ms: '现在没有硕士生。', ug: '现在没有本科生。', other: '现在没有博士后、青年教师或访问学生。' }[s];
     return `
       <div class="toolbar">
-        <span>成员 <b>${g.members.length}</b> / 工位 ${G.desks(g)}</span>
+        <span>${s === 'all' ? `成员 <b>${g.members.length}</b> / 工位 ${G.desks(g)}` : `<b>${list.length}</b> 人 · 全组 ${g.members.length} / 工位 ${G.desks(g)}`}</span>
         <button data-act="ugPool" ${ugCd ? 'disabled' : ''} data-tip="${ugCd ? G.daysText(g.cooldowns.ug - g.day) + '后可以再招' : '本科生不用发工资，会给博士生打下手'}">招本科生</button>
         <button data-act="postdoc" ${g.flags.postdocSearch ? 'disabled' : ''} data-tip="${g.flags.postdocSearch ? '招聘中，等待申请' : `博士后能力强，还能分担指导工作；月薪 ${money(G.region(g).costs.postdoc)}`}">招博士后</button>
       </div>
       ${deskLine()}
-      ${list.map(memberCard).join('') || '<p class="dim">实验室空空荡荡……</p>'}
-      ${g.alumni.length ? fold('alumni', `已离开的成员（${g.alumni.length}）`, g.alumni.slice(0, 60).map(a => `<div class="kvline alum"><img class="portrait tiny" src="${SP.portraitURL(a.avatar, a.role, 2)}" alt=""><span class="grow">${esc(a.name)}<span class="dim small"> ${S.ROLE_NAMES[a.role]} · ${reasons[a.reason] || a.reason} · ${G.yearOfDay(a.leftDay)} · 论文 ${a.pubs || 0}（一作 ${a.first || 0} · A ${a.pubsA || 0}）</span></span><span class="small">${esc(a.dest || '')}</span></div>`).join(''), 'card') : ''}`;
+      ${list.map(memberCard).join('') || `<p class="dim">${empty}</p>`}`;
   }
 
   // ---------- 小组 ----------
@@ -516,22 +594,31 @@
     const free = g.members.filter(m => !(m.groups || []).length);
     const pol = POLICIES.find(p => p.k === 'consult'), tpol = POLICIES.find(p => p.k === 'topic');
     const noLead = g.groups.filter(gr => !G.member(g, gr.lead)).length;
-    return `
-      <div class="card"><h3>${ico('branch')} 课题组 · 子方向（${g.groups.length} / ${max}）</h3>
+    const autoMode = g.policies.autoGroup || 'off';
+    if (sub('groups') === 'rules') {
+      return `
+      <div class="card"><h3>${ico('branch')} 小组怎么运作</h3>
         <p class="small dim">把实验室分成几个子方向：每个学生可以加入一两个小组，<b>小组成员只做小组的方向</b>。组员之间互相帮忙——做小组方向的课题时，组里每多一位研究生效率 +5%（本科生 / 访问学生 +2.5%，最多 +20%），有组长再 +5%，帮得多的组员会挂名。不在任何小组的学生<b>单干</b>：可以做自己想做的方向，但没有互助和组长指导（效率 -${Math.round((1 - S.SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S.SOLO_GROW) * 100)}%）。服务器可以专门分给某个小组：不用排队、环境配好，一台顶 ${S.DEDICATED_BONUS} 台，但闲着也不外借。小组太多方向就分散了，而且没有组长的小组要你亲自协调。</p>
-        ${noLead > 1 ? `<p class="small warn">有 ${noLead} 个小组没有组长，你每天要多花 ${(S.groupEnergyCost(g)).toFixed(2)} 精力协调。</p>` : ''}
+        <p class="small dim">小组上限：每 ${S.GROUP_PER} 个人可以设一个小组（现在 ${g.members.length} 人，最多 ${max} 个），实验室空间最多 ${S.groupRoomCap(g)} 个。</p>
+      </div>
+      <div class="card"><h3>${ico('list')} 规则</h3>
         <div class="sub">学生做完课题后</div>${seg('consult', pol.opts, g.policies.consult)}<p class="hint">${esc(policyDesc('consult', g.policies.consult))}</p>
         <div class="sub">选题倾向</div>${seg('topic', tpol.opts, g.policies.topic)}<p class="hint">${esc(policyDesc('topic', g.policies.topic))}</p>
-        <div class="sub">自动分组</div>${seg('autoGroup', POLICIES.find(p => p.k === 'autoGroup').opts, g.policies.autoGroup || 'off')}<p class="hint">${esc(policyDesc('autoGroup', g.policies.autoGroup || 'off'))}</p>
-        ${(g.policies.autoGroup || 'off') !== 'off' ? `<button class="wide" data-act="autoGroupNow" data-tip="不用等到月初，现在就按这个规则调整一次">现在就自动调整一次</button>` : ''}
+        <div class="sub">自动分组</div>${seg('autoGroup', POLICIES.find(p => p.k === 'autoGroup').opts, autoMode)}<p class="hint">${esc(policyDesc('autoGroup', autoMode))}</p>
+        ${autoMode !== 'off' ? `<button class="wide" data-act="autoGroupNow" data-tip="不用等到月初，现在就按这个规则调整一次">现在就自动调整一次</button>` : ''}
         <div class="sub">组长任命</div>${seg('autoLead', POLICIES.find(p => p.k === 'autoLead').opts, g.policies.autoLead || 'auto')}<p class="hint">${esc(policyDesc('autoLead', g.policies.autoLead || 'auto'))}</p>
-        <p class="small dim">小组上限：每 ${S.GROUP_PER} 个人可以设一个小组（现在 ${g.members.length} 人），实验室空间最多 ${S.groupRoomCap(g)} 个。</p>
-        ${g.groups.length > max ? `<p class="small warn">小组比人还多：一两个人的小组没有组内互助，考虑把人合并到一起、解散多余的小组。</p>` : ''}
-        <button class="wide" data-act="groupNew" ${g.groups.length >= max ? 'disabled' : ''} data-tip="${g.groups.length >= max ? esc(S.groupCapWhy(g) || '小组已经够多了') : '选一个方向成立新的小组'}">成立新小组</button>
+      </div>`;
+    }
+    return `
+      <div class="toolbar">
+        <span>小组 <b>${g.groups.length}</b> / ${max}<span class="small dim"> · 自动分组：${esc((POLICIES.find(p => p.k === 'autoGroup').opts.find(o => o[0] === autoMode) || [])[1] || '关闭')}</span></span>
+        <button data-act="groupNew" ${g.groups.length >= max ? 'disabled' : ''} data-tip="${g.groups.length >= max ? esc(S.groupCapWhy(g) || '小组已经够多了') : '选一个方向成立新的小组'}">成立新小组</button>
       </div>
-      ${g.groups.map(gr => groupCard(gr, al)).join('')}
+      ${noLead > 1 ? `<p class="small warn">有 ${noLead} 个小组没有组长，你每天要多花 ${(S.groupEnergyCost(g)).toFixed(2)} 精力协调。</p>` : ''}
+      ${g.groups.length > max ? `<p class="small warn">小组比人还多：一两个人的小组没有组内互助，考虑把人合并到一起、解散多余的小组。</p>` : ''}
+      ${g.groups.map(gr => groupCard(gr, al)).join('') || '<p class="dim">还没有小组。可以点「成立新小组」，或者在「规则」里打开自动分组。</p>'}
       <div class="card"><h3>${ico('gpu')} 共享算力池</h3>
-        <div class="kvline"><span>共享算力（没分配的服务器 + 云）</span><b>${al.pool}</b></div>
+        <div class="kvline"><span>共享算力（没分配的服务器 + 云 + 大家自己的电脑）</span><b>${al.pool.toFixed(0)}</b></div>
         ${al.dem._pool > 0 ? `<div class="kvline"><span>不属于任何小组的课题在用</span><b>${al.got._pool.toFixed(0)} / 需求 ${al.dem._pool.toFixed(0)}</b></div>` : ''}
         ${al.idle >= 0.5 ? `<div class="kvline" data-tip="专用服务器只给本组用，本组用不完也不会借给别人"><span>专用但闲置</span><b class="warn">${al.idle.toFixed(0)}</b></div>` : ''}
         <p class="small dim">算力像水：专用服务器只往本组的实验里流——环境和数据都为这个组配好了、不用排队，同样一台顶 ${S.DEDICATED_BONUS} 台，但闲着也不外借；共享池（没分配的服务器 + 云 + 每个人自己的电脑）先流给最缺水的实验，填平了再一起往上涨。实验速度 = 流进来的算力 / 需求，没有上下限。</p>
@@ -605,10 +692,9 @@
     </div>`;
   }
   // 投稿日历：接下来一年里，在研课题和各个小组的子方向能投的 A / B 类会议截稿
-  function calendarCard() {
+  function calendarPane() {
     const subs = [...new Set(g.projects.filter(p => p.phase !== 'review').map(p => p.sub).concat(g.groups.map(gr => gr.sub)).filter(Boolean))];
-    if (!subs.length) return '';
-    if (openState.cal == null) openState.cal = true;
+    if (!subs.length) return '<p class="dim">实验室现在没有在做的子方向，也就没有要盯的截稿。</p>';
     const rows = [];
     Object.values(RS.VENUES).forEach(v => {
       if (!v.dl || (v.tier !== 'A' && v.tier !== 'B')) return;
@@ -619,42 +705,69 @@
     });
     rows.sort((a, b) => a.d - b.d);
     const who = fit => { const names = fit.map(s => S.subName(g, s)); return names.length > 3 ? `${names.slice(0, 3).join('、')} 等 ${names.length} 个子方向` : names.join('、'); };
-    const body = rows.slice(0, 14).map(r => `<div class="kvline cal"><span class="grow">${tierTag(r.v.tier)} <b${r.v.full ? ` data-tip="${esc(r.v.full)}"` : ''}>${esc(r.v.name)}</b> ${venueTags(r.v)}<span class="small dim"> · 适合：${esc(who(r.fit))}</span></span><span class="small dim nowrap">${G.mdStr(r.d)} · ${G.daysText(r.d - g.day)}</span></div>`).join('')
-      + (rows.length > 14 ? `<p class="small dim">……一年内还有 ${rows.length - 14} 个 A / B 类截稿</p>` : '')
+    const body = rows.slice(0, 20).map(r => `<div class="kvline cal"><span class="grow">${tierTag(r.v.tier)} <b${r.v.full ? ` data-tip="${esc(r.v.full)}"` : ''}>${esc(r.v.name)}</b> ${venueTags(r.v)}<span class="small dim"> · 适合：${esc(who(r.fit))}</span></span><span class="small dim nowrap">${G.mdStr(r.d)} · ${G.daysText(r.d - g.day)}</span></div>`).join('')
+      + (rows.length > 20 ? `<p class="small dim">……一年内还有 ${rows.length - 20} 个 A / B 类截稿</p>` : '')
       + '<p class="small dim">按实验室在做的子方向筛出来的；「跨方向」是别的领域的会议，但也收这些子方向的论文。</p>';
-    return fold('cal', `${ico('calendar')}<span class="grow">投稿日历：接下来一年 ${rows.length} 个 A / B 类截稿</span>`, body, 'card');
+    return `<div class="card"><h3>${ico('calendar')} 接下来一年 ${rows.length} 个 A / B 类截稿</h3>${body}</div>`;
   }
   let curAlloc = null; // 研究页里课题卡片显示实验速度用，每次渲染算一次
+  const PHASE_ORDER = { idea: 0, exp: 1, write: 2, revise: 3, ready: 4, review: 5 };
   function tabResearch() {
+    const s = sub('research');
+    if (s === 'papers') return papersPane();
+    if (s === 'cal') return calendarPane();
     curAlloc = S.computeAlloc(g);
-    const order = { idea: 0, exp: 1, write: 2, revise: 3, ready: 4, review: 5 };
     const phd = !!g.phd;
     // 博士阶段：你参与的课题排在最前面
     const mineP = p => p.lead === g.player || p.helpers.includes(g.player) || p.authors.includes(g.player);
-    const projs = g.projects.slice().sort((a, b) => (phd ? (mineP(b) ? 1 : 0) - (mineP(a) ? 1 : 0) : 0) || order[b.phase] - order[a.phase]);
-    let papers = g.papers;
-    if (paperFilter === 'mine') papers = S.myPapers(g);
-    if (paperFilter === 'A') papers = papers.filter(p => p.tier === 'A');
-    if (paperFilter === 'best') papers = papers.filter(p => p.best || p.oral || p.tot);
-    if (paperFilter === 'cite') papers = papers.slice().sort((a, b) => b.cites - a.cites);
-    const inReview = g.projects.filter(p => p.phase === 'review').length;
+    const mineFirst = (a, b) => (phd ? (mineP(b) ? 1 : 0) - (mineP(a) ? 1 : 0) : 0);
+    const WORK = ['idea', 'exp', 'write'];
+    if (s === 'sub') {
+      // 投稿：等着选会议的排最前，然后是改稿、审稿中
+      const rank = { ready: 0, revise: 1, review: 2 };
+      const list = g.projects.filter(p => !WORK.includes(p.phase)).sort((a, b) => mineFirst(a, b) || rank[a.phase] - rank[b.phase]);
+      const n = ph => list.filter(p => p.phase === ph).length;
+      return `<div class="statline"><span>待投稿 <b>${n('ready')}</b></span><span>审稿中 <b>${n('review')}</b></span><span>改稿中 <b>${n('revise')}</b></span><span>累计投稿 ${g.stats.submissions} · 被拒 ${g.stats.rejects}</span></div>
+        ${list.map(projCard).join('') || '<p class="dim">现在没有在投的论文。</p>'}`;
+    }
+    const list = g.projects.filter(p => WORK.includes(p.phase)).sort((a, b) => mineFirst(a, b) || PHASE_ORDER[b.phase] - PHASE_ORDER[a.phase]);
+    const n = ph => list.filter(p => p.phase === ph).length;
+    return `<div class="statline"><span>进行中 <b>${list.length}</b></span><span>构思 <b>${n('idea')}</b></span><span>实验 <b>${n('exp')}</b></span><span>写作 <b>${n('write')}</b></span></div>
+      ${list.map(projCard).join('') || '<p class="dim">还没有课题。</p>'}`;
+  }
+
+  // 已发表论文：按类别、荣誉、会议、作者、年份筛选，可以换排序（博士阶段多一个「我的 / 实验室全部」）
+  const PF0 = () => ({ scope: g && g.phd ? 'mine' : 'all', tier: 'all', honor: 'all', venue: '', author: '', year: '', sort: 'new' });
+  let pf = PF0();
+  const PF_TIERS = [['A', 'A 类'], ['B', 'B 类'], ['C', 'C 类'], ['W', 'WS', 'Workshop'], ['P', '预印本', 'arXiv 预印本']];
+  const PF_HONORS = [['best', '最佳论文', p => !!p.best], ['tot', '时间检验奖', p => !!p.tot], ['oral', 'Oral', p => !!p.oral], ['viral', '出圈', p => !!p.viral]];
+  function papersPane() {
+    const phd = !!g.phd;
+    const base = phd && pf.scope === 'mine' ? S.myPapers(g) : g.papers;
+    const hon = PF_HONORS.find(h => h[0] === pf.honor);
+    const list = base.filter(p => (pf.tier === 'all' || p.tier === pf.tier) && (!hon || hon[2](p)) && (!pf.venue || p.venue === pf.venue)
+      && (!pf.author || (p.authors || []).includes(pf.author)) && (!pf.year || String(p.year) === pf.year))
+      .sort(pf.sort === 'cite' ? (a, b) => b.cites - a.cites : pf.sort === 'old' ? (a, b) => a.day - b.day : (a, b) => b.day - a.day);
+    const count = f => base.filter(f).length;
+    const countBy = key => { const m = new Map(); base.forEach(p => [].concat(key(p)).forEach(k => { if (k != null) m.set(k, (m.get(k) || 0) + 1); })); return [...m.entries()].sort((a, b) => b[1] - a[1]); };
+    const pick = (k, label, opts) => `<select data-act="pf" data-k="${k}" data-val="${esc(pf[k])}"><option value="">${label}</option>${opts.map(o => `<option value="${esc(o[0])}"${String(o[0]) === pf[k] ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
+    const venues = countBy(p => p.venue).filter(e => RS.VENUES[e[0]]).map(e => [e[0], `${RS.VENUES[e[0]].name}（${e[1]}）`]);
+    const people = countBy(p => p.authors || []).map(e => [e[0], `${e[0] === g.player ? '我' : G.personName(g, e[0])}（${e[1]}）`]).filter(o => !/^前成员/.test(o[1]));
+    const years = countBy(p => p.year).sort((a, b) => b[0] - a[0]).map(e => [String(e[0]), `${e[0]} 年（${e[1]}）`]);
+    const active = pf.tier !== 'all' || pf.honor !== 'all' || pf.venue || pf.author || pf.year;
     const labPapers = g.papers.filter(p => !p.retracted && !p.phd);
-    const filters = [['all', '最新'], ['A', 'A 类'], ['best', '获奖/Oral'], ['cite', '高引']];
-    if (phd) filters.unshift(['mine', '我的论文']);
     return `
-      <div class="statline">
-        ${phd ? '<span class="gold">导师实验室</span>' : ''}
-        <span>论文 <b>${labPapers.length}</b></span><span>A 类 <b>${g.stats.pubs.A}</b></span><span>最佳论文 <b>${g.stats.bestPapers}</b></span>${g.stats.tot ? `<span>时间检验奖 <b>${g.stats.tot}</b></span>` : ''}
-        <span>引用 <b>${U.fmtInt(g.stats.cites)}</b></span><span>h-index <b>${g.stats.h}</b></span><span>审稿中 <b>${inReview}</b></span>
-        <span>投稿 ${g.stats.submissions} · 被拒 ${g.stats.rejects}</span>
+      <div class="statline">${phd ? '<span class="gold">导师实验室</span>' : ''}<span>论文 <b>${labPapers.length}</b></span><span>A 类 <b>${g.stats.pubs.A}</b></span><span>最佳论文 <b>${g.stats.bestPapers}</b></span><span>时间检验奖 <b>${g.stats.tot || 0}</b></span><span>引用 <b>${U.fmtInt(g.stats.cites)}</b></span><span>h-index <b>${g.stats.h}</b></span></div>
+      <div class="card pfilter">
+        ${phd ? `<div class="pf-row"><label>范围</label>${seg('scope', [['mine', '我的论文'], ['all', '实验室全部']], pf.scope, 'pf')}</div>` : ''}
+        <div class="pf-row"><label>类别</label>${seg('tier', [['all', '全部']].concat(PF_TIERS.map(t => [t[0], `${t[1]} ${count(p => p.tier === t[0])}`, t[2]])), pf.tier, 'pf')}</div>
+        <div class="pf-row"><label>荣誉</label>${seg('honor', [['all', '不限']].concat(PF_HONORS.map(h => [h[0], `${h[1]} ${count(h[2])}`])), pf.honor, 'pf')}</div>
+        <div class="pf-row"><label>筛选</label><div class="pf-sel">${pick('venue', '全部会议', venues)}${pick('author', '全部作者', people)}${pick('year', '全部年份', years)}</div></div>
+        <div class="pf-row"><label>排序</label>${seg('sort', [['new', '最新'], ['old', '最早'], ['cite', '引用最多']], pf.sort, 'pf')}</div>
+        <div class="pf-row small"><span class="grow">符合条件 <b>${list.length}</b> 篇</span>${active ? '<button class="mini-btn" data-act="pfReset">清空筛选</button>' : ''}</div>
       </div>
-      ${calendarCard()}
-      <h3 class="sec">${ico('bulb')} 进行中的课题（${projs.length}）</h3>
-      ${projs.map(projCard).join('') || '<p class="dim">还没有课题。</p>'}
-      <h3 class="sec">${ico('paper')} 已发表论文（${g.papers.length}）</h3>
-      ${seg('paperFilter', filters, paperFilter, 'paperFilter')}
-      ${papers.slice(0, paperLimit).map(paperRow).join('') || '<p class="dim">还没有发表论文。</p>'}
-      ${papers.length > paperLimit ? `<button class="wide" data-act="paperMore">显示更多（还有 ${papers.length - paperLimit} 篇）</button>` : ''}`;
+      ${list.slice(0, paperLimit).map(paperRow).join('') || `<p class="dim">${base.length ? '没有符合条件的论文。' : '还没有发表论文。'}</p>`}
+      ${list.length > paperLimit ? `<button class="wide" data-act="paperMore">显示更多（还有 ${list.length - paperLimit} 篇）</button>` : ''}`;
   }
 
   // ---------- 经费 ----------
@@ -697,34 +810,26 @@
     const tin = U.sum(Object.values(L.in)), tout = U.sum(Object.values(L.out));
     const grantGroups = {};
     items.inc.grants.forEach(x => { (grantGroups[x.cat] = grantGroups[x.cat] || []).push(x); });
-    return `
+    const head = `
       <div class="card">
         <div class="money-big ${g.funds < 0 ? 'bad' : ''}">${money(g.funds)}</div>
         <div class="row small">月收入 <b class="good">+${money(inc.total)}</b>　月支出 <b class="bad">-${money(ex.total)}</b>　净 <b class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}</b></div>
         <div class="small ${run < 12 ? 'warn' : 'dim'}">${run === Infinity ? '收支平衡，经费可持续。' : `按当前开销，经费还能撑 ${Math.floor(run)} 个月。`}</div>
         ${sparkline()}
-      </div>
-      <div class="card"><h3>${ico('list')} 每月固定收支</h3>
-        <div class="sub">收入 <b class="good">+${money(inc.total)}</b></div>
-        ${Object.keys(grantGroups).map(cat => fold('fin-in-' + cat, `<span class="grow">${esc(G.ledgerName(g, 'in', cat))}（${grantGroups[cat].length} 项）</span><b class="good">+${money(U.sum(grantGroups[cat], x => x.v))}</b>`, itemList(grantGroups[cat], 1), 'line')).join('') || '<div class="dim small">目前没有基金拨款，经费只出不进。</div>'}
-        ${inc.dept ? fold('fin-in-dept', `<span class="grow">学院补贴</span><b class="good">+${money(inc.dept)}</b>`, itemList(items.inc.dept, 1), 'line') : ''}
-        <div class="sub">支出 <b class="bad">-${money(ex.total)}</b></div>
-        ${fold('fin-salary', `<span class="grow">人员工资（${items.out.salary.length} 人领工资）</span><b class="bad">-${money(ex.salaries)}</b>`, itemList(items.out.salary, -1) + '<div class="dim small">本科生、访问学生、自费硕士、拿奖学金或当助教的学生不由你发工资。</div>', 'line')}
-        ${fold('fin-compute', `<span class="grow">算力维护与云服务</span><b class="bad">-${money(ex.compute)}</b>`, itemList(items.out.compute, -1), 'line')}
-        ${fold('fin-facility', `<span class="grow">设施维护</span><b class="bad">-${money(ex.facilities)}</b>`, itemList(items.out.facility, -1), 'line')}
-        ${fold('fin-supplies', `<span class="grow">耗材与杂费</span><b class="bad">-${money(ex.supplies)}</b>`, itemList(items.out.supplies, -1), 'line')}
-        ${stack}
-      </div>
+      </div>`;
+    const s = sub('funding');
+    if (s === 'ledger') return `
       <div class="card"><h3>${ico('chart')} 年度收支明细</h3>
-        ${years.length > 1 ? `<div class="seg">${years.slice(0, 4).map(y => `<button class="${y === ly ? 'on' : ''}" data-act="ledgerYear" data-arg="${y}">${y === cy ? '今年' : y + ' 年'}</button>`).join('')}</div>` : ''}
+        ${years.length > 1 ? `<div class="seg">${years.slice(0, 6).map(y => `<button class="${y === ly ? 'on' : ''}" data-act="ledgerYear" data-arg="${y}">${y === cy ? '今年' : y + ' 年'}</button>`).join('')}</div>` : ''}
         <p class="small dim">${ly} 年${ly === cy ? '至今' : '全年'}：收入 <b class="good">${money(tin)}</b>，支出 <b class="bad">${money(tout)}</b>，结余 <b class="${tin - tout >= 0 ? 'good' : 'bad'}">${tin - tout >= 0 ? '+' : ''}${money(tin - tout)}</b>。买设备、扩建、差旅、发奖金这些一次性花销也都记在这里。</p>
         <div class="sub">钱从哪里来</div>
         ${ledgerRows('in', L.in)}
         <div class="sub">钱花在哪里</div>
         ${ledgerRows('out', L.out)}
-      </div>
+      </div>`;
+    if (s === 'grants') return `
       <div class="card"><h3>${ico('money')} 在研项目（${g.grants.length}）</h3>
-        ${g.grants.map(x => `<div class="grant-row"><div class="row"><b>${esc(x.name)}</b><span class="small dim">总额 ${money(x.total)}${x.net && x.net < x.total ? `，到账 ${money(x.net)}` : ''}</span></div>${bar(x.monthsLeft / x.months, 'good', `${money(x.monthly)}/月 · 剩 ${x.monthsLeft} 个月`)}</div>`).join('') || '<p class="dim small">暂无。</p>'}
+        ${g.grants.map(x => `<div class="grant-row" data-key="${esc(x.id || x.name)}"><div class="row"><b>${esc(x.name)}</b><span class="small dim">总额 ${money(x.total)}${x.net && x.net < x.total ? `，到账 ${money(x.net)}` : ''}</span></div>${bar(x.monthsLeft / x.months, 'good', `${money(x.monthly)}/月 · 剩 ${x.monthsLeft} 个月`)}</div>`).join('') || '<p class="dim small">暂无。</p>'}
       </div>
       <div class="card"><h3>${ico('pen')} 申请中（${g.proposals.length}）</h3>
         ${g.proposals.map(p => `<div class="kvline"><span class="grow"><b>${esc(p.name)}</b> <span class="small dim">${p.effort === 'full' ? '全力以赴' : '正常投入'}</span></span><span class="small">${p.status === 'writing' ? `撰写中，${G.mdStr(p.deadline)} 截止` : `评审中，${G.monthStr(p.resultDay)} 出结果`}</span></div>`).join('') || '<p class="dim small">暂无。</p>'}
@@ -737,14 +842,28 @@
           return `<div class="kvline" data-tip="${esc(d.full)}"><span class="grow"><b>${esc(d.name)}</b> <span class="small dim">${d.kind === 'gpu' ? '捐赠服务器' : money(d.amount)}</span></span><span class="small ${el ? 'dim' : ''}">${el ? esc(el) : `${G.mdStr(day)} 开放 · 约 ${pct(S.grantProb(g, d, 'full'))}`}</span></div>`;
         }).join('')}
       </div>
+      <div class="card"><h3>${ico('list')} 申请记录</h3>
+        ${g.grantLog.slice(-20).reverse().map(x => `<div class="kvline"><span class="grow">${esc(x.name)}</span><span class="small dim">${G.monthStr(x.d)}</span>${x.won ? tag('获批', 't-good') : tag('未中', 't-bad')}</div>`).join('') || '<p class="dim small">暂无。</p>'}
+      </div>`;
+    if (s === 'biz') return `
       <div class="card"><h3>${ico('people')} ${g.region === 'cn' ? '横向课题' : '企业合作'}</h3>
         <p class="small dim">企业会主动找上门（声望越高越常见、给的钱越多），也可以主动去企业跑一圈（精力 -8，成功率看声望和人脉）。项目分技术咨询、联合研发和大型项目，会占用学生的时间；实验室人越多，能同时接的越多，影响也越小。到期后企业可能想续约。</p>
+        <button class="wide" data-act="seek" ${seekCd ? 'disabled' : ''}>${seekCd ? G.daysText(g.cooldowns.seek - g.day) + '后可以再去' : '去企业跑一圈'}</button>
         <div class="kvline"><span>在执行的企业项目</span><b>${S.contracts(g).length} / ${S.contractCap(g)}</b></div>
         <div class="kvline" data-tip="企业项目占用学生时间对全组科研效率的影响"><span>对科研效率的影响</span><b class="${S.contractDrag(g) < 0.9 ? 'warn' : ''}">×${S.contractDrag(g).toFixed(2)}</b></div>
-        <button data-act="seek" ${seekCd ? 'disabled' : ''}>${seekCd ? G.daysText(g.cooldowns.seek - g.day) + '后可以再去' : '去企业跑一圈'}</button>
-      </div>
-      <div class="card"><h3>${ico('list')} 申请记录</h3>
-        ${g.grantLog.slice(-12).reverse().map(x => `<div class="kvline"><span class="grow">${esc(x.name)}</span><span class="small dim">${G.monthStr(x.d)}</span>${x.won ? tag('获批', 't-good') : tag('未中', 't-bad')}</div>`).join('') || '<p class="dim small">暂无。</p>'}
+        ${S.contracts(g).map(x => `<div class="grant-row" data-key="${esc(x.id || x.name)}"><div class="row"><b>${esc(x.name)}</b><span class="small dim">总额 ${money(x.total)}</span></div>${bar(x.monthsLeft / x.months, 'good', `${money(x.monthly)}/月 · 剩 ${x.monthsLeft} 个月`)}</div>`).join('')}
+      </div>`;
+    return `${head}
+      <div class="card"><h3>${ico('list')} 每月固定收支</h3>
+        <div class="sub">收入 <b class="good">+${money(inc.total)}</b></div>
+        ${Object.keys(grantGroups).map(cat => fold('fin-in-' + cat, `<span class="grow">${esc(G.ledgerName(g, 'in', cat))}（${grantGroups[cat].length} 项）</span><b class="good">+${money(U.sum(grantGroups[cat], x => x.v))}</b>`, itemList(grantGroups[cat], 1), 'line')).join('') || '<div class="dim small">目前没有基金拨款，经费只出不进。</div>'}
+        ${inc.dept ? fold('fin-in-dept', `<span class="grow">学院补贴</span><b class="good">+${money(inc.dept)}</b>`, itemList(items.inc.dept, 1), 'line') : ''}
+        <div class="sub">支出 <b class="bad">-${money(ex.total)}</b></div>
+        ${fold('fin-salary', `<span class="grow">人员工资（${items.out.salary.length} 人领工资）</span><b class="bad">-${money(ex.salaries)}</b>`, itemList(items.out.salary, -1) + '<div class="dim small">本科生、访问学生、自费硕士、拿奖学金或当助教的学生不由你发工资。</div>', 'line')}
+        ${fold('fin-compute', `<span class="grow">算力维护与云服务</span><b class="bad">-${money(ex.compute)}</b>`, itemList(items.out.compute, -1), 'line')}
+        ${fold('fin-facility', `<span class="grow">设施维护</span><b class="bad">-${money(ex.facilities)}</b>`, itemList(items.out.facility, -1), 'line')}
+        ${fold('fin-supplies', `<span class="grow">耗材与杂费</span><b class="bad">-${money(ex.supplies)}</b>`, itemList(items.out.supplies, -1), 'line')}
+        ${stack}
       </div>`;
   }
 
@@ -770,25 +889,29 @@
     const owned = Object.keys(g.gpus).map(id => ({ s: G.gpuSpec(g, id), n: g.gpus[id] })).filter(x => x.s);
     const shop = S.gpuAvailable(g);
     const factor = S.avgSpeed(g, ctx.alloc);
-    return `
+    const pane = sub('facility');
+    if (pane === 'space') return `
       <div class="card"><h3>${ico('home')} 实验室空间</h3>
         <div class="kvline"><span>当前</span><b>${esc(room.name)}（${room.desks} 个工位，${g.members.length} 人${g.members.length > room.desks ? `，${g.members.filter(m => m.desk < 0).length} 人没工位` : ''}）</b></div>
         <p class="small dim">有固定工位的人效率正常；没有工位的只能找地方凑合，效率 -15%（本科生、访问学生 -8%），心情也会慢慢变差。工位按资历自动分配，也可以在成员卡片上亲自安排。超过 16 个工位的实验室分成两层，画面左上角可以切换楼层。</p>
         ${next ? `<button class="wide" data-act="expand" ${g.rep < next.rep || g.funds < S.roomCost(g, next) ? 'disabled' : ''}>扩建为「${esc(next.name)}」· ${next.desks} 工位 · ${money(S.roomCost(g, next))}${g.rep < next.rep ? `（需要声望 ${next.rep}）` : ''}</button>` : '<p class="dim small">已经是最大的实验室了。</p>'}
       </div>
+      <div class="card"><h3>${ico('trophy')} 大型投资</h3>
+        ${S.BIG.map(b => { const st = S.bigState(g, b); const done = (g.flags.big || {})[b.id]; return `<div class="shop-row"><div class="grow"><b>${esc(b.name)}</b>${b.once && done ? tag('已完成', 't-good') : ''}<div class="small dim">${esc(b.desc)}</div></div><button data-act="big" data-arg="${b.id}" ${st ? 'disabled' : ''} data-tip="${esc(st || '')}">${b.once && done ? '✓' : money(S.bigCost(g, b))}</button></div>`; }).join('')}
+      </div>`;
+    // 算力：会变的水管放在最下面，免得它一变长短，下面的购买按钮跟着挪
+    if (pane === 'compute') return `
       <div class="card"><h3>${ico('gpu')} 算力</h3>
         ${bar(ctx.demand > 0 ? ctx.units / ctx.demand : 1, factor < 0.8 ? 'bad' : factor < 1 ? 'warn' : 'good', `算力 ${ctx.units} / 当前需求 ${ctx.demand.toFixed(0)}${ctx.demand > 0 ? ` · 平均实验速度 ×${factor.toFixed(2)}` : ''}`)}
         <p class="small dim">${G.area(g).compute < 0.3 ? '你的方向基本不需要算力。' : `算力像水，在做实验的课题是水管：<b>实验速度 = 流进来的算力 / 需求</b>。水不够，实验跑得慢、结果也不够扎实；水越多跑得越快。算力只加速实验里跑计算的那部分：机器学习、视觉、NLP 几乎全是算力，速度就是 算力 / 需求，没有上下限；系统、网络这些方向的实验主要靠人，算力再多也只能加速其中跑计算的那一截。大家自己的电脑也算一点水，但只够慢慢跑。共享的算力先流给最缺水的实验；分给小组专用的服务器不用排队，一台顶 ${S.DEDICATED_BONUS} 台。模型越来越大，需求每年增长约 15%。`}${owned.length ? '可以在「小组」页把服务器专门分给某个小组。' : ''}</p>
-        ${G.area(g).compute < 0.3 ? '' : pipesHTML(ctx.alloc)}
         ${owned.length ? `<div class="sub">已拥有</div>${owned.map(x => `<div class="kvline"><span class="grow">${esc(x.s.name)} ×${x.n}</span><span class="small dim">+${x.s.units * x.n} 算力 · 维护 ${money(x.s.maint * x.n)}/月</span><button class="mini-btn" data-act="sellGpu" data-arg="${x.s.id}" data-tip="二手价 ${money(x.s.price * 0.25)}">卖</button></div>`).join('')}` : ''}
         <div class="sub">商店</div>
         ${shop.map(s => { const price = S.gpuPrice(g, s); return `<div class="shop-row"><div class="grow"><b>${esc(s.name)}</b> <span class="small dim">${esc(s.desc)}</span><div class="small">+${s.units} 算力 · 维护 ${money(s.maint)}/月</div></div><button data-act="buyGpu" data-arg="${s.id}" ${g.funds < price ? 'disabled' : ''}>${money(price)}</button></div>`; }).join('')}
         <div class="shop-row"><div class="grow"><b>${esc(R.cloud.name)}</b> <span class="small dim">按月付费，随时退订</span><div class="small">每份 +${R.cloud.units} 算力 · ${money(R.cloud.price)}/月</div></div>
           <div class="stepper"><button data-act="cloud" data-arg="-1" ${g.cloud <= 0 ? 'disabled' : ''}>-</button><b>${g.cloud}</b><button data-act="cloud" data-arg="1">+</button></div></div>
-      </div>
-      <div class="card"><h3>${ico('trophy')} 大型投资</h3>
-        ${S.BIG.map(b => { const st = S.bigState(g, b); const done = (g.flags.big || {})[b.id]; return `<div class="shop-row"><div class="grow"><b>${esc(b.name)}</b>${b.once && done ? tag('已完成', 't-good') : ''}<div class="small dim">${esc(b.desc)}</div></div><button data-act="big" data-arg="${b.id}" ${st ? 'disabled' : ''} data-tip="${esc(st || '')}">${b.once && done ? '✓' : money(S.bigCost(g, b))}</button></div>`; }).join('')}
-      </div>
+        ${G.area(g).compute < 0.3 ? '' : pipesHTML(ctx.alloc)}
+      </div>`;
+    return `
       <div class="card"><h3>${ico('shop')} 设施</h3>
         <div class="fac-grid">
         ${RS.FACILITIES.map(f => {
@@ -807,8 +930,9 @@
   function tabPolicy() {
     const pol = g.policies;
     const A = G.area(g);
-    // 托管放在最前面：预设 + 每一类单独设置
-    const order = POLICIES.slice().sort((a, b) => (b.k === 'auto') - (a.k === 'auto'));
+    // 托管单独一栏：预设 + 每一类单独设置
+    const auto = sub('policy') === 'auto';
+    const order = POLICIES.filter(p => (p.k === 'auto') === auto);
     return order.map(p => `<div class="card"><h3>${esc(p.name)}</h3>${seg(p.k, p.opts, pol[p.k])}<p class="hint">${esc(policyDesc(p.k, pol[p.k]))}</p>
       ${p.k === 'auto' ? autoCats() : ''}
       ${p.k === 'topic' ? `<div class="sub">核心方向</div><div class="chips-wrap">${A.topics.map(t => `<button class="chip-btn ${t.id === pol.coreTopic ? 'on' : ''}" data-act="core" data-arg="${t.id}">${esc(t.name)}</button>`).join('')}</div>` : ''}</div>`).join('');
@@ -830,18 +954,21 @@
     const ach = RS.ACHIEVEMENTS;
     const got = ach.filter(a => g.achievements[a.id]).length;
     const kv = (k, v) => `<div class="kvline"><span>${k}</span><b>${v}</b></div>`;
+    const pane = sub('record');
+    if (pane === 'ach') return `
+      <div class="card"><h3>${ico('trophy')} 成就（${got} / ${ach.length}）</h3>
+        <div class="ach-grid">${ach.map(a => { const d = g.achievements[a.id]; return `<div class="ach ${d ? 'got' : ''}" data-tip="${esc(a.desc)}${d ? '\n' + G.dateStr(d) + ' 解锁' : ''}">${ico(d ? 'trophy' : 'question')}<span>${esc(d ? a.name : '？？？')}</span></div>`; }).join('')}</div>
+      </div>`;
+    if (pane === 'timeline') return `
+      <div class="card"><h3>${ico('list')} 大事记</h3>${g.timeline.slice().reverse().map(t => `<div class="kvline"><span class="small dim">${G.dateStr(t.d)}</span><span class="grow">${esc(t.t)}</span></div>`).join('') || '<p class="dim small">还没有什么大事。</p>'}</div>`;
     return `
       <div class="card"><h3>${ico('chart')} 学术档案</h3>
         ${kv('入职年限', G.careerYear(g) + ' 年')}${kv('发表论文', `${g.papers.filter(p => !p.retracted && !p.phd).length}（A ${st.pubs.A} · B ${st.pubs.B} · C ${st.pubs.C} · W ${st.pubs.W}）`)}
-        ${kv('最佳论文', st.bestPapers)}${kv('总引用 / h-index', `${U.fmtInt(st.cites)} / ${st.h}`)}${kv('投稿 / 被拒', `${st.submissions} / ${st.rejects}`)}
+        ${kv('最佳论文', st.bestPapers)}${kv('时间检验奖', st.tot || 0)}${kv('总引用 / h-index', `${U.fmtInt(st.cites)} / ${st.h}`)}${kv('投稿 / 被拒', `${st.submissions} / ${st.rejects}`)}
         ${kv('获批基金', `${st.grantsWon} 项 · 累计 ${money(st.grantTotal)}`)}${kv('毕业博士', `${st.phdGrads}（成为教授 ${st.profGrads}）`)}${kv('学术声望', `${Math.floor(g.rep)} · ${repTitle(g.rep)}`)}
         ${kv('综合评分', S.score(g))}
       </div>
-      ${g.pi.phd ? phdRecordCard(g.pi.phd) : ''}
-      <div class="card"><h3>${ico('trophy')} 成就（${got} / ${ach.length}）</h3>
-        <div class="ach-grid">${ach.map(a => { const d = g.achievements[a.id]; return `<div class="ach ${d ? 'got' : ''}" data-tip="${esc(a.desc)}${d ? '\n' + G.dateStr(d) + ' 解锁' : ''}">${ico(d ? 'trophy' : 'question')}<span>${esc(d ? a.name : '？？？')}</span></div>`; }).join('')}</div>
-      </div>
-      <div class="card"><h3>${ico('list')} 大事记</h3>${g.timeline.slice().reverse().map(t => `<div class="kvline"><span class="small dim">${G.dateStr(t.d)}</span><span class="grow">${esc(t.t)}</span></div>`).join('')}</div>`;
+      ${g.pi.phd ? phdRecordCard(g.pi.phd) : ''}`;
   }
 
   // ---------- 统计 ----------
@@ -928,19 +1055,22 @@
       return `<div class="vstat" data-key="${id}" data-tip="${esc(tip)}"><span class="vname">${tierTag(v.tier)} ${esc(v.name)}</span><span class="vn"><b>${p.n}</b> 篇${p.best ? ' <span class="gold">★</span>' : ''}</span>${bar(d ? x.a / d : 0, d ? (x.a / d >= 0.5 ? 'good' : x.a / d >= 0.25 ? 'warn' : 'bad') : '', d ? `中稿 ${x.a}/${d} · ${pct(x.a / d)}` : wait ? `审稿中 ${wait}` : '还没有结果')}</div>`;
     };
     const shown = ids.slice(0, 15), rest = ids.slice(15);
-    return `
+    const pane = sub('stats');
+    if (pane === 'cites') return `
       <div class="card"><h3>${ico('star')} 引用</h3>
         <div class="statline"><span>总引用 <b>${U.fmtInt(g.stats.cites)}</b></span><span>h-index <b>${g.stats.h}</b></span><span>近一年 <b>+${U.fmtInt(perYear)}</b></span><span>年均 <b>${U.fmtInt(g.stats.cites / yearsIn)}</b></span></div>
         ${lineChart([{ pts: citePts, cls: 's1', name: '总引用' }], x0, x1)}
         ${hPts.length > 2 ? '<div class="sub">h-index</div>' + lineChart([{ pts: hPts, cls: 's3', name: 'h-index' }], x0, x1, 'short') : ''}
         ${top && top.cites ? `<p class="small">引用最高：《${esc(S.short(top.title))}》<span class="dim">${esc(RS.VENUES[top.venue].name)} ${top.year}</span> · <b>${U.fmtInt(top.cites)}</b> 次</p>` : ''}
-      </div>
+      </div>`;
+    if (pane === 'papers') return `
       <div class="card"><h3>${ico('paper')} 论文</h3>
         <div class="statline"><span>正式发表 <b>${formal.length}</b></span><span>A 类 <b>${na}</b></span><span>最佳论文 <b>${g.stats.bestPapers}</b></span><span data-tip="每年年底，各会议给十年前那一届里影响最大的论文颁奖">时间检验奖 <b>${g.stats.tot || 0}</b></span>${pre ? `<span>预印本 ${pre}</span>` : ''}</div>
         ${lineChart([{ pts: allPts, cls: 's1', name: '累计发表' }, { pts: aPts, cls: 's2', name: '其中 A 类' }], x0, x1)}
         <div class="sub">每年发表</div>
         ${yearBars(formal, G.yearOfDay(x0), G.yearOfDay(g.day))}
-      </div>
+      </div>`;
+    return `
       <div class="card"><h3>${ico('list')} 投稿与中稿率</h3>
         ${since}
         <div class="statline"><span>投稿 <b>${tot.s}</b></span><span>录用 <b>${tot.a}</b></span><span>拒稿 <b>${tot.r}</b></span>${tot.w ? `<span>撤稿 ${tot.w}</span>` : ''}<span>中稿率 <b>${rate(tot.a, tot.a + tot.r)}</b></span></div>
@@ -1021,7 +1151,7 @@
       </div>`;
   }
   function labmateCard(x) {
-    return `<div class="mcard" data-key="${x.id}">
+    return `<div class="mcard" data-key="${x.id}" id="m-${x.id}">
       <img class="portrait" src="${SP.portraitURL(x.avatar, x.role, 3)}" alt="" data-act="locate" data-arg="${x.id}" data-tip="在画面中找到 TA">
       <div class="grow">
         <div class="row"><b class="name">${esc(x.name)}</b>${ovrTag(x.stats)}${tag(S.ROLE_NAMES[x.role], 'role-' + x.role)}${tag(S.memberYearLabel(g, x), 'dim')}${g.phd.mentees.includes(x.id) ? tag('你带过', 'gold') : ''}</div>
@@ -1126,17 +1256,46 @@
       <div class="venue-list">${offers.map(row).join('')}</div>`, 'wide');
   }
 
-  const PHD_TABS = [['me', '我', 'cap', tabMe], ['labmates', '实验室', 'flask', tabPhdLab], ['research', '研究', 'paper', tabResearch], ['policy', '方针', 'list', tabPhdPolicy], ['record', '档案', 'trophy', tabPhdRecord]];
+  // 页签：[id, 名字, 图标, 渲染函数, 二级导航（[id, 名字, 提示]，名字可以是函数）]
+  const RESEARCH_SUBS = [['proj', '课题', '在构思、做实验、写论文的课题'], ['sub', '投稿', '等着投稿、审稿中、按审稿意见修改的论文'], ['papers', '论文', '已发表的论文，可以按类别、荣誉、会议、作者、年份筛选'], ['cal', '投稿日历', '接下来一年能投的 A / B 类会议']];
+  const PHD_TABS = [['me', '我', 'cap', tabMe], ['labmates', '实验室', 'flask', tabPhdLab], ['research', '研究', 'paper', tabResearch, RESEARCH_SUBS], ['policy', '方针', 'list', tabPhdPolicy], ['record', '档案', 'trophy', tabPhdRecord]];
   const curTabs = () => (g && g.phd ? PHD_TABS : TABS);
 
   const TABS = [
-    ['lab', '概览', 'home', tabLab], ['members', '成员', 'people', tabMembers], ['groups', '小组', 'branch', tabGroups], ['research', '研究', 'paper', tabResearch],
-    ['funding', '经费', 'money', tabFunding], ['facility', '设施', 'gpu', tabFacility], ['policy', '方针', 'list', tabPolicy], ['stats', '统计', 'chart', tabStats],
-    ['record', '档案', 'trophy', tabRecord],
+    ['lab', '概览', 'home', tabLab, [['main', '总览'], ['map', '研究方向', '领域 → 方向 → 子方向：热度、积累、各子方向的课题和小组']]],
+    ['members', '成员', 'people', tabMembers, [['all', '全部'], ['phd', '博士'], ['ms', '硕士'], ['ug', '本科'], ['other', '其他', '博士后、青年教师、访问学生'], ['alumni', '已离开']]],
+    ['groups', '小组', 'branch', tabGroups, [['list', '小组'], ['rules', '规则', '小组怎么运作、选题倾向、自动分组、组长任命']]],
+    ['research', '研究', 'paper', tabResearch, RESEARCH_SUBS],
+    ['funding', '经费', 'money', tabFunding, [['flow', '收支'], ['ledger', '账本', '每年的钱从哪里来、花在哪里'], ['grants', '基金', '在研项目、申请中、基金日历、申请记录'], ['biz', () => (g && g.region === 'cn' ? '横向课题' : '企业合作')]]],
+    ['facility', '设施', 'gpu', tabFacility, [['compute', '算力'], ['fac', '设施'], ['space', '空间·投资', '扩建实验室、大型投资']]],
+    ['policy', '方针', 'list', tabPolicy, [['policy', '方针'], ['auto', '托管', '哪些事自动处理、哪些事问你']]],
+    ['stats', '统计', 'chart', tabStats, [['cites', '引用'], ['papers', '论文'], ['venues', '投稿', '发表在哪、每个会议 / 期刊的中稿率']]],
+    ['record', '档案', 'trophy', tabRecord, [['main', '档案'], ['ach', '成就'], ['timeline', '大事记']]],
   ];
 
   function renderTabs() {
     return curTabs().map(t => `<button class="${tab === t[0] ? 'on' : ''}" data-act="tab" data-arg="${t[0]}">${ico(t[2])}<span>${t[1]}</span></button>`).join('');
+  }
+  // 二级导航：记住每一页上次看的是哪一栏
+  const subTab = {};
+  function sub(id) {
+    const t = curTabs().find(x => x[0] === id);
+    const subs = t && t[4];
+    if (!subs) return null;
+    return subs.some(s => s[0] === subTab[id]) ? subTab[id] : subs[0][0];
+  }
+  function subnavHTML(t) {
+    if (!t[4]) return '';
+    const cur = sub(t[0]);
+    return `<div class="subnav" data-key="subnav-${t[0]}">${t[4].map(s => `<button class="${s[0] === cur ? 'on' : ''}" data-act="sub" data-arg="${s[0]}"${s[2] ? ` data-tip="${esc(s[2])}"` : ''}>${esc(typeof s[1] === 'function' ? s[1]() : s[1])}</button>`).join('')}</div>`;
+  }
+  function goSub(t, s) {
+    tab = t;
+    subTab[t] = s;
+    RS.settings.subTabs = Object.assign({}, subTab);
+    G.saveSettings(RS.settings);
+    apad = 0;
+    $('tabBody').scrollTop = 0;
   }
   // 实验室动态：日期统一写成「08-05」（宽度一致），换年的地方插一行年份
   const logDate = d => `${String(Math.floor(G.mod(d, 360) / 30) + 1).padStart(2, '0')}-${String(G.mod(d, 30) + 1).padStart(2, '0')}`;
@@ -1911,7 +2070,8 @@
       case 'restoreModal': if (modal && modal.kind === 'queue') { modal.min = false; modalOpenedAt = performance.now(); } break;
       case 'fold': openState[arg] = !openState[arg]; break;
       case 'ledgerYear': ledgerYear = +arg; break;
-      case 'tab': tab = arg; confirmDismiss = null; confirmGroupDel = null; confirmGiveUp = null; $('tabBody').scrollTop = 0; break;
+      case 'tab': tab = arg; confirmDismiss = null; confirmGroupDel = null; confirmGiveUp = null; apad = 0; $('tabBody').scrollTop = 0; break;
+      case 'sub': goSub(tab, arg); confirmDismiss = null; confirmGroupDel = null; confirmGiveUp = null; break;
       case 'compact': UI.setCompact(!document.body.classList.contains('compact')); break;
       case 'settings': modal = { kind: 'local', type: 'settings' }; break;
       case 'help': modal = { kind: 'local', type: 'help' }; break;
@@ -2070,7 +2230,8 @@
       case 'expand': fail(S.expandRoom(g)); break;
       case 'big': fail(S.doBig(g, arg)); break;
       case 'seek': fail(S.seekContract(g)); setTimeout(openNextQueue, 50); break;
-      case 'paperFilter': paperFilter = v; paperLimit = 30; break;
+      case 'pf': pf[k] = el.tagName === 'SELECT' ? el.value : v; paperLimit = 30; break;
+      case 'pfReset': pf = Object.assign(PF0(), { scope: pf.scope, sort: pf.sort }); paperLimit = 30; break;
       case 'venueFilter': venueFilter = arg; break;
       case 'paperMore': paperLimit += 30; break;
       // 队列弹窗
@@ -2179,22 +2340,31 @@
   }
   UI.init = function () {
     applyLogOpen();
+    Object.assign(subTab, RS.settings.subTabs || {});
     document.addEventListener('click', e => {
       const el = e.target.closest('[data-act]');
-      if (!el || el.disabled) return;
+      if (!el || el.disabled || el.tagName === 'SELECT') return;
       if (modal && modal.kind === 'queue' && el.closest('#modalLayer') && performance.now() - modalOpenedAt < 300) return;
       act(el.getAttribute('data-act'), el);
+    });
+    // 下拉框：选完再处理
+    document.addEventListener('change', e => {
+      const el = e.target;
+      if (el.tagName === 'SELECT' && el.hasAttribute('data-act')) act(el.getAttribute('data-act'), el);
     });
     document.addEventListener('mouseover', e => {
       const el = e.target.closest('[data-tip]');
       if (el) showTip(el.getAttribute('data-tip'), e.clientX, e.clientY);
     });
     document.addEventListener('mousemove', e => {
+      ptr = { x: e.clientX, y: e.clientY };
       const el = e.target.closest('[data-tip]');
       if (el) showTip(el.getAttribute('data-tip'), e.clientX, e.clientY);
       else if (e.target.id !== 'scene') hideTip();
     });
-    document.addEventListener('mouseleave', hideTip);
+    document.addEventListener('mouseleave', () => { ptr = null; hideTip(); });
+    $('side').addEventListener('mouseleave', releasePad);
+    $('tabBody').addEventListener('wheel', releasePad, { passive: true });
     const cv = $('scene');
     cv.addEventListener('mousemove', e => {
       if (!g) return;
@@ -2213,7 +2383,14 @@
       if (!info) return;
       if (info.kind === 'member') {
         selMember = info.id;
-        tab = 'members';
+        if (g.phd) tab = 'labmates';
+        else {
+          // 当前这一栏里没有 TA（比如在看博士生，点的是本科生）：切到「全部」
+          const m = G.member(g, info.id);
+          const s = sub('members');
+          if (!m || (s !== 'all' && s !== memberSub(m))) goSub('members', 'all');
+          else tab = 'members';
+        }
         if (document.body.classList.contains('compact')) UI.setCompact(false);
         dirty = true;
         UI.frame(true);
@@ -2222,7 +2399,7 @@
       } else if (info.kind === 'floor') RS.Scene.setFloor(info.f);
       else if (info.kind === 'pi') { tab = 'lab'; dirty = true; }
       else if (info.kind === 'gpu') { tab = 'facility'; dirty = true; }
-      else if (info.kind === 'honor') { tab = 'research'; paperFilter = 'A'; dirty = true; }
+      else if (info.kind === 'honor') { goSub('research', 'papers'); pf = Object.assign(PF0(), { scope: 'all', tier: 'A' }); paperLimit = 30; dirty = true; }
     });
     document.addEventListener('keydown', e => {
       if (!g || e.target.tagName === 'INPUT') return;
@@ -2254,7 +2431,8 @@
   UI.setGame = function (game) {
     g = game;
     tab = game && game.phd ? 'me' : 'lab';
-    paperFilter = game && game.phd ? 'mine' : 'all';
+    pf = PF0();
+    paperLimit = 30;
     selMember = null;
     modal = null;
     $('modalLayer').innerHTML = '';
@@ -2300,7 +2478,12 @@
     morph($('topbar'), renderTop());
     morph($('tabs'), renderTabs());
     const t = curTabs().find(x => x[0] === tab) || curTabs()[0];
-    morph($('tabBody'), t[3]());
+    const body = $('tabBody');
+    const anc = anchorAt(body);
+    morph(body, subnavHTML(t) + APAD() + t[3]());
+    // 下拉框的当前值以界面状态为准（「清空筛选」之后也能复位）
+    body.querySelectorAll('select[data-val]').forEach(s => { const v = s.getAttribute('data-val'); if (s.value !== v) s.value = v; });
+    keepAnchor(body, anc);
     morph($('log'), renderLog());
     if (modal && modal.kind === 'queue') {
       const item = g.queue.find(q => q.qid === modal.qid);
