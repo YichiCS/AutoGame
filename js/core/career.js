@@ -739,8 +739,46 @@
   };
 
   // ---------- 年度总结 ----------
+  // ---------- 时间检验奖（Test of Time） ----------
+  // 每年年底，各个会议给十年前那一届里影响最大的论文颁奖：引用要达到同档次一般论文的 9 倍以上才有机会，越高越有希望，最佳论文再加一点。
+  // 很难拿：一个做得很好的实验室干二十五年，平均也就拿一个左右
+  S.TOT_YEARS = 10;
+  S.TOT_BAR = 9;
+  S.totRatio = function (g, pa) {
+    const v = RS.VENUES[pa.venue];
+    const expect = 7.2 * RS.TIERS[pa.tier].cite * ((v && v.cm) || 1) * G.area(g).citeMult; // 同档次论文十年的一般引用
+    return pa.cites / Math.max(1, expect);
+  };
+  S.totChance = function (g, pa) {
+    const v = RS.VENUES[pa.venue];
+    if (!v || v.type !== 'conf' || (pa.tier !== 'A' && pa.tier !== 'B') || pa.retracted || pa.tot) return 0;
+    const r = S.totRatio(g, pa);
+    return U.clamp((r - S.TOT_BAR) * 0.015, 0, 0.4) + (pa.best && r > S.TOT_BAR / 2 ? 0.05 : 0);
+  };
+  S.testOfTime = function (g) {
+    const y = G.calYear(g);
+    const won = new Set();
+    for (const pa of g.papers) {
+      if (pa.year !== y - S.TOT_YEARS || won.has(pa.venue)) continue;
+      if (!U.chance(S.totChance(g, pa))) continue;
+      won.add(pa.venue); // 每个会议每年只发一个
+      const v = RS.VENUES[pa.venue];
+      pa.tot = y;
+      pa.rate *= 1.3; // 得奖以后又被翻出来读
+      g.stats.tot = (g.stats.tot || 0) + 1;
+      const rep = pa.tier === 'A' ? 12 : 5;
+      S.addRep(g, rep);
+      pa.authors.forEach(id => { const m = G.member(g, id); if (m) { S.story(g, m, `《${short(pa.title)}》获得 ${v.name} ${y} 时间检验奖`); S.addMood(m, 10); } });
+      G.log(g, `《${short(pa.title)}》获得 ${v.name} ${y} 时间检验奖（Test of Time）！`, 'gold');
+      G.milestone(g, `《${pa.title}》获得 ${v.name} ${y} 时间检验奖`);
+      G.queue(g, { type: 'notice', tone: 'gold', icon: 'trophy', fx: 'confetti', title: '时间检验奖！',
+        text: `十年前发表在 <b>${v.name} ${pa.year}</b> 的《${U.esc(pa.title)}》获得了 <b>${v.name} ${y} 时间检验奖</b>（Test of Time Award）！<br>这篇论文已经被引用了 ${U.fmtInt(pa.cites)} 次，经受住了时间的检验。声望 +${rep}。` });
+    }
+  };
+
   S.yearEnd = function (g) {
     if (g.phd) return S.phdYearEnd(g);
+    S.testOfTime(g);
     const y = g.year;
     const cites = g.stats.cites - y.cites0;
     const score = y.papersA * 3 + y.papers + y.grants / (g.startup * 0.2) + cites / 200 + y.grads * 2;

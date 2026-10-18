@@ -593,7 +593,7 @@
       ${tierTag(pa.tier)}
       <div class="grow"><div class="ptitle">${esc(pa.title)}${pa.phd ? ' <span class="tag dim" data-tip="读博期间发表的论文：算进引用和 h-index，不算进考核">博士期间</span>' : ''}</div>
       <div class="small authors">${authorsHTML(S.authorList(g, pa))}</div>
-      <div class="small dim"><span${venueTip(v) ? ` data-tip="${esc(venueTip(v))}"` : ''}>${esc(v.name)}</span> ${pa.year}${pa.best ?` · <span class="gold">${ico('trophy')}最佳论文</span>` : ''}${pa.oral ? ' · Oral' : ''}${pa.viral ? ' · <span class="good">出圈</span>' : ''}${pa.retracted ? ' · <span class="bad">已撤稿</span>' : ''} · 引用 ${pa.cites}</div></div>
+      <div class="small dim"><span${venueTip(v) ? ` data-tip="${esc(venueTip(v))}"` : ''}>${esc(v.name)}</span> ${pa.year}${pa.best ?` · <span class="gold">${ico('trophy')}最佳论文</span>` : ''}${pa.tot ? ` · <span class="gold" data-tip="${esc(RS.VENUES[pa.venue].name)} ${pa.tot} 时间检验奖（Test of Time）：十年后回头看，影响最大的论文">${ico('trophy')}时间检验奖 ${pa.tot}</span>` : ''}${pa.oral ? ' · Oral' : ''}${pa.viral ? ' · <span class="good">出圈</span>' : ''}${pa.retracted ? ' · <span class="bad">已撤稿</span>' : ''} · 引用 ${pa.cites}</div></div>
     </div>`;
   }
   // 投稿日历：接下来一年里，在研课题和各个小组的子方向能投的 A / B 类会议截稿
@@ -627,7 +627,7 @@
     let papers = g.papers;
     if (paperFilter === 'mine') papers = S.myPapers(g);
     if (paperFilter === 'A') papers = papers.filter(p => p.tier === 'A');
-    if (paperFilter === 'best') papers = papers.filter(p => p.best || p.oral);
+    if (paperFilter === 'best') papers = papers.filter(p => p.best || p.oral || p.tot);
     if (paperFilter === 'cite') papers = papers.slice().sort((a, b) => b.cites - a.cites);
     const inReview = g.projects.filter(p => p.phase === 'review').length;
     const labPapers = g.papers.filter(p => !p.retracted && !p.phd);
@@ -636,7 +636,7 @@
     return `
       <div class="statline">
         ${phd ? '<span class="gold">导师实验室</span>' : ''}
-        <span>论文 <b>${labPapers.length}</b></span><span>A 类 <b>${g.stats.pubs.A}</b></span><span>最佳论文 <b>${g.stats.bestPapers}</b></span>
+        <span>论文 <b>${labPapers.length}</b></span><span>A 类 <b>${g.stats.pubs.A}</b></span><span>最佳论文 <b>${g.stats.bestPapers}</b></span>${g.stats.tot ? `<span>时间检验奖 <b>${g.stats.tot}</b></span>` : ''}
         <span>引用 <b>${U.fmtInt(g.stats.cites)}</b></span><span>h-index <b>${g.stats.h}</b></span><span>审稿中 <b>${inReview}</b></span>
         <span>投稿 ${g.stats.submissions} · 被拒 ${g.stats.rejects}</span>
       </div>
@@ -927,7 +927,7 @@
         ${top && top.cites ? `<p class="small">引用最高：《${esc(S.short(top.title))}》<span class="dim">${esc(RS.VENUES[top.venue].name)} ${top.year}</span> · <b>${U.fmtInt(top.cites)}</b> 次</p>` : ''}
       </div>
       <div class="card"><h3>${ico('paper')} 论文</h3>
-        <div class="statline"><span>正式发表 <b>${formal.length}</b></span><span>A 类 <b>${na}</b></span><span>最佳论文 <b>${g.stats.bestPapers}</b></span>${pre ? `<span>预印本 ${pre}</span>` : ''}</div>
+        <div class="statline"><span>正式发表 <b>${formal.length}</b></span><span>A 类 <b>${na}</b></span><span>最佳论文 <b>${g.stats.bestPapers}</b></span><span data-tip="每年年底，各会议给十年前那一届里影响最大的论文颁奖">时间检验奖 <b>${g.stats.tot || 0}</b></span>${pre ? `<span>预印本 ${pre}</span>` : ''}</div>
         ${lineChart([{ pts: allPts, cls: 's1', name: '累计发表' }, { pts: aPts, cls: 's2', name: '其中 A 类' }], x0, x1)}
         <div class="sub">每年发表</div>
         ${yearBars(formal, G.yearOfDay(x0), G.yearOfDay(g.day))}
@@ -1711,7 +1711,7 @@
     }
     if (info.kind === 'pi') return `${g.pi.name}（${G.titleName(g)}）\n精力 ${Math.round(g.pi.energy)} · ${POLICIES[0].opts.find(o => o[0] === g.policies.focus)[1]}`;
     if (info.kind === 'gpu') { const c = S.dayContext(g); return `服务器机柜\n算力 ${c.units} / 需求 ${c.demand.toFixed(0)}`; }
-    if (info.kind === 'honor') return `荣誉墙\nA 类论文 ${g.stats.pubs.A} 篇 · 最佳论文 ${g.stats.bestPapers} 篇（金框）`;
+    if (info.kind === 'honor') return `荣誉墙\nA 类论文 ${g.stats.pubs.A} 篇 · 最佳论文 ${g.stats.bestPapers} 篇（金框）${g.stats.tot ? ` · 时间检验奖 ${g.stats.tot} 篇（蓝框）` : ''}`;
     if (info.kind === 'cat') return '实验室的猫\n全员心情 +，偶尔捣乱';
     if (info.kind === 'door') return `${g.labName} 的大门`;
     if (info.kind === 'floor') {

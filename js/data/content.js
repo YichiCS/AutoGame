@@ -233,6 +233,7 @@
     { id: 'fellow', name: 'Fellow', desc: '当选 IEEE / ACM / CCF Fellow', check: g => g.honors.some(h => /fellow/.test(h.id)) },
     { id: 'academician', name: '院士', desc: '当选院士', check: g => g.honors.some(h => h.id === 'nae' || h.id === 'cas') },
     { id: 'turing', name: '图灵奖', desc: '计算机科学的最高荣誉', check: g => g.honors.some(h => h.id === 'turing') },
+    { id: 'tot', name: '经得起时间检验', desc: '论文获得时间检验奖（Test of Time）', check: g => (g.stats.tot || 0) >= 1 },
     { id: 'viral', name: '出圈了', desc: '论文在社交媒体上爆火', check: g => !!g.flags.viral },
     { id: 'zen', name: '佛系导师', desc: '3 人以上实验室平均心情达到 90', check: g => g.members.length >= 3 && U.avg(g.members, m => m.mood) >= 90 },
     { id: 'move', name: '良禽择木而栖', desc: '第一次跳槽', check: g => (g.flags.moves || 0) >= 1 },

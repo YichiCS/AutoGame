@@ -656,8 +656,8 @@
         continue;
       }
       const p = list[i];
-      R(cx, cy, 9, 10, p.best ? P.yellow : P.woodD);
-      R(cx + 1, cy + 1, 7, 8, p.best ? '#fff1b0' : P.white);
+      R(cx, cy, 9, 10, p.tot ? P.cyan : p.best ? P.yellow : P.woodD);
+      R(cx + 1, cy + 1, 7, 8, p.tot ? '#d8fbff' : p.best ? '#fff1b0' : P.white);
       R(cx + 2, cy + 2, 5, 1, P.gray);
       R(cx + 2, cy + 4, 4, 1, P.silver);
       R(cx + 2, cy + 6, 5, 1, P.silver);
