@@ -61,21 +61,21 @@ CHANGELOG.md             游戏厅的更新日志
   "id": "pixel-baseball",
   "name": "像素甲子园",
   "subtitle": "监督之路",
-  "version": "0.1.0",
-  "description": "以日本高中棒球为题材的像素风经营模拟……",
-  "tags": ["经营模拟", "体育"],
+  "version": "1.0.0",
+  "description": "以日本高中棒球为题材的像素风挂机经营……",
+  "tags": ["挂机", "经营模拟", "体育"],
   "entry": "dist/index.html",
   "cover": "docs/screenshot.png",
   "color": "#38b764",
   "source": "https://github.com/YichiCS/Pixel-Baseball",
   "build": { "command": "npm ci && npm run typecheck && npm run build", "outputs": ["dist/index.html"] },
   "saves": {
-    "localStorage": ["pixel-koshien:*"],
+    "localStorage": ["pixel-baseball:*", "pixel-koshien:*"],
     "indexedDB": ["pixel-koshien"],
     "adapter": "save-adapter.js",
-    "inGameExport": { "match": ["schools", "club", "manager"], "hint": "游戏内「系统 → 导入存档文件」" }
+    "inGameExport": { "match": ["game", "mgr", "roster", "tours"], "hint": "游戏右上角「⚙ 设置 → 导入存档」" }
   },
-  "dock": { "y": 0.82, "leaveConfirm": "每周结束时才会自动存档，本周还没保存的进度会丢失。" }
+  "dock": { "y": 0.42 }
 }
 ```
 
@@ -105,7 +105,7 @@ CHANGELOG.md             游戏厅的更新日志
   - `localStorage`：键名列表。`"abc"` 只匹配键 `abc`；`"abc:*"` 匹配所有以 `abc:` 开头的键。
   - `indexedDB`：数据库名列表（整个库都算这个游戏的）。
 - 游戏厅只读写声明过的部分；检查脚本保证不同游戏的声明不重叠，且不使用游戏厅保留的 `autogame` 前缀。
-- 新游戏请用 `<id>:` 作为 localStorage 前缀、`<id>` 作为数据库名。早于游戏厅的两个游戏沿用了原来的名字（`research-sim-*`、`pixel-koshien`），这样它们在原地址（`yichics.github.io/Research-Simulator/` 等）积累的存档，在游戏厅里打开时直接就在。
+- 新游戏请用 `<id>:` 作为 localStorage 前缀、`<id>` 作为数据库名。早于游戏厅的两个游戏沿用了原来的名字（`research-sim-*`、`pixel-koshien`），这样它们在原地址（`yichics.github.io/Research-Simulator/` 等）积累的存档，在游戏厅里打开时直接就在。像素甲子园 v1.0.0 改版为挂机游戏后，新存档改用 `pixel-baseball:save`；旧版的 `pixel-koshien:*` 和 IndexedDB `pixel-koshien` 仍然声明，这样旧存档还能在存档中心里导出备份或清除。
 
 游戏厅自己的数据：`autogame:hub`（上次全部导出的时间）、`autogame:dock`（悬浮标签在每个游戏里的位置）。
 
@@ -142,7 +142,7 @@ IndexedDB 里的键和值要能用 JSON 表示（字符串、数字、布尔、n
   "hub": { "version": "1.0.0" },
   "games": {
     "research-simulator": { "name": "科研模拟器", "version": "0.1.0", "data": { "localStorage": { … }, "indexedDB": [] } },
-    "pixel-baseball":     { "name": "像素甲子园", "version": "0.1.0", "data": { … } }
+    "pixel-baseball":     { "name": "像素甲子园", "version": "1.0.0", "data": { … } }
   }
 }
 ```
