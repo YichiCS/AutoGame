@@ -807,7 +807,7 @@
         const price = S().gpuPrice(g, ws);
         const canBuy = S().gpuAvailable(g).includes(ws);
         return {
-          title: '抢卡大战', portrait: { member: a.id },
+          title: '抢卡大战', portrait: { member: a.id }, people: [a.id, b.id],
           text: `${U.esc(a.name)} 和 ${U.esc(b.name)} 因为抢 GPU 吵起来了！一个说自己的实验更急，另一个说自己先排的队。`,
           choices: [
             { label: `再买一台${ws.name}`, hint: `经费 -${money(g, price)} · 两人心情 +5`, disabled: !canBuy ? '这款已经停产了' : g.funds < price ? '经费不足' : null,
@@ -1137,7 +1137,7 @@
         const close = cb >= ca * 0.75;
         const why = b.role === 'ug' ? '申请研究生需要一篇拿得出手的论文' : b.role === 'ms' ? '找工作想要一篇一作' : '毕业要看一作论文';
         return {
-          title: '署名之争', portrait: { member: b.id },
+          title: '署名之争', portrait: { member: b.id }, people: [a.id, b.id],
           text: `《${U.esc(p.title)}》${p.phase === 'write' ? '快写完了' : '已经写完了'}。${U.esc(b.name)} 私下找到你：“这篇我做了不少实验，能不能给我共同一作？${why}……”<br><span class="dim">按实验记录，两人的工作量大约是 ${U.esc(sn(a.name))} ${pa}% : ${U.esc(sn(b.name))} ${100 - pa}%。</span>`,
           choices: [
             { label: '同意共同一作', hint: `两人都算一作 · ${sn(b.name)}心情 +6、信任 +3 · ${sn(a.name)}觉得功劳被分走：心情 -4`, def: close,

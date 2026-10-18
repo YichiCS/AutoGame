@@ -1154,12 +1154,31 @@
     return { grants: '基金申请季', recruit: item.name, pool: item.title, venue: '选择投稿目标', notice: item.title, summary: `${item.data ? item.data.year : ''} 年度总结`, eval: '考核结果', ending: '人生的终章', jobmarket: item.stage === 'apply' ? '找教职' : '求职结果', offers: '跳槽机会', move: '带谁一起走' }[item.type] || '待决定的事';
   }
 
+  // 和学生有关的弹窗里附上 TA 的情况：总评、各项能力、心情、信任、论文、小组、方向、去向……方便做决定
+  function memberBrief(m) {
+    if (!m || !m.stats) return '';
+    const bio = m.bio || {};
+    const trust = Math.round(m.trust == null ? 55 : m.trust);
+    const sup = S.supOf(g, m);
+    const groups = S.memberGroups(g, m).map(gr => groupTag(gr) + (gr.lead === m.id ? tag('组长', 'gold') : '')).join('') || (S.isSolo(m) ? tag('单干', 'dim', soloTip) : '');
+    const outlook = ['phd', 'ms', 'postdoc'].includes(m.role) && !m.isPlayer ? `<div class="small dim">毕业去向预估：${esc(S.placementOutlook(g, m))}</div>` : '';
+    return `<div class="mbrief" data-key="brief-${m.id}">
+      <div class="row"><b class="name">${esc(m.name)}</b>${ovrTag(m.stats)}${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}${bio.goal && m.role !== 'jpi' ? tag('想' + RS.GOALS[bio.goal].replace('还没想好', '再看看'), 't-mid', '职业理想') : ''}${m.desk < 0 ? tag('没有工位', 't-warn') : ''}</div>
+      ${m.traits && m.traits.length ? `<div class="row traits">${traitTags(m)}</div>` : ''}
+      ${statGrid(m.stats)}
+      <div class="row small"><span>心情 <b class="${moodCls(m.mood)}">${Math.round(m.mood)}</b></span><span>信任 <b class="${trust < 35 ? 'bad' : trust < 60 ? 'warn' : 'good'}">${trust}</b></span><span>论文 ${m.pubs}（一作 ${m.first || 0} · A 类 ${m.pubsA}）</span>${m.status !== 'active' ? `<span class="warn">${esc(m.awayWhy || '不在组里')}</span>` : ''}</div>
+      <div class="row small">${groups}<span class="dim">想做「${esc(topicName(bio.interest))}」${sup ? ` · 由 ${esc(sup.name)} 带` : ''}</span></div>
+      ${outlook}
+    </div>`;
+  }
   function renderEvent(item) {
     const ev = RS.Sim.buildEvent(g, item);
     if (!ev) return null;
     const def = RS.EVENTS[item.id] || {};
+    const people = (ev.people || (ev.portrait && ev.portrait.member ? [ev.portrait.member] : [])).map(id => G.member(g, id)).filter(Boolean);
     return modalShell(`${head(ev.portrait && ev.portrait.icon ? ev.portrait.icon : 'mail', ev.title)}
       <div class="mbody">${portraitHTML(ev.portrait, 'big')}<div class="mtext">${ev.text}</div></div>
+      ${people.length ? `<div class="mbriefs">${people.map(memberBrief).join('')}</div>` : ''}
       <div class="choices">${ev.choices.map((c, i) => `<button class="choice ${c.def ? 'def' : ''}" data-act="choose" data-arg="${i}" ${c.disabled ? 'disabled' : ''}><b>${esc(c.label)}</b><small>${esc(c.disabled || c.hint || '')}</small></button>`).join('')}</div>
       ${(() => {
         if (g.phd) return def.minor ? '<div class="mnote">提示：可以在「方针 → 托管」里让这类小事自动处理。</div>' : '';
@@ -1325,7 +1344,7 @@
       <div class="choices"><button class="choice" data-act="closeLocal"><b>算了</b><small>保持原方向</small></button></div>`, 'wide');
   }
   // ---------- 小组相关的弹窗 ----------
-  const memberRowHead = m => `<img class="portrait tiny" src="${SP.portraitURL(m.avatar, m.role, 2)}" alt=""><div class="grow"><b>${esc(m.name)}</b> ${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}`;
+  const memberRowHead = m => `<img class="portrait tiny" src="${SP.portraitURL(m.avatar, m.role, 2)}" alt=""><div class="grow"><b>${esc(m.name)}</b> ${ovrTag(m.stats)}${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}`;
   function renderGroupNew() {
     const row = s => {
       const has = S.groupOfSub(g, s.id);
@@ -1484,6 +1503,7 @@
         ${kv('职业理想 / 信任', `${esc(RS.GOALS[(m.bio || {}).goal] || '还没想好')} / ${Math.round(m.trust == null ? 55 : m.trust)}`)}
         ${kv('去向预估', esc(S.placementOutlook(g, m)))}
         <p class="${st.ok ? 'good' : 'warn'}">${esc(st.text)}</p>
+        <div class="row">${ovrTag(m.stats)}</div>${statGrid(m.stats)}
         ${leading.length ? `<p class="small dim">TA 负责的《${esc(S.short(leading[0].title))}》${leading.length > 1 ? `等 ${leading.length} 个课题` : ''}会交给合作者；没有合作者的话只能中止。已经写完的论文会继续投稿。</p>` : ''}
       </div></div>
       <div class="choices">
@@ -2272,7 +2292,8 @@
     morph($('log'), renderLog());
     if (modal && modal.kind === 'queue') {
       const item = g.queue.find(q => q.qid === modal.qid);
-      if (item && (item.type === 'grants' || item.type === 'recruit')) renderModal();
+      // 弹窗对应的事已经被处理掉了（比如刚改了托管）：关掉它，接着弹下一件
+      if (!item || item.type === 'grants' || item.type === 'recruit') renderModal();
     }
     if (!modal && g.queue.length) openNextQueue();
   };
