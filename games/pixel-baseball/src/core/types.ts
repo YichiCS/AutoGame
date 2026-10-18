@@ -11,8 +11,14 @@ export const POS_NUM: Record<Pos, number> = { P: 1, C: 2, '1B': 3, '2B': 4, '3B'
 
 export type Hand = 'R' | 'L';
 export type BatSide = 'R' | 'L' | 'S';
-export type PitchType = 'SL' | 'CB' | 'FK' | 'CH' | 'CT' | 'SH' | 'SK';
-export const PITCH_TYPES: readonly PitchType[] = ['SL', 'CB', 'FK', 'CH', 'CT', 'SH', 'SK'];
+/** 变化球（直球 FB 不在其中，每个投手都会） */
+export type PitchType =
+  | 'TS' | 'CT' | 'SI' | 'SHU'
+  | 'SL' | 'HSL' | 'SW' | 'VSL'
+  | 'CB' | 'SCB' | 'KCB' | 'PCB' | 'FK' | 'SFF'
+  | 'CH' | 'CCH' | 'PALM'
+  | 'SK' | 'SCR'
+  | 'KN' | 'GYRO';
 export type Delivery = 'over' | 'three' | 'side' | 'under';
 export type GrowthType = 'early' | 'normal' | 'late';
 export type Personality = 'hot' | 'calm' | 'diligent' | 'genius' | 'lazy' | 'proud' | 'shy' | 'leader' | 'cheerful';
@@ -34,12 +40,14 @@ export type ExpPool = Record<ExpKind, number>;
 export interface PitchSkill {
   type: PitchType;
   lv: number; // 1..7
+  /** 魔球：独创的名字，威力额外加成 */
+  sig?: string;
 }
 
 export interface Injury {
   name: string;
   part: 'shoulder' | 'elbow' | 'leg' | 'back' | 'hand' | 'other';
-  weeks: number;
+  days: number;
   severity: 1 | 2 | 3;
 }
 
@@ -56,23 +64,16 @@ export interface StatBlock {
   pit: PitLine;
 }
 
+/** 培养方针（自动加点的倾向） */
 export type DevPlan =
   | 'auto' | 'balanced' | 'contact' | 'power' | 'speed' | 'defense'
-  | 'pit_velo' | 'pit_ctrl' | 'pit_brk' | 'pit_stam' | 'manual';
-
-export type Focus =
-  | { kind: 'attr'; attr: AttrKey }
-  | { kind: 'pitch'; pitch: PitchType }
-  | { kind: 'pos'; pos: Pos }
-  | { kind: 'rest' }
-  | { kind: 'study' };
+  | 'pit_velo' | 'pit_ctrl' | 'pit_brk' | 'pit_stam';
 
 export interface Player {
   id: number;
   fam: string;
   given: string;
-  schoolId: number; // -1 = 无所属
-  grade: number; // 0 中学生, 1..3 高中生, 9 已毕业
+  grade: number; // 0 内定的中学生, 1..3 高中生
   enrollYear: number;
   throws: Hand;
   bats: BatSide;
@@ -98,32 +99,26 @@ export interface Player {
   pop: number; // 人气
   exp: ExpPool;
   plan: DevPlan;
-  focus: Focus | null;
+  /** 正在学的新球种 */
   learning: { pitch: PitchType; progress: number } | null;
   wish: CareerWish;
+  /** 最近 7 天每天的投球数（高中棒球：一周 500 球） */
+  pw: number[];
+  /** 引擎读取的「本周投球数」= pw 之和 */
   pitchesWeek: number;
-  /** 上周投球数（周初练习、事件判断用） */
-  pitchesLast?: number;
+  /** 补习 / 停赛剩余天数 */
+  benched: number;
+  /** 三年级夏天打完后引退（还在籍，等毕业 / 选秀） */
   retired: boolean;
-  ineligibleUntil: number; // absWeek
   face: number;
-  joined: 'recruit' | 'walkon' | 'transfer' | 'scholar' | 'gen';
-  scholarship: boolean;
-  supplementary: number; // 补习剩余周数
-  stats: { season: StatBlock; career: StatBlock; koshien: StatBlock };
-  // 中学生
-  scout?: number;
-  interest?: Record<number, number>;
-  committed?: number;
-  fame?: number;
+  joined: 'regular' | 'scholar' | 'walkon' | 'transfer' | 'gem';
   middle?: string;
-  homePref?: number;
-  offers?: number[]; // 我方做过的招募动作次数等
-  // 履历
-  notes: string[];
-  proTeam?: string;
-  draftRound?: number;
-  path?: string;
+  stats: { season: StatBlock; career: StatBlock; koshien: StatBlock };
+  /** 个人大事记 */
+  notes: { d: number; t: string }[];
+  /** 本赛季成长统计（年度总结用） */
+  gains?: number;
+  draft?: { team: string; round: number };
 }
 
 // ============ 学校 ============
@@ -136,19 +131,7 @@ export interface TeamColors {
 
 export type AIStyle = 'balanced' | 'smallball' | 'power' | 'pitching' | 'speed';
 
-export interface SchoolYearResult {
-  year: number;
-  springPref?: string;
-  springRegion?: string;
-  summerPref?: string;
-  koshien?: string;
-  fallPref?: string;
-  fallRegion?: string;
-  jingu?: string;
-  senbatsu?: string;
-}
-
-export interface School {
+export interface SchoolLite {
   id: number;
   name: string;
   short: string;
@@ -156,176 +139,14 @@ export interface School {
   district: number;
   type: 'public' | 'private';
   prestige: number;
-  strength: number;
   style: AIStyle;
-  mgrName: string;
-  mgrSkill: number;
-  facility: number;
-  academic: number;
   colors: TeamColors;
-  roster: number[] | null;
-  staff: number[];
   koshienApps: number;
   koshienWins: number;
-  summerTitles: number;
-  springTitles: number;
+  titles: number;
   lastKoshien: number;
-  history: SchoolYearResult[];
-  rivalry: number;
-  seen: number;
-  profile: { off: number; pit: number; def: number };
-}
-
-// ============ 教练 ============
-export type StaffRole = 'pitching' | 'batting' | 'fielding' | 'trainer' | 'scout' | 'analyst' | 'director';
-export type StaffTrait = 'strict' | 'gentle' | 'theory' | 'veteran' | 'young' | 'network' | 'medic';
-
-export interface Staff {
-  id: number;
-  name: string;
-  age: number;
-  role: StaffRole;
-  skill: number;
-  salary: number; // 年薪（万円）
-  years: number;
-  loyalty: number;
-  schoolId: number;
-  bg: string;
-  trait: StaffTrait | null;
-}
-
-// ============ 监督 ============
-export type MgrSkill = 'batting' | 'pitching' | 'fielding' | 'tactics' | 'leadership' | 'recruiting' | 'negotiation' | 'insight';
-export const MGR_SKILLS: readonly MgrSkill[] = ['batting', 'pitching', 'fielding', 'tactics', 'leadership', 'recruiting', 'negotiation', 'insight'];
-
-export interface CareerYear {
-  year: number;
-  schoolId: number;
-  schoolName: string;
-  summary: string;
-  w: number;
-  l: number;
-}
-
-export interface JobOffer {
-  id: number;
-  schoolId: number;
-  salary: number;
-  years: number;
-  goal: number;
-  budgetHint: number;
-  expires: number; // absWeek
-  note: string;
-}
-
-export interface Manager {
-  name: string;
-  age: number;
-  bg: string;
-  skills: Record<MgrSkill, number>;
-  level: number;
-  exp: number;
-  points: number;
-  reputation: number;
-  money: number;
-  salary: number;
-  schoolId: number;
-  contractYears: number;
-  ap: number;
-  apMax: number;
-  /** 代言等占用行动力的零头（按周累计，满 1 点才扣） */
-  apOwed?: number;
-  /** 年度中途就任的新合同：第一个年度末不计入合同年数 */
-  contractFresh?: boolean;
-  history: CareerYear[];
-  achievements: string[];
-  offers: JobOffer[];
-  totals: { w: number; l: number; koshienApps: number; koshienWins: number; summerTitles: number; springTitles: number; drafted: number; seasons: number };
-  unemployedWeeks: number;
-  seasonW: number;
-  seasonL: number;
-}
-
-// ============ 俱乐部（本队经营） ============
-export type FacilityId = 'field' | 'indoor' | 'weight' | 'bullpen' | 'cage' | 'dorm' | 'medical' | 'analysis';
-export type MenuId = 'bat' | 'pitch' | 'field' | 'run' | 'power' | 'game' | 'tactic' | 'rest' | 'study';
-export const MENU_IDS: readonly MenuId[] = ['bat', 'pitch', 'field', 'run', 'power', 'game', 'tactic', 'rest', 'study'];
-
-export interface TrainingPlan {
-  alloc: Record<MenuId, number>;
-  intensity: number; // 0 轻松 1 普通 2 严格 3 地狱
-}
-
-export interface LineupConfig {
-  auto: boolean;
-  order: number[];
-  defense: Partial<Record<Pos, number>>;
-  dh: number | null;
-  bench: number[];
-  rotation: number[];
-  autoBench: boolean;
-}
-
-export interface SponsorDeal {
-  id: number;
-  name: string;
-  kind: 'equipment' | 'local' | 'media' | 'endorse' | 'drink' | 'gray';
-  monthly: number;
-  lump: number;
-  winBonus: number;
-  koshienBonus: number;
-  weeksLeft: number;
-  apPerMonth: number;
-  fatigue: number; // 对球员的额外负担
-  popBoost: number;
-  equipDiscount: number;
-  risk: number; // 丑闻风险
-  desc: string;
-}
-
-export interface LedgerEntry {
-  absWeek: number;
-  amount: number;
-  cat: string;
-  note: string;
-}
-
-export interface MonthBook {
-  label: string;
-  income: Record<string, number>;
-  expense: Record<string, number>;
-}
-
-export interface ClubState {
-  schoolId: number;
-  funds: number;
-  ledger: LedgerEntry[];
-  books: MonthBook[];
-  facilities: Record<FacilityId, number>;
-  construction: { id: FacilityId; weeksLeft: number } | null;
-  training: TrainingPlan;
-  lineup: LineupConfig;
-  autoManage: boolean;
-  sponsors: SponsorDeal[];
-  sponsorOffers: SponsorDeal[];
-  meal: number; // 0 普通 1 营养 2 豪华
-  equipment: number; // 0 普通 1 良好 2 顶级
-  walkonPolicy: 'open' | 'select';
-  captainId: number | null;
-  chemistry: number;
-  tacticsSkill: number;
-  fans: number;
-  practice: { week: number; opponentId: number; invited?: boolean } | null;
-  scholarshipSlots: number;
-  goal: number; // 目标名次（夏）
-  /** 跳槽时合同约定的目标：就任后第一个年度的目标不低于它 */
-  contractGoal?: number;
-  board: number; // 校方满意度
-  ob: number; // OB 会满意度
-  supporters: number; // 球迷/地方期待
-  scandal: number; // 丑闻风险累积
-  banUntil: number; // 对外比赛禁止（处分）到 absWeek
-  koshienFund: number; // 本次甲子园募款
+  /** 和本校的宿敌度 */
+  rival: number;
 }
 
 // ============ 大会 ============
@@ -334,181 +155,216 @@ export type TourKind = 'springPref' | 'springRegion' | 'summerPref' | 'koshien' 
 export interface BracketMatch {
   a: number | null;
   b: number | null;
-  winner: number | null;
+  w: number | null;
   sa: number;
   sb: number;
   inn: number;
-  played: boolean;
+  done: boolean;
   note?: string;
 }
 
-export interface Tournament {
-  id: string;
+export interface Tour {
   kind: TourKind;
   name: string;
   year: number;
-  pref: number; // -1 不限
-  region: string; // '' 不限
-  district: number; // -1 不限
   teams: number[];
   rounds: BracketMatch[][];
-  roundWeeks: number[];
+  roundDays: number[];
   roundNames: string[];
   mercy: boolean;
   koshien: boolean;
   done: boolean;
   champion: number | null;
   runnerUp: number | null;
-  finish: Record<number, string>;
-  rank: Record<number, number>; // 数值名次: 越大越好
+  /** 本校在这项大会的成绩，没参加为 null */
+  myFinish: string | null;
+  myRank: number;
+  /** 外县学校（不在 g.schools 里的）的资料 */
+  ext: Record<number, SchoolLite>;
 }
 
-// ============ 消息 ============
-export interface Message {
-  id: number;
-  absWeek: number;
-  title: string;
-  body: string;
-  kind: 'info' | 'good' | 'bad' | 'offer' | 'event';
-  read: boolean;
-}
-
-export interface NewsItem {
-  absWeek: number;
-  text: string;
-  kind: 'result' | 'world' | 'draft' | 'school' | 'pro' | 'recruit';
-}
-
-export interface EventChoice {
+/** 今天要打的本校比赛（打完、写入结果之前一直挂着，读档后可以按同一个种子重演） */
+export interface PendingMatch {
+  tour: TourKind | null; // null = 练习赛
+  round: number;
+  idx: number;
+  oppId: number;
+  home: boolean;
+  seed: number;
   label: string;
-  hint?: string;
-  disabled?: boolean;
 }
 
-export interface ActiveEvent {
-  defId: string;
-  title: string;
-  text: string;
-  ctx: Record<string, number | string>;
-  choices: EventChoice[];
-  pid?: number; // 主角球员（显示头像）
+// ============ 记录 ============
+export type LogKind = 'info' | 'good' | 'bad' | 'game' | 'auto' | 'gold' | 'event' | 'train';
+
+export interface LogEntry {
+  d: number;
+  t: string;
+  k: LogKind;
 }
 
-export interface AlumniEntry {
-  pid: number;
+export interface BoxBatLine {
   name: string;
-  pos: Pos;
-  schoolName: string;
-  gradYear: number;
-  path: string;
-  pro: boolean;
-  proTeam?: string;
-  round?: number;
-  proStatus?: string;
-  proYears?: number;
-  summary: string;
+  pos: string;
+  pa: number; ab: number; h: number; hr: number; rbi: number; r: number; bb: number; so: number; sb: number; d: number; t: number;
+  seq: string[];
 }
 
-export interface Records {
-  seasons: SeasonRecord[];
-  alumni: AlumniEntry[];
-  koshienChamps: { year: number; kind: 'summer' | 'spring'; schoolId: number; schoolName: string; runnerUp: string }[];
-  bestBatAvg: { name: string; v: number; year: number } | null;
+export interface BoxPitLine {
+  name: string;
+  outs: number; h: number; r: number; er: number; bb: number; so: number; np: number; hr: number;
+  dec?: 'W' | 'L';
 }
 
-export interface SeasonRecord {
+export interface GameRecord {
+  id: number;
+  d: number;
+  label: string;
+  tour: TourKind | null;
+  oppId: number;
+  oppName: string;
+  home: boolean;
+  my: number;
+  opp: number;
+  inn: number;
+  called: boolean;
+  win: boolean;
+  line: [number[], number[]]; // [本校, 对手]
+  hits: [number, number];
+  errors: [number, number];
+  bat: BoxBatLine[];
+  pit: BoxPitLine[];
+  oppPit: BoxPitLine[];
+  mvp: string | null;
+  highlights: string[];
+}
+
+export interface YearRecord {
   year: number;
-  schoolId: number;
   schoolName: string;
-  results: SchoolYearResult;
+  results: Partial<Record<TourKind, string>>;
   w: number;
   l: number;
-  bestPlayer: string;
+  goal: string;
+  goalMet: boolean;
+  best: string;
 }
 
-export interface WeekReport {
-  title: string;
-  lines: { text: string; tone?: 'good' | 'bad' | 'info' }[];
-  growth: { pid: number; name: string; gains: string }[];
-  money: number;
+export interface Alumni {
+  id: number;
+  name: string;
+  pos: Pos;
+  gradYear: number;
+  schoolName: string;
+  path: 'pro' | 'univ' | 'corp' | 'job' | 'left';
+  proTeam?: string;
+  round?: number;
+  ovr: number;
+  summary: string;
+  proStatus?: string;
+  proYears?: number;
+  face: number;
+}
+
+// ============ 监督 ============
+export type MgrSkill = 'batting' | 'pitching' | 'fielding' | 'tactics' | 'leadership' | 'recruiting' | 'negotiation' | 'insight';
+export const MGR_SKILLS: readonly MgrSkill[] = ['batting', 'pitching', 'fielding', 'tactics', 'leadership', 'recruiting', 'negotiation', 'insight'];
+
+export interface Manager {
+  name: string;
+  age0: number;
+  bg: string;
+  face: number;
+  skills: Record<MgrSkill, number>;
+  level: number;
+  exp: number;
+  rep: number;
+  /** 在现在这所学校执教的起始学年 */
+  since: number;
+  career: { year: number; school: string; summary: string; w: number; l: number }[];
+  totals: { w: number; l: number; koshienApps: number; koshienWins: number; summerTitles: number; springTitles: number; drafted: number; seasons: number; prefTitles: number };
+}
+
+// ============ 球队经营（挂机版：方针 + 设施） ============
+export type FacilityId = 'field' | 'cage' | 'bullpen' | 'weight' | 'indoor' | 'medical' | 'analysis' | 'dorm';
+export const FACILITY_IDS: readonly FacilityId[] = ['field', 'cage', 'bullpen', 'weight', 'indoor', 'medical', 'analysis', 'dorm'];
+
+export type TrainFocus = 'balanced' | 'batting' | 'pitching' | 'defense' | 'physical' | 'mental' | 'practical';
+
+export interface Policies {
+  focus: TrainFocus;
+  intensity: number; // 0 轻松 1 普通 2 严格 3 地狱
+  autoRest: boolean;
+  style: AIStyle;
+  pitcherUse: 'ace' | 'rotation' | 'bullpen';
+  lineup: 'merit' | 'seniors' | 'youth';
+  recruit: 'balanced' | 'ready' | 'potential';
+  study: 'baseball' | 'balanced' | 'academic';
+  auto: 'off' | 'minor' | 'all' | 'custom';
+  autoCats: Record<string, boolean>;
+}
+
+export interface Club {
+  chemistry: number; // 默契 0..100
+  fans: number;
+  board: number; // 校方满意度 0..100
+  ob: number; // OB 会满意度 0..100
+  captainId: number | null;
+  scandal: number;
+  banUntil: number; // 对外比赛禁止到这一天（处分）
+  tactics: number; // 战术熟练度 0..100
+  goal: { kind: 'summerPref' | 'koshien'; rank: number; text: string } | null;
+}
+
+export type Ctx = Record<string, string | number | boolean | number[] | string[] | null>;
+
+export interface QueueItem {
+  qid: number;
+  id: string;
+  ctx: Ctx;
 }
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
 
-export interface Settings {
-  sound: boolean;
-  animSpeed: number; // 1 普通 2 快 3 极速
-  stopAtKey: boolean;
-  zoom: number;
-}
-
 export interface GameState {
-  version: number;
-  saveName: string;
+  game: 'pixel-baseball';
+  v: number;
+  seed: number;
   rng: number[];
   nextId: number;
-  year: number;
-  week: number;
-  absWeek: number;
+  day: number; // 0 = 开局学年的 4 月 1 日
   startYear: number;
+  created: number;
+  savedAt: number;
   difficulty: Difficulty;
   dh: boolean;
-  manager: Manager;
-  schools: Record<number, School>;
+  prefId: number;
+  schoolId: number;
+  schools: Record<number, SchoolLite>;
+  mgr: Manager;
   players: Record<number, Player>;
-  staff: Record<number, Staff>;
-  prospects: number[];
-  transfers: number[];
-  freeStaff: number[];
-  tournaments: Record<string, Tournament>;
-  club: ClubState;
-  inbox: Message[];
-  news: NewsItem[];
-  eventQueue: ActiveEvent[];
-  flow: FlowState | null;
-  records: Records;
-  flags: Record<string, number>;
+  roster: number[];
+  incoming: number[];
+  alumni: Alumni[];
+  club: Club;
+  policies: Policies;
+  funds: number;
+  facilities: Record<FacilityId, number>;
+  building: { id: FacilityId; left: number; total: number } | null;
+  books: { year: number; in: Record<string, number>; out: Record<string, number> }[];
+  tours: Partial<Record<TourKind, Tour>>;
+  pending: PendingMatch | null;
+  games: GameRecord[];
+  seasonWL: [number, number];
+  history: YearRecord[];
+  queue: QueueItem[];
+  schedule: { d: number; kind: string; data?: Ctx }[];
   cooldowns: Record<string, number>;
-  reports: WeekReport[];
-  summerReps: number[];
-  senbatsuReps: number[];
-  nationalLog: { year: number; kind: string; text: string }[];
-  notices: Notice[];
-  choice: PendingChoice | null;
-  regionRank: Record<string, number[]>;
-  draftLog: { year: number; picks: { round: number; team: string; name: string; school: string; pos: string; mine: boolean; ikusei: boolean }[] }[];
-}
-
-export interface Notice {
-  title: string;
-  lines: string[];
-  kind: 'celebrate' | 'info' | 'bad';
-}
-
-export interface PendingChoice {
-  id: string;
-  title: string;
-  text: string;
-  options: { label: string; value: number; hint?: string }[];
-}
-
-// ============ 周流程 ============
-export interface FlowStep {
-  k: 'specials' | 'events' | 'training' | 'matches' | 'practice' | 'weekly' | 'report';
-}
-
-export interface FlowState {
-  steps: FlowStep[];
-  idx: number;
-  report: WeekReport;
-  pendingMatch: PendingMatch | null;
-}
-
-export interface PendingMatch {
-  tid: string | null; // null = 练习赛
-  round: number;
-  matchIdx: number;
-  oppId: number;
-  home: boolean;
-  label: string;
+  flags: Record<string, number>;
+  logs: LogEntry[];
+  timeline: { d: number; t: string }[];
+  achievements: Record<string, number>;
+  lastBlockDay: number;
+  /** 本学年的选拔出场与名额判定所需 */
+  senbatsuPick: number[];
 }

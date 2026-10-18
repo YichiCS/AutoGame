@@ -1,22 +1,22 @@
-// 监督生涯：目标、评价、合同、跳槽、成就
-import type { JobOffer, Manager, MgrSkill, School, Tournament } from './types';
-import { MGR_SKILLS } from './types';
-import { G, mySchool, nextId, addRep } from './state';
-import { chance, pick, randInt, weightedPick } from './rng';
+// 监督生涯：背景、名声、成长、年度目标与评价、跳槽、成就
+import type { MgrSkill, Player, Pos, SchoolLite, Tour } from './types';
+import { FACILITY_IDS, MGR_SKILLS } from './types';
+import { G, addPrestige, addRep, log, milestone, mySchool, myPlayers } from './state';
+import { chance, gauss, hash32, pick, randInt, shuffle, withSeed } from './rng';
 import { clamp } from './util';
-import { schoolStrength, schoolsInPref, materialize, dematerialize, genPrefSchools, rosterPlayers } from './world';
-import { PREFS, gameSchoolCount } from '../data/prefectures';
-import { genStaff, refreshMarket } from './staff';
-import { decideRecruits, genProspects } from './recruit';
-import { autoBench } from './team';
-import { SCHED } from './calendar';
+import { generatePlayer } from './player';
+import { genPrefSchools, schoolRating, extSchools, clearWorldCache } from './world';
+import { strengthOf } from './team';
+import { SCHED, doy, yearIdx } from './calendar';
+import { PREFS } from '../data/prefectures';
+import { FAMILY_NAMES } from '../data/names';
 
 export const MGR_SKILL_NAME: Record<MgrSkill, string> = {
   batting: '打击指导', pitching: '投手指导', fielding: '守备指导', tactics: '战术指挥', leadership: '统率力', recruiting: '招募口才', negotiation: '交涉力', insight: '慧眼',
 };
 export const MGR_SKILL_DESC: Record<MgrSkill, string> = {
-  batting: '打击练习的效率', pitching: '投球练习的效率', fielding: '守备/跑垒练习效率与守位转换速度', tactics: '比赛中战术的成功率、战术熟练度成长',
-  leadership: '球队默契与干劲，减少不良事件', recruiting: '家访效果与招募吸引力', negotiation: '赞助条件、教练挖角与签约', insight: '看穿球员潜力与中学生的真实能力',
+  batting: '野手的技术经验', pitching: '投手的技术、变化经验', fielding: '敏捷经验（守备、跑垒）', tactics: '比赛中战术的判断与成功率',
+  leadership: '球队默契、干劲与精神经验', recruiting: '新生的人数与素质', negotiation: '学校拨款与 OB 捐款', insight: '看清球员的潜力与能力上限',
 };
 
 export interface BackgroundDef {
@@ -25,43 +25,16 @@ export interface BackgroundDef {
   desc: string;
   skills: Record<MgrSkill, number>;
   rep: number;
-  money: number;
+  funds: number;
 }
 
 export const BACKGROUNDS: readonly BackgroundDef[] = [
-  { id: 'expro', name: '前职业球员', desc: '曾在职业联赛效力多年。名声起点高，打击与投手指导出色，但不擅长经营。', skills: { batting: 62, pitching: 58, fielding: 50, tactics: 45, leadership: 50, recruiting: 52, negotiation: 35, insight: 55 }, rep: 32, money: 2000 },
-  { id: 'koshien', name: '前甲子园英雄', desc: '高中时代在甲子园闪耀过的人物。统率力与招募口才出众。', skills: { batting: 52, pitching: 50, fielding: 50, tactics: 48, leadership: 60, recruiting: 60, negotiation: 42, insight: 48 }, rep: 24, money: 600 },
-  { id: 'teacher', name: '体育教师', desc: '在公立高中执教多年的体育老师。能力均衡，擅长纪律与学业管理。', skills: { batting: 48, pitching: 48, fielding: 56, tactics: 50, leadership: 60, recruiting: 42, negotiation: 45, insight: 50 }, rep: 10, money: 400 },
-  { id: 'analyst', name: '数据分析师', desc: '运动科学出身的理论派。战术与慧眼出众，但缺乏威信。', skills: { batting: 50, pitching: 52, fielding: 48, tactics: 65, leadership: 40, recruiting: 45, negotiation: 48, insight: 65 }, rep: 8, money: 500 },
-  { id: 'business', name: '企业家转行', desc: '商界出身的棒球狂热者。交涉与招募一流，但指导经验不足。', skills: { batting: 42, pitching: 42, fielding: 42, tactics: 45, leadership: 52, recruiting: 56, negotiation: 70, insight: 48 }, rep: 12, money: 3000 },
+  { id: 'expro', name: '前职业球员', desc: '曾在职业联赛效力多年。名声起点高，打击与投手指导出色，但不擅长经营。', skills: { batting: 62, pitching: 58, fielding: 50, tactics: 45, leadership: 50, recruiting: 52, negotiation: 35, insight: 55 }, rep: 30, funds: 150 },
+  { id: 'koshien', name: '前甲子园英雄', desc: '高中时代在甲子园闪耀过的人物。统率力与招募口才出众。', skills: { batting: 52, pitching: 50, fielding: 50, tactics: 48, leadership: 60, recruiting: 60, negotiation: 42, insight: 48 }, rep: 22, funds: 120 },
+  { id: 'teacher', name: '体育教师', desc: '在公立高中执教多年的体育老师。能力均衡，擅长纪律与学业管理。', skills: { batting: 48, pitching: 48, fielding: 56, tactics: 50, leadership: 60, recruiting: 42, negotiation: 45, insight: 50 }, rep: 10, funds: 100 },
+  { id: 'analyst', name: '数据分析师', desc: '运动科学出身的理论派。战术与慧眼出众，但缺乏威信。', skills: { batting: 50, pitching: 52, fielding: 48, tactics: 65, leadership: 40, recruiting: 45, negotiation: 48, insight: 65 }, rep: 8, funds: 110 },
+  { id: 'business', name: '企业家转行', desc: '商界出身的棒球狂热者。交涉与招募一流，但指导经验不足。', skills: { batting: 42, pitching: 42, fielding: 42, tactics: 45, leadership: 52, recruiting: 56, negotiation: 70, insight: 48 }, rep: 12, funds: 400 },
 ];
-
-export function newManager(name: string, bgId: string, age: number): Manager {
-  const bg = BACKGROUNDS.find((b) => b.id === bgId) ?? BACKGROUNDS[2];
-  return {
-    name,
-    age,
-    bg: bg.id,
-    skills: { ...bg.skills },
-    level: 1,
-    exp: 0,
-    points: 0,
-    reputation: bg.rep,
-    money: bg.money,
-    salary: 400,
-    schoolId: -1,
-    contractYears: 3,
-    ap: 4,
-    apMax: 4,
-    history: [],
-    achievements: [],
-    offers: [],
-    totals: { w: 0, l: 0, koshienApps: 0, koshienWins: 0, summerTitles: 0, springTitles: 0, drafted: 0, seasons: 0 },
-    unemployedWeeks: 0,
-    seasonW: 0,
-    seasonL: 0,
-  };
-}
 
 export function repTier(r: number): string {
   if (r >= 95) return '传说';
@@ -72,308 +45,282 @@ export function repTier(r: number): string {
   return '无名';
 }
 
-export function addMgrExp(v: number): string | null {
-  const m = G.manager;
-  m.exp += v;
-  let up = 0;
-  while (m.exp >= mgrExpNeed(m.level)) {
-    m.exp -= mgrExpNeed(m.level);
-    m.level++;
-    m.points += 3;
-    up++;
-  }
-  return up ? `监督等级提升至 Lv${m.level}！获得技能点 ${up * 3}。` : null;
-}
+// ---------- 监督成长 ----------
+export const mgrExpNeed = (lv: number) => 30 + lv * 15;
 
-export function skillCost(v: number): number {
-  return v >= 85 ? 3 : v >= 70 ? 2 : 1;
-}
-
-export function raiseSkill(k: MgrSkill): boolean {
-  const m = G.manager;
-  const c = skillCost(m.skills[k]);
-  if (m.points < c || m.skills[k] >= 99) return false;
-  m.points -= c;
-  m.skills[k]++;
+/** 监督经验到了就升级（每级 +3 点，由事件让玩家选） */
+export function checkLevelUp(): boolean {
+  const m = G.mgr;
+  if (m.exp < mgrExpNeed(m.level)) return false;
+  m.exp -= mgrExpNeed(m.level);
+  m.level++;
   return true;
 }
 
-export function apMaxOf(m: Manager): number {
-  return 3 + Math.floor(m.skills.leadership / 30);
+export function raiseSkill(k: MgrSkill, v: number): void {
+  G.mgr.skills[k] = clamp(G.mgr.skills[k] + v, 0, 99);
 }
 
-// ---------- 夏季目标阶梯 ----------
-export const LADDER = ['县大会初战败退', '县大会1胜', '县大会16强', '县大会8强', '县大会4强', '县大会亚军', '甲子园出场', '甲子园1胜', '甲子园8强', '甲子园4强', '甲子园亚军', '全国制霸'];
-
-function ladderIn(t: Tournament, sid: number): number {
-  // 统计在该大会的胜场与淘汰轮次
-  let wins = 0;
-  let lostRound = -1;
-  t.rounds.forEach((ms, r) => {
-    for (const m of ms) {
-      if (m.a !== sid && m.b !== sid) continue;
-      if (!m.played || m.note === '轮空') continue;
-      if (m.winner === sid) wins++;
-      else lostRound = r;
+/** 托管时推荐提升的能力：背景擅长的、当前最需要的 */
+export function suggestSkill(): MgrSkill {
+  const sk = G.mgr.skills;
+  const pol = G.policies;
+  const want: Partial<Record<MgrSkill, number>> = { batting: 1, pitching: 1, tactics: 0.9, leadership: 0.9, fielding: 0.7, recruiting: 0.7, insight: 0.4, negotiation: 0.5 };
+  if (pol.focus === 'pitching') want.pitching = 1.4;
+  if (pol.focus === 'batting') want.batting = 1.4;
+  if (pol.focus === 'defense') want.fielding = 1.3;
+  if (G.funds < 100) want.negotiation = 1.3;
+  let best: MgrSkill = 'batting';
+  let bv = -Infinity;
+  for (const k of MGR_SKILLS) {
+    const v = (want[k] ?? 0.5) * (100 - sk[k]);
+    if (v > bv) {
+      bv = v;
+      best = k;
     }
-  });
-  const R = t.rounds.length;
-  if (t.champion === sid) return 99;
-  if (lostRound < 0) return -1;
-  const left = 2 ** (R - lostRound);
-  return left <= 2 ? 5 : left <= 4 ? 4 : left <= 8 ? 3 : left <= 16 ? 2 : wins >= 1 ? 1 : 0;
-}
-
-export function summerLadder(sid: number): number {
-  const ks = Object.values(G.tournaments).find((t) => t.kind === 'koshien' && t.year === G.year);
-  if (ks && ks.teams.includes(sid)) {
-    if (ks.champion === sid) return 11;
-    if (ks.runnerUp === sid) return 10;
-    const f = ks.finish[sid];
-    if (f === '四强') return 9;
-    if (f === '八强') return 8;
-    let wins = 0;
-    for (const ms of ks.rounds) for (const m of ms) if (m.played && m.note !== '轮空' && m.winner === sid) wins++;
-    return wins >= 1 ? 7 : 6;
   }
-  const sp = Object.values(G.tournaments).find((t) => t.kind === 'summerPref' && t.year === G.year && t.teams.includes(sid));
-  if (!sp) return 0;
-  const l = ladderIn(sp, sid);
-  return l === 99 ? 6 : Math.max(0, l);
+  return best;
 }
 
-/** 新年度设定目标 */
-export function setYearGoal(): number {
-  const me = mySchool();
-  const pref = schoolsInPref(me.prefId).filter((s) => s.district === me.district || !PREFS[me.prefId].districts);
-  const sorted = pref.map((s) => ({ s, v: schoolStrength(s).total })).sort((a, b) => b.v - a.v);
-  const k = sorted.findIndex((x) => x.s.id === me.id) + 1;
-  let goal = k === 1 ? 5 : k <= 2 ? 4 : k <= 4 ? 3 : k <= 9 ? 2 : 1;
-  if (me.prestige >= 80) goal = Math.max(goal, 6);
-  else if (me.prestige >= 65) goal = Math.max(goal, 4);
-  if (G.difficulty === 'easy') goal = Math.max(0, goal - 1);
-  if (G.club.contractGoal !== undefined) {
-    goal = Math.max(goal, G.club.contractGoal);
-    delete G.club.contractGoal;
+// ---------- 年度目标 ----------
+/** 本校在县内的预期名次（按战力） */
+export function expectedRank(): number {
+  const mine = strengthOf(myPlayers(), G.dh).total;
+  let ahead = 0;
+  for (const s of Object.values(G.schools)) if (s.id !== G.schoolId && schoolRating(s, G.day + 100) > mine) ahead++;
+  return ahead + 1;
+}
+
+/** 4 月：校方定下今年夏天的目标 */
+export function setGoal(): void {
+  const rank = expectedRank();
+  const s = mySchool();
+  const N = Math.max(2, Object.values(G.schools).filter((x) => !PREFS[G.prefId].districts || x.district === s.district).length);
+  const R = Math.ceil(Math.log2(N));
+  // myRank：第 r 轮输球 = r + 1；冠军 = 轮数 + 1
+  let goal: NonNullable<typeof G.club.goal>;
+  if (rank <= 1 && s.prestige >= 75) goal = { kind: 'koshien', rank: 2, text: '甲子园赢下一场' };
+  else if (rank <= 1) goal = { kind: 'summerPref', rank: R + 1, text: '夏季县大会优胜（甲子园出场）' };
+  else if (rank <= 3) goal = { kind: 'summerPref', rank: R - 1, text: '夏季县大会四强' };
+  else if (rank <= 7) goal = { kind: 'summerPref', rank: R - 2, text: '夏季县大会八强' };
+  else if (rank <= N / 4 && R >= 5) goal = { kind: 'summerPref', rank: R - 3, text: '夏季县大会十六强' };
+  else if (rank <= N / 2) goal = { kind: 'summerPref', rank: 3, text: '夏季县大会赢下两场' };
+  else goal = { kind: 'summerPref', rank: 2, text: '夏季县大会赢下一场' };
+  G.club.goal = goal;
+  log(`校方定下了今年的目标：${goal.text}`, 'info');
+}
+
+export function goalMet(): boolean {
+  const g = G.club.goal;
+  if (!g) return true;
+  const t: Tour | undefined = G.tours[g.kind];
+  if (g.kind === 'koshien') {
+    if (!t || t.myRank < 0) return false;
+    return t.myRank >= g.rank;
   }
-  G.club.goal = clamp(goal, 0, 9);
-  return G.club.goal;
-}
-
-/** 夏季结束时评价 */
-export function evaluateSummer(): { lines: string[]; fired: boolean } {
-  const me = mySchool();
-  const res = summerLadder(me.id);
-  const d = res - G.club.goal;
-  const lines: string[] = [];
-  const delta = clamp(d * 9 + (d >= 0 ? 4 : 0), -30, 30);
-  G.club.board = clamp(G.club.board + delta, 0, 100);
-  G.club.ob = clamp(G.club.ob + d * 6, 0, 100);
-  G.club.supporters = clamp(G.club.supporters + d * 5, 0, 100);
-  lines.push(`今夏成绩：${LADDER[res]}（目标：${LADDER[G.club.goal]}）。校方满意度 ${delta >= 0 ? '+' : ''}${delta}。`);
-  if (res >= 6) addRep(4 + (res - 6) * 3);
-  else if (d > 0) addRep(d * 1.5);
-  if (d < 0) G.manager.reputation = clamp(G.manager.reputation - 1, 0, 100);
-  const fired = G.club.board < 15 && me.type === 'private' && G.difficulty !== 'easy';
-  return { lines, fired };
+  return !!t && t.myRank >= g.rank;
 }
 
 // ---------- 跳槽 ----------
-export function offerWindow(): boolean {
-  return G.week === 19 || G.week === 20 || (G.week >= 31 && G.week <= 43);
+export interface Offer {
+  prefId: number;
+  school: SchoolLite;
+  note: string;
 }
 
-export function makeOffer(s: School, forced = false): JobOffer {
-  const rep = G.manager.reputation;
-  return {
-    id: nextId(),
-    schoolId: s.id,
-    salary: Math.round((300 + s.prestige * 7 + rep * 3 + (s.type === 'private' ? 200 : 0)) / 10) * 10,
-    years: randInt(2, 4),
-    goal: s.prestige >= 80 ? 6 : s.prestige >= 60 ? 4 : s.prestige >= 40 ? 3 : 2,
-    budgetHint: Math.round(s.type === 'public' ? 250 + s.prestige * 4 : 600 + s.prestige * 22),
-    expires: forced ? G.absWeek + 1 : G.absWeek + 4,
-    note: forced ? '（被解任后收到的邀请）' : '',
-  };
-}
-
-export function genOffers(forced = false): JobOffer[] {
-  const rep = G.manager.reputation;
+/** 生成来自其他学校的邀请（名声越高，来的学校越好） */
+export function makeOffers(n: number, better: boolean): Offer[] {
   const me = mySchool();
-  const lo = forced ? 0 : rep * 0.5;
-  const hi = forced ? Math.max(30, me.prestige - 10) : rep + 25;
-  const cands = Object.values(G.schools).filter((s) => s.id !== me.id && s.prestige >= lo && s.prestige <= hi);
-  const n = forced ? Math.min(cands.length, 3) : chance(0.35 + rep / 150) ? randInt(1, 2) : 0;
-  const out: JobOffer[] = [];
-  const used = new Set<number>();
-  for (let i = 0; i < n; i++) {
-    const s = weightedPick(cands, (x) => (used.has(x.id) ? 0 : (PREFS[x.prefId].region === PREFS[me.prefId].region ? 3 : 1) * (x.prestige + 10)));
-    if (!s || used.has(s.id)) continue;
-    used.add(s.id);
-    out.push(makeOffer(s, forced));
+  const out: Offer[] = [];
+  const tried = new Set<number>();
+  for (let k = 0; k < 30 && out.length < n; k++) {
+    const prefId = chance(0.35) ? G.prefId : randInt(0, PREFS.length - 1);
+    const pool = prefId === G.prefId ? Object.values(G.schools).filter((s) => s.id !== me.id) : extSchools(prefId);
+    const cands = pool.filter((s) => !tried.has(s.id) && (better ? s.prestige > me.prestige + 4 && s.prestige < 30 + G.mgr.rep * 0.9 : s.prestige < me.prestige));
+    if (!cands.length) continue;
+    const s = pick(cands);
+    tried.add(s.id);
+    const why = better
+      ? pick(['校长亲自登门拜访', 'OB 会长托人带话', '理事长开出了优厚的条件', '对方的前任监督刚刚退休', '想请你重建这支传统强队'])
+      : pick(['愿意给你一个从头再来的机会', '这里的条件不算好，但学生们很热情', '校长说：“我们相信你的能力。”']);
+    out.push({ prefId, school: { ...s }, note: why });
   }
   return out;
 }
 
-/** 转任到新学校 */
-export function switchSchool(o: JobOffer): string[] {
-  const lines: string[] = [];
+/** 接受邀请：带着名声和经验去新学校，旧学校的球员留在原地 */
+export function moveTo(offer: Offer): void {
   const old = mySchool();
-  const ns = G.schools[o.schoolId];
-  const oldPref = old.prefId;
-  G.manager.history.push({ year: G.year, schoolId: old.id, schoolName: old.name, summary: `离任（转往${ns.name}）`, w: G.manager.seasonW, l: G.manager.seasonL });
-  G.manager.seasonW = 0;
-  G.manager.seasonL = 0;
-  if (G.manager.contractYears > 0 && G.club.board >= 40) G.manager.reputation = clamp(G.manager.reputation - 2, 0, 100);
-  // 县变更：旧县去具象化，新县补足学校
-  if (ns.prefId !== oldPref) {
-    for (const s of schoolsInPref(oldPref)) dematerialize(s);
-    const pref = PREFS[ns.prefId];
-    const have = schoolsInPref(ns.prefId);
-    const need = gameSchoolCount(pref) - have.length;
-    if (need > 0) {
-      const extra = genPrefSchools(pref, true).sort((a, b) => a.prestige - b.prestige).slice(0, need);
-      // 新生成的学校里名气最高的那些会与知名校重复定位，取较弱的部分补足
-      for (const s of extra) {
-        if (pref.districts) s.district = have.filter((x) => x.district === 0).length <= have.filter((x) => x.district === 1).length ? 0 : 1;
-        G.schools[s.id] = s;
-        have.push(s);
-      }
-    }
-    // 删除多生成但未使用的名字不影响
-    for (const s of schoolsInPref(ns.prefId)) materialize(s);
+  const y = yearIdx(G.day);
+  G.mgr.career.push({ year: y, school: old.name, summary: `${G.mgr.since === y ? '' : `${y - G.mgr.since + 1} 个学年，`}通算 ${G.mgr.totals.w} 胜`, w: G.mgr.totals.w, l: G.mgr.totals.l });
+  // 新的县
+  const pref = PREFS[offer.prefId];
+  let schools: SchoolLite[];
+  let target: SchoolLite;
+  if (offer.prefId === G.prefId) {
+    schools = Object.values(G.schools);
+    target = G.schools[offer.school.id];
   } else {
-    materialize(ns);
+    schools = withSeed(hash32(G.seed, offer.prefId, y, 91), () => genPrefSchools(pref, true, G.nextId));
+    G.nextId += schools.length + 1;
+    // 用邀请里的学校替换一所名门度最接近的
+    let bi = 0;
+    schools.forEach((s, i) => {
+      if (Math.abs(s.prestige - offer.school.prestige) < Math.abs(schools[bi].prestige - offer.school.prestige)) bi = i;
+    });
+    target = { ...offer.school, id: schools[bi].id, prefId: pref.id, district: schools[bi].district, rival: 0 };
+    schools[bi] = target;
+    G.prefId = pref.id;
+    G.schools = Object.fromEntries(schools.map((s) => [s.id, s]));
+    clearWorldCache();
   }
-  // 旧学校：降级为 AI 学校（教练留下）
-  G.manager.schoolId = ns.id;
-  G.club = freshClub(ns);
-  // 周中就任时，周报的部费变化从新学校的部费算起
-  if (G.flow) G.flow.report.money = G.club.funds;
-  G.manager.salary = o.salary;
-  G.manager.contractYears = o.years;
-  G.manager.contractFresh = G.week < SCHED.graduation;
-  // 新学校的教练团队
-  if (!ns.staff.length) {
-    for (let i = 0; i < randInt(1, 2); i++) {
-      const st = genStaff(undefined, 30 + ns.prestige * 0.4);
-      st.schoolId = ns.id;
-      G.staff[st.id] = st;
-      ns.staff.push(st.id);
-    }
+  // 离开旧学校：球员留下
+  for (const id of [...G.roster, ...G.incoming]) delete G.players[id];
+  G.roster = [];
+  G.incoming = [];
+  G.schoolId = target.id;
+  G.mgr.since = y;
+  G.tours = {};
+  G.pending = null;
+  G.senbatsuPick = [];
+  // 新学校的球员
+  for (const p of materializeRoster(target)) {
+    G.players[p.id] = p;
+    G.roster.push(p.id);
   }
-  if (ns.prefId !== oldPref) {
-    genProspects();
-    // 入学已经决定之后才转来：新县的中学生也要完成去向决定
-    if (G.week >= SCHED.recruitDecision) decideRecruits();
-  } else {
-    for (const id of G.prospects) {
-      const p = G.players[id];
-      if (!p) continue;
-      // 旧学校的特待生邀请不能带到新学校
-      if (p.offers?.includes(-1)) p.offers = p.offers.filter((x) => x !== -1);
-      if (p.interest) p.interest[ns.id] = Math.max(p.interest[ns.id] ?? 0, (p.interest[old.id] ?? 0) * 0.5);
-    }
-  }
-  refreshMarket();
-  G.club.goal = o.goal;
-  G.club.contractGoal = o.goal;
-  lines.push(`你正式就任${ns.name}监督！新的挑战开始了。`);
-  return lines;
+  // 新学校的条件
+  const pr = target.prestige;
+  for (const id of FACILITY_IDS) G.facilities[id] = clamp(Math.round(pr / 28 + gauss(0, 0.6)), 0, 4);
+  if (target.type === 'public') G.facilities.dorm = Math.min(G.facilities.dorm, 1);
+  G.building = null;
+  G.funds = Math.round(150 + pr * 4);
+  G.club = { chemistry: 50, fans: Math.round(500 + pr * 60), board: 60, ob: 50, captainId: null, scandal: 0, banUntil: 0, tactics: clamp(25 + pr * 0.3, 0, 100), goal: null };
+  addRep(3);
+  log(`就任${target.name}监督！`, 'gold');
+  milestone(`离开${old.name}，就任${target.name}（${pref.name}）监督`);
+  G.flags.moved = (G.flags.moved ?? 0) + 1;
 }
 
-export function freshClub(s: School): import('./types').ClubState {
-  const lvl = (x: number, max: number) => clamp(Math.round(x), 0, max);
-  const f = s.facility;
-  const roster = s.roster ? rosterPlayers(s) : [];
-  return {
-    schoolId: s.id,
-    funds: Math.round((s.type === 'public' ? 250 + s.prestige * 4 : 600 + s.prestige * 22) * 0.6),
-    ledger: [],
-    books: [],
-    facilities: {
-      field: lvl(f / 25, 5), indoor: lvl((f - 40) / 25, 3), weight: lvl(f / 25, 5), bullpen: lvl(f / 22, 5),
-      cage: lvl(f / 22, 5), dorm: s.type === 'private' ? lvl((f - 20) / 25, 3) : 0, medical: lvl((f - 30) / 30, 3), analysis: lvl((f - 50) / 25, 3),
-    },
-    construction: null,
-    training: { alloc: { bat: 25, pitch: 15, field: 20, run: 10, power: 10, game: 10, tactic: 5, rest: 5, study: 0 }, intensity: 1 },
-    lineup: { auto: true, order: [], defense: {}, dh: null, bench: autoBench(roster, 20, G.dh), rotation: [], autoBench: true },
-    autoManage: false,
-    sponsors: [],
-    sponsorOffers: [],
-    meal: 0,
-    equipment: 0,
-    walkonPolicy: 'open',
-    captainId: null,
-    chemistry: 50,
-    tacticsSkill: clamp(25 + s.prestige * 0.35, 0, 100),
-    fans: Math.round(300 + s.prestige * s.prestige * 2.5 + s.koshienApps * 400),
-    practice: null,
-    scholarshipSlots: s.type === 'private' ? clamp(Math.round(1 + s.prestige / 20), 1, 6) : 0,
-    goal: 2,
-    board: 60,
-    ob: 55,
-    supporters: 50,
-    scandal: 0,
-    banUntil: 0,
-    koshienFund: 0,
-  };
+/** 本校在某个大会里赢了几场（不算轮空） */
+export function myTourWins(t: Tour): number {
+  let w = 0;
+  for (const r of t.rounds) for (const m of r) if (m.done && m.w === G.schoolId && m.note !== '轮空') w++;
+  return w;
 }
 
-/** 年末（3 月）合同处理 */
-export function contractYearEnd(): { lines: string[]; renew: boolean; expired: boolean } {
-  const m = G.manager;
-  const lines: string[] = [];
-  if (m.contractFresh) {
-    // 年度中途就任：合同从下一个年度开始计算
-    m.contractFresh = false;
-    return { lines, renew: false, expired: false };
+/** 夏天的成绩改变学校的名门度（影响招生） */
+export function prestigeDrift(): void {
+  const s = mySchool();
+  const sp = G.tours.summerPref;
+  const k = G.tours.koshien;
+  let d = 0;
+  if (k && k.myRank > 0) d += 5 + Math.max(0, k.myRank - 1) * 1.5;
+  else if (sp && sp.myRank > 0) {
+    // 按胜场和打到多深一起算：学校多的县要多赢几场才进得了八强
+    const deep = Math.max(0, sp.myRank - (sp.rounds.length - 3)); // 八强 = 1，四强 = 2，亚军 = 3
+    d += myTourWins(sp) * 0.6 + deep * 0.6;
+    if (!deep && s.prestige > 45) d -= 1;
   }
-  m.contractYears--;
-  if (m.contractYears > 0) return { lines, renew: false, expired: false };
-  if (G.club.board >= 45) {
-    return { lines: ['合同即将到期，校方希望与你续约。'], renew: true, expired: false };
+  if (d) addPrestige(d);
+}
+
+/** 新学校现有的球员（永久 id） */
+export function materializeRoster(s: SchoolLite): Player[] {
+  const y = yearIdx(G.day);
+  const q = schoolRating(s, G.day) - 14 - 2;
+  const out: Player[] = [];
+  const weeks = Math.round((doy(G.day) / 360) * 44);
+  for (let grade = 3; grade >= 1; grade--) {
+    const n = s.prestige > 60 ? 9 : s.prestige > 35 ? 8 : 7;
+    const poss: Pos[] = shuffle(['P', 'P', 'C', 'SS', 'CF', ...Array.from({ length: n - 5 }, () => pick<Pos>(['P', '1B', '2B', '3B', 'LF', 'RF', 'C', 'SS'])) ]);
+    for (const pos of poss) {
+      const p = generatePlayer({ quality: q + gauss(0, 5), grade, pos, enrollYear: y - (grade - 1), weeksGrown: (grade - 1) * 44 + weeks });
+      out.push(p);
+    }
   }
-  lines.push('合同到期，校方决定不再续约……');
-  return { lines, renew: false, expired: true };
+  // 9 月以后三年级已经引退
+  for (const p of out) if (p.grade === 3 && doy(G.day) >= SCHED.newTeam) p.retired = true;
+  return out;
 }
 
 // ---------- 成就 ----------
-export const ACHIEVEMENTS: Record<string, { name: string; desc: string }> = {
-  first_win: { name: '初胜利', desc: '取得监督生涯首场公式战胜利' },
-  koshien_debut: { name: '梦之舞台', desc: '首次率队出场甲子园' },
-  koshien_win: { name: '甲子园初胜', desc: '在甲子园取得胜利' },
-  summer_champ: { name: '深红的大旗', desc: '夺得夏季甲子园冠军' },
-  spring_champ: { name: '紫红的大旗', desc: '夺得选拔甲子园冠军' },
-  haru_natsu: { name: '春夏连霸', desc: '同一年度夺得春夏两季冠军' },
-  giant_killer: { name: '巨人杀手', desc: '以弱校击败名门强校' },
-  first_pro: { name: '育成之才', desc: '首次有球员被职业球队选中' },
-  ten_pros: { name: '职业制造机', desc: '累计 10 名球员进入职业' },
-  no_hitter: { name: '无安打比赛', desc: '投手团完成无安打比赛' },
-  wins100: { name: '百胜监督', desc: '公式战通算 100 胜' },
-  comeback: { name: '奇迹逆转', desc: '落后 5 分以上逆转获胜' },
-  public_koshien: { name: '公立之光', desc: '率领公立学校出场甲子园' },
-  rich: { name: '财政大臣', desc: '部费余额超过 1 亿円' },
-  monster: { name: '怪物入部', desc: '招募到"怪物"级新生' },
-  jingu: { name: '神宫制霸', desc: '夺得明治神宫大会冠军' },
-};
-
-export function unlock(id: string): string | null {
-  if (G.manager.achievements.includes(id)) return null;
-  G.manager.achievements.push(id);
-  addRep(1);
-  return `🏆 成就解锁：${ACHIEVEMENTS[id]?.name ?? id}`;
+export interface AchDef {
+  id: string;
+  name: string;
+  desc: string;
 }
 
-export function randomMgrSkill(): MgrSkill {
-  return pick(MGR_SKILLS);
+export const ACHIEVEMENTS: readonly AchDef[] = [
+  { id: 'firstWin', name: '初胜利', desc: '在正式比赛中赢下第一场' },
+  { id: 'prefChamp', name: '县内霸主', desc: '赢得县大会冠军' },
+  { id: 'regionChamp', name: '地区制霸', desc: '赢得地区大会冠军' },
+  { id: 'koshien', name: '甲子园的土', desc: '出场甲子园' },
+  { id: 'koshienWin', name: '甲子园初胜', desc: '在甲子园赢下一场' },
+  { id: 'koshien8', name: '甲子园八强', desc: '在甲子园打进八强' },
+  { id: 'summerChamp', name: '深红色的大旗', desc: '夏季甲子园优胜' },
+  { id: 'springChamp', name: '紫色的大旗', desc: '春季选拔优胜' },
+  { id: 'jinguChamp', name: '神宫之王', desc: '明治神宫大会优胜' },
+  { id: 'double', name: '春夏连霸', desc: '同一学年拿下春季选拔与夏季甲子园' },
+  { id: 'v150', name: '150 公里', desc: '培养出最快 150 km/h 的投手' },
+  { id: 'v160', name: '160 公里的怪物', desc: '培养出最快 160 km/h 的投手' },
+  { id: 'nohit', name: '无安打比赛', desc: '投出无安打无失分比赛' },
+  { id: 'perfect', name: '完全比赛', desc: '投出完全比赛' },
+  { id: 'pitch6', name: '变化球博物馆', desc: '培养出掌握 6 种变化球的投手' },
+  { id: 'sig', name: '魔球诞生', desc: '有投手开发出独创的魔球' },
+  { id: 'draft1', name: '第一顺位', desc: '有球员在选秀会议第一轮被指名' },
+  { id: 'pros5', name: '职业球员摇篮', desc: '累计培养 5 名职业球员' },
+  { id: 'pros15', name: '名门的传承', desc: '累计培养 15 名职业球员' },
+  { id: 'monster', name: '怪物来了', desc: '「怪物」入部' },
+  { id: 'wins100', name: '百胜监督', desc: '正式比赛通算 100 胜' },
+  { id: 'wins300', name: '三百胜', desc: '正式比赛通算 300 胜' },
+  { id: 'rep60', name: '名将', desc: '名声达到 60' },
+  { id: 'rep95', name: '传说的监督', desc: '名声达到 95' },
+  { id: 'years10', name: '十年磨一剑', desc: '执教满 10 个学年' },
+  { id: 'facilities', name: '最好的环境', desc: '所有设施都升到最高等级' },
+  { id: 'move', name: '新天地', desc: '跳槽到别的学校' },
+];
+
+export function unlock(id: string): void {
+  if (G.achievements[id] !== undefined) return;
+  G.achievements[id] = G.day;
+  const a = ACHIEVEMENTS.find((x) => x.id === id);
+  if (a) {
+    log(`成就解锁：${a.name}`, 'gold');
+    milestone(`成就：${a.name}`);
+  }
 }
 
-export function ageManager(): void {
-  G.manager.age++;
+export function checkAchievements(): void {
+  const t = G.mgr.totals;
+  if (t.w >= 1) unlock('firstWin');
+  if (t.prefTitles >= 1) unlock('prefChamp');
+  if (t.koshienApps >= 1) unlock('koshien');
+  if (t.koshienWins >= 1) unlock('koshienWin');
+  if (t.summerTitles >= 1) unlock('summerChamp');
+  if (t.springTitles >= 1) unlock('springChamp');
+  if (t.w >= 100) unlock('wins100');
+  if (t.w >= 300) unlock('wins300');
+  if (G.mgr.rep >= 60) unlock('rep60');
+  if (G.mgr.rep >= 95) unlock('rep95');
+  if (t.seasons >= 10) unlock('years10');
+  if ((G.flags.v150 ?? 0) >= 150) unlock('v150');
+  if ((G.flags.v150 ?? 0) >= 160) unlock('v160');
+  if (G.flags.nohit) unlock('nohit');
+  if (G.flags.perfect) unlock('perfect');
+  if (G.flags.moved) unlock('move');
+  const pros = G.alumni.filter((a) => a.path === 'pro').length;
+  if (pros >= 5) unlock('pros5');
+  if (pros >= 15) unlock('pros15');
+  if (FACILITY_IDS.every((id) => G.facilities[id] >= 5)) unlock('facilities');
+  for (const p of myPlayers()) {
+    if (p.pitches.length >= 6) unlock('pitch6');
+    if (p.pitches.some((x) => x.sig)) unlock('sig');
+    if (p.traits.includes('monster')) unlock('monster');
+  }
 }
 
-
-export function mgrExpNeed(level: number): number {
-  return 80 + level * 40;
+/** 随机的监督名字 */
+export function randomMgrName(): string {
+  return `${pick(FAMILY_NAMES)} ${pick(['健一', '诚', '博之', '大辅', '正树', '浩二', '隆', '修', '刚', '达也', '雅人', '和也'])}`;
 }
+

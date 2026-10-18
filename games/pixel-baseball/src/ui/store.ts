@@ -1,43 +1,42 @@
-// 界面状态与刷新机制
+// 界面状态（不存档）与刷新机制
 import { useEffect, useState } from 'preact/hooks';
-import type { ComponentChildren } from 'preact';
 
-export type Tab =
-  | 'home' | 'roster' | 'player' | 'training' | 'lineup' | 'schedule' | 'recruit' | 'staff' | 'finance' | 'manager' | 'news' | 'records' | 'system';
+export type Tab = 'overview' | 'players' | 'games' | 'facilities' | 'policies' | 'records';
 
-export interface ModalEntry {
-  id: number;
-  render: (close: (v?: unknown) => void) => ComponentChildren;
-  resolve: (v: unknown) => void;
-}
+export type Modal =
+  | { kind: 'box'; gameId: number }
+  | { kind: 'settings' }
+  | { kind: 'help' }
+  | { kind: 'player'; pid: number }
+  | { kind: 'confirm'; title: string; text: string; ok: string; onOk: () => void };
 
 export interface Toast {
   id: number;
   text: string;
-  tone: 'good' | 'bad' | 'info';
+  kind: string;
 }
 
 export const ui = {
-  screen: 'title' as 'title' | 'newgame' | 'game' | 'match',
-  tab: 'home' as Tab,
+  screen: 'start' as 'start' | 'game',
+  tab: 'overview' as Tab,
+  sub: {} as Record<string, string>,
   playerId: null as number | null,
-  schoolView: null as number | null,
-  modals: [] as ModalEntry[],
+  modal: null as Modal | null,
   toasts: [] as Toast[],
-  busy: false,
-  backTab: 'roster' as Tab,
+  /** 事件弹窗暂时收起（可以先看看球员再决定） */
+  queueMin: false,
 };
 
 let version = 0;
 const subs = new Set<() => void>();
-let seq = 1;
 
 export function refresh(): void {
   version++;
   for (const f of subs) f();
 }
 
-export function useRefresh(): number {
+/** 订阅刷新：组件里调用一次即可 */
+export function useStore(): number {
   const [, set] = useState(0);
   useEffect(() => {
     const f = () => set((v) => v + 1);
@@ -49,67 +48,25 @@ export function useRefresh(): number {
   return version;
 }
 
-export function go(tab: Tab): void {
-  ui.tab = tab;
-  ui.screen = 'game';
-  refresh();
-  scrollMainTop();
-}
-
-export function openPlayer(id: number, back?: Tab): void {
-  ui.backTab = back ?? (ui.tab === 'player' ? ui.backTab : ui.tab);
-  ui.playerId = id;
-  ui.tab = 'player';
-  refresh();
-  scrollMainTop();
-}
-
-/** 切换页面后回到顶部（各页面共用同一个滚动容器） */
-function scrollMainTop(): void {
-  if (typeof document === 'undefined') return;
-  requestAnimationFrame(() => document.querySelector('.app .main')?.scrollTo(0, 0));
-}
-
-/** 手机竖屏上「列表 + 详情」是上下排列的：选中后把详情滚动到可见处 */
-export function revealOnNarrow(id: string): void {
-  if (typeof window === 'undefined' || window.innerWidth > 760) return;
-  requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-}
-
-/** 打开一个模态框，返回关闭时的值 */
-export function openModal<T = unknown>(render: (close: (v?: T) => void) => ComponentChildren): Promise<T | undefined> {
-  return new Promise((resolve) => {
-    const id = seq++;
-    const entry: ModalEntry = {
-      id,
-      render: render as ModalEntry['render'],
-      resolve: (v) => resolve(v as T),
-    };
-    ui.modals.push(entry);
-    refresh();
-  });
-}
-
-export function closeModal(id: number, v?: unknown): void {
-  const i = ui.modals.findIndex((m) => m.id === id);
-  if (i < 0) return;
-  const [m] = ui.modals.splice(i, 1);
-  refresh();
-  m.resolve(v);
-}
-
-export function toast(text: string, tone: Toast['tone'] = 'info'): void {
-  const id = seq++;
-  ui.toasts.push({ id, text, tone });
-  if (ui.toasts.length > 4) ui.toasts.shift();
+let toastId = 1;
+export function toast(text: string, kind = 'info', ms = 3600): void {
+  const t = { id: toastId++, text, kind };
+  ui.toasts = [...ui.toasts.slice(-3), t];
   refresh();
   setTimeout(() => {
-    ui.toasts = ui.toasts.filter((t) => t.id !== id);
+    ui.toasts = ui.toasts.filter((x) => x.id !== t.id);
     refresh();
-  }, 2800);
+  }, ms);
 }
 
-export function setBusy(b: boolean): void {
-  ui.busy = b;
+export function openPlayer(pid: number): void {
+  ui.tab = 'players';
+  ui.playerId = pid;
+  ui.queueMin = true;
+  refresh();
+}
+
+export function setSub(tab: string, sub: string): void {
+  ui.sub[tab] = sub;
   refresh();
 }

@@ -25,7 +25,15 @@ export function starterScore(p: Player, limit = 500): number {
   return pitcherOverall(p) * fresh;
 }
 
-export function pickStarter(players: Player[], rotation: number[] = [], limit = 500): Player | null {
+/** 先发评分：freshW 越大越看重体力（轮换），越小越倾向于王牌 */
+export function starterScoreW(p: Player, limit: number, freshW: number): number {
+  const left = limit - p.pitchesWeek;
+  if (left < 40) return -1;
+  const fresh = clamp(1 - p.fatigue / 100, 0.1, 1) * clamp(left / 140, 0.2, 1);
+  return pitcherOverall(p) * Math.pow(fresh, freshW);
+}
+
+export function pickStarter(players: Player[], rotation: number[] = [], limit = 500, freshW = 1): Player | null {
   const pitchers = players.filter((p) => isPitcher(p) || (p.apt.P ?? 0) >= 50);
   if (!pitchers.length) return players.length ? players.reduce((a, b) => (pitcherOverall(a) > pitcherOverall(b) ? a : b)) : null;
   // 按轮换顺位：第一个状态可以的投手
@@ -36,7 +44,7 @@ export function pickStarter(players: Player[], rotation: number[] = [], limit = 
   let best: Player | null = null;
   let bv = -Infinity;
   for (const p of pitchers) {
-    const v = starterScore(p, limit);
+    const v = starterScoreW(p, limit, freshW);
     if (v > bv) {
       bv = v;
       best = p;
@@ -48,8 +56,10 @@ export function pickStarter(players: Player[], rotation: number[] = [], limit = 
 const POS_ORDER: Pos[] = ['C', 'SS', '2B', 'CF', '3B', 'RF', 'LF', '1B'];
 
 /** 自动编排守备与打线 */
-export function autoLineup(players: Player[], dh: boolean, starter?: Player | null): Lineup {
+/** bias：起用方针带来的加分（重视高年级 / 培养新人），只影响谁上场，不影响守备位置的判断 */
+export function autoLineup(players: Player[], dh: boolean, starter?: Player | null, bias: (p: Player) => number = () => 0): Lineup {
   const sp = starter ?? pickStarter(players);
+  const val = (p: Player, pos: Pos) => batterOverall(p, pos) - (isPitcher(p) ? 8 : 0) + bias(p);
   const pool = players.filter((p) => p.id !== sp?.id);
   // 野手不足时投手也可以守备（带惩罚）
   const fielders = pool;
@@ -60,7 +70,7 @@ export function autoLineup(players: Player[], dh: boolean, starter?: Player | nu
     let bv = -Infinity;
     for (const p of fielders) {
       if (used.has(p.id)) continue;
-      const v = batterOverall(p, pos) - (isPitcher(p) ? 8 : 0);
+      const v = val(p, pos);
       if (v > bv) {
         bv = v;
         best = p;
@@ -91,7 +101,7 @@ export function autoLineup(players: Player[], dh: boolean, starter?: Player | nu
       const cur = assign.get(poss[i])!;
       for (const p of fielders) {
         if (used.has(p.id)) continue;
-        if (batterOverall(p, poss[i]) - (isPitcher(p) ? 8 : 0) > batterOverall(cur, poss[i]) + 0.5) {
+        if (val(p, poss[i]) > val(cur, poss[i]) + 0.5) {
           used.delete(cur.id);
           used.add(p.id);
           assign.set(poss[i], p);
@@ -111,7 +121,7 @@ export function autoLineup(players: Player[], dh: boolean, starter?: Player | nu
     let best: Player | null = null;
     for (const p of pool) {
       if (used.has(p.id)) continue;
-      if (!best || batterOffense(p) > batterOffense(best)) best = p;
+      if (!best || batterOffense(p) + bias(p) > batterOffense(best) + bias(best)) best = p;
     }
     if (best) {
       hitters.push(best);

@@ -1,74 +1,91 @@
-// 日程：一个学年 48 周（每月 4 周），从 4 月第 1 周开始
-export const WEEKS = 48;
+// 日历：一年 360 天（每月 30 天），学年从 4 月 1 日开始。day = 0 是开局学年的 4 月 1 日。
+export const YEAR = 360;
 
-export const SCHED = {
-  newYear: 0,
-  springPref: [1, 2, 3, 4, 5],
-  springRegion: [6, 7],
-  summerDraw: 11,
-  summerPref: [12, 13, 14, 15],
-  koshien: [16, 17, 18],
-  newTeam: 19,
-  fallPref: [21, 22, 23, 24],
-  fallRegion: [25, 26, 27],
-  draft: 27,
-  jingu: [29, 30],
-  offStart: 32, // 12 月 1 日起禁止对外比赛
-  offEnd: 44, // 3 月第 1 周结束
-  senbatsuAnnounce: 39,
-  recruitDecision: 42,
-  graduation: 44,
-  senbatsu: [45, 46, 47],
-  exams: [14, 35], // 期末考试（7 月、12 月）
-} as const;
+const mod = (a: number, n: number) => ((a % n) + n) % n;
 
-export function monthOf(week: number): number {
-  return ((3 + Math.floor(week / 4)) % 12) + 1;
+/** 学年内的第几天（0 = 4/1） */
+export const doy = (day: number) => mod(day, YEAR);
+/** 第几个学年（0 = 开局那年） */
+export const yearIdx = (day: number) => Math.floor(day / YEAR);
+/** 月份 1..12 */
+export const monthOf = (day: number) => ((3 + Math.floor(doy(day) / 30)) % 12) + 1;
+/** 日 1..30 */
+export const domOf = (day: number) => mod(day, 30) + 1;
+/** 学年的绝对 4/1 */
+export const yearStart = (day: number) => yearIdx(day) * YEAR;
+
+/** 月/日 → 学年内的第几天 */
+export function doyOf(m: number, d: number): number {
+  const idx = (m + 12 - 4) % 12; // 4 月 = 0
+  return idx * 30 + (d - 1);
 }
 
-export function weekOfMonth(week: number): number {
-  return (week % 4) + 1;
+/** 学年 y（0 起）内 m/d 的绝对日 */
+export function dayOf(y: number, m: number, d: number): number {
+  return y * YEAR + doyOf(m, d);
 }
 
-export function calYear(year: number, week: number): number {
-  return week >= 36 ? year + 1 : year;
+/** 公历年（1~3 月属于下一个公历年） */
+export function calYear(day: number, startYear: number): number {
+  return startYear + yearIdx(day) + (monthOf(day) <= 3 ? 1 : 0);
 }
 
-export function dateLabel(year: number, week: number): string {
-  return `${calYear(year, week)}年${monthOf(week)}月 第${weekOfMonth(week)}周`;
+/** 学年的名字（开始那年的公历年） */
+export function schoolYear(day: number, startYear: number): number {
+  return startYear + yearIdx(day);
 }
 
-export function shortDate(week: number): string {
-  return `${monthOf(week)}月${weekOfMonth(week)}周`;
+export function dateStr(day: number, startYear: number): string {
+  return `${calYear(day, startYear)}年${monthOf(day)}月${domOf(day)}日`;
 }
 
-export function seasonOf(week: number): '春' | '夏' | '秋' | '冬' {
-  const m = monthOf(week);
+export function mdStr(day: number): string {
+  return `${monthOf(day)}/${domOf(day)}`;
+}
+
+export function seasonOf(day: number): '春' | '夏' | '秋' | '冬' {
+  const m = monthOf(day);
   if (m >= 3 && m <= 5) return '春';
   if (m >= 6 && m <= 8) return '夏';
   if (m >= 9 && m <= 11) return '秋';
   return '冬';
 }
 
-/** 是否处于对外比赛禁止期 */
-export function isOffseason(week: number): boolean {
-  return week >= SCHED.offStart && week <= SCHED.offEnd;
+/** 一周的第几天（0 = 周一，6 = 周日休养日） */
+export const weekday = (day: number) => mod(day, 7);
+
+/** 12/1 ~ 3/7 是对外比赛禁止期（冬训） */
+export function isOffseason(day: number): boolean {
+  const t = doy(day);
+  return t >= doyOf(12, 1) && t < doyOf(3, 8);
 }
 
-/** 把 n 轮分配到若干周：前面的周承担更多轮次 */
-export function spreadRounds(n: number, weeks: readonly number[]): number[] {
-  const out: number[] = [];
-  const w = weeks.length;
-  const base = Math.floor(n / w);
-  let extra = n % w;
-  for (let i = 0; i < w; i++) {
-    const k = base + (extra > 0 ? 1 : 0);
-    if (extra > 0) extra--;
-    for (let j = 0; j < k; j++) out.push(weeks[i]);
-  }
-  return out;
+export function daysText(n: number): string {
+  if (n <= 0) return '今天';
+  if (n === 1) return '明天';
+  if (n < 30) return `${n} 天后`;
+  return `${Math.round(n / 30)} 个月后`;
 }
 
-export function absToYW(abs: number, startYear: number): { year: number; week: number } {
-  return { year: startYear + Math.floor(abs / WEEKS), week: abs % WEEKS };
-}
+/** 年度日程（学年内的日子） */
+export const SCHED = {
+  newYear: doyOf(4, 1),
+  springPref: doyOf(4, 15),
+  springRegion: doyOf(5, 18),
+  summerDraw: doyOf(6, 25),
+  exam1: doyOf(7, 2),
+  summerPref: doyOf(7, 8),
+  koshien: doyOf(8, 6),
+  newTeam: doyOf(8, 28),
+  fallPref: doyOf(9, 10),
+  fallRegion: doyOf(10, 14),
+  draft: doyOf(10, 24),
+  jingu: doyOf(11, 14),
+  exam2: doyOf(12, 10),
+  winterCamp: doyOf(12, 26),
+  newYearDay: doyOf(1, 1),
+  senbatsuAnnounce: doyOf(1, 24),
+  graduation: doyOf(3, 1),
+  senbatsu: doyOf(3, 18),
+  yearEnd: doyOf(3, 30),
+} as const;

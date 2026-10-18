@@ -4,7 +4,7 @@ import { ALL_ATTRS, EXP_KINDS } from './types';
 import { ATTR_COST, attrLevel, has, isPitcher } from './attrs';
 import { clamp } from './util';
 import { TRAIT_BY_ID } from '../data/traits';
-import { PITCH_DEFS } from '../data/traits';
+import { PITCH_DEFS } from '../data/pitches';
 
 export const MAX_VEL = 163;
 /** AI/补成长时每周获得的总经验（球队训练会在此基础上浮动） */
@@ -86,13 +86,21 @@ export function raisePitch(p: Player, idx: number): boolean {
   return true;
 }
 
-export const LEARN_NEED = 70;
+/** 能掌握的变化球种数上限 */
+export function maxPitchCount(p: Player): number {
+  return clamp(2 + Math.floor(p.pot / 25) + (p.pers === 'genius' ? 1 : 0), 2, 6);
+}
+
+/** 学会某球种需要的变化经验 */
+export function learnNeed(t: PitchType): number {
+  return 40 + PITCH_DEFS[t].rarity * 30;
+}
 
 /** 投入变化经验学习新球种 */
 export function progressLearning(p: Player, brk: number): PitchType | null {
   if (!p.learning) return null;
   p.learning.progress += brk;
-  if (p.learning.progress >= LEARN_NEED) {
+  if (p.learning.progress >= learnNeed(p.learning.pitch)) {
     const t = p.learning.pitch;
     if (!p.pitches.some((x) => x.type === t)) p.pitches.push({ type: t, lv: 1 });
     p.learning = null;
@@ -175,11 +183,7 @@ function planWeights(p: Player, plan: DevPlan): Weights {
 /** 按方针自动消耗经验，返回提升记录 */
 export function autoSpend(p: Player, plan: DevPlan = p.plan, budget = 60): Partial<Record<AttrKey | 'pitch', number>> {
   const gained: Partial<Record<AttrKey | 'pitch', number>> = {};
-  if (plan === 'manual') return gained;
   const w = planWeights(p, plan === 'auto' ? 'auto' : plan);
-  // 个别练习重点优先
-  if (p.focus?.kind === 'attr') w[p.focus.attr] = (w[p.focus.attr] ?? 0.3) + 1.5;
-  if (p.focus?.kind === 'pitch') w.pitch = (w.pitch ?? 0.3) + 1.2;
   for (let iter = 0; iter < budget; iter++) {
     let best: { key: AttrKey | 'pitch'; idx: number; score: number } | null = null;
     for (const key in w) {

@@ -1,162 +1,152 @@
-// 职业选秀与毕业
-import type { AlumniEntry, Player } from './types';
+// 选秀会议与毕业
+import type { Alumni, Player } from './types';
 import { POS_NAME } from './types';
-import { G, mySchool, addRep } from './state';
-import { chance, gauss, pick, randInt } from './rng';
+import { G, log, milestone, mySchool, note, seniors } from './state';
+import { chance, pick, randInt } from './rng';
 import { clamp } from './util';
-import { fullName, isPitcher, overall, velScore } from './attrs';
-import { PRO_TEAMS, FAMILY_NAMES, GIVEN_NAMES } from '../data/names';
-import { addMgrExp, unlock } from './career';
+import { eraOf, fullName, isPitcher, overall, avgOf } from './attrs';
+import { yearIdx } from './calendar';
+import { PRO_TEAMS } from '../data/names';
 
 export interface DraftPick {
-  round: number;
-  team: string;
+  pid: number;
   name: string;
-  school: string;
-  pos: string;
-  mine: boolean;
-  pid?: number;
+  team: string;
+  round: number;
   ikusei: boolean;
 }
 
-function draftValue(p: Player): number {
-  let v = overall(p) + p.pot * 0.15 + p.pop * 0.08;
-  if (isPitcher(p)) v += Math.max(0, velScore(p.a.velocity) - 70) * 0.25;
-  v += Math.min(10, p.stats.koshien.bat.hr * 2 + p.stats.koshien.pit.w * 2);
-  return v + gauss(0, 3);
-}
-
-export function runDraft(): { picks: DraftPick[]; mine: DraftPick[]; lines: string[] } {
-  const me = G.club.schoolId;
-  const cands: { p: Player | null; v: number; name: string; school: string; pos: string }[] = [];
-  for (const s of Object.values(G.schools)) {
-    if (s.roster) {
-      for (const id of s.roster) {
-        const p = G.players[id];
-        if (!p || p.grade !== 3) continue;
-        const ov = overall(p);
-        const submit = (p.wish === 'pro' && ov >= 56) || ov >= 65;
-        if (!submit) continue;
-        cands.push({ p, v: draftValue(p), name: fullName(p), school: s.name, pos: POS_NAME[p.pos] });
-      }
-    } else if (s.strength >= 54) {
-      // 未具象化的强校：虚拟候选
-      const n = s.strength >= 66 ? randInt(1, 2) : chance(0.4) ? 1 : 0;
-      for (let i = 0; i < n; i++) {
-        const v = s.strength + 6 + gauss(0, 6);
-        cands.push({ p: null, v, name: `${pick(FAMILY_NAMES)} ${pick(GIVEN_NAMES)}`, school: s.name, pos: chance(0.45) ? '投手' : pick(['游击手', '中外野手', '捕手', '三垒手', '右外野手']) });
-      }
-    }
-  }
-  cands.sort((a, b) => b.v - a.v);
-  const nHS = randInt(24, 30);
+/** 10 月：本校三年级（已引退）里有没有人被职业球队指名 */
+export function runDraft(): { picks: DraftPick[]; passed: Player[] } {
   const picks: DraftPick[] = [];
-  const teams = [...PRO_TEAMS];
-  cands.slice(0, nHS + 6).forEach((c, k) => {
-    const ikusei = k >= nHS;
-    if (c.v < (ikusei ? 65 : 70)) return;
-    const round = ikusei ? 0 : Math.min(7, 1 + Math.floor(k / 5));
-    const team = teams[(k * 5 + randInt(0, 11)) % 12];
-    const mine = !!c.p && c.p.schoolId === me;
-    picks.push({ round, team, name: c.name, school: c.school, pos: c.pos, mine, pid: c.p?.id, ikusei });
-    if (c.p) {
-      c.p.proTeam = team;
-      c.p.draftRound = round;
-      c.p.path = `${team} ${ikusei ? '育成' : `第${round}轮`}`;
+  const passed: Player[] = [];
+  const scoreOf = (p: Player): number => {
+    const fame = p.pop + (isPitcher(p) ? Math.max(0, p.a.velocity - 140) * 3 : 0) + p.stats.koshien.bat.hr * 4 + p.stats.koshien.pit.w * 5;
+    return overall(p) + fame * 0.12 + (p.traits.includes('monster') ? 15 : 0);
+  };
+  // 评价高的先看；同一所学校一年最多 4 人被指名
+  const cands = seniors().filter((p) => p.wish === 'pro').sort((a, b) => scoreOf(b) - scoreOf(a));
+  for (const p of cands) {
+    const score = scoreOf(p);
+    if (picks.length >= 4) {
+      passed.push(p);
+      continue;
     }
-  });
-  const mine = picks.filter((p) => p.mine);
-  const lines: string[] = [];
-  for (const d of mine) {
-    lines.push(`🎉 ${d.name} 被 ${d.team} ${d.ikusei ? '以育成选秀' : `第 ${d.round} 轮`}指名！`);
-    addRep(d.round === 1 ? 4 : d.ikusei ? 0.5 : 2);
-    G.manager.totals.drafted++;
-    mySchool().prestige = clamp(mySchool().prestige + (d.round === 1 ? 2 : 0.8), 0, 99);
-    G.club.fans += d.round === 1 ? 3000 : 800;
-    addMgrExp(40);
-    const a = unlock('first_pro');
-    if (a) lines.push(a);
-    if (G.manager.totals.drafted >= 10) {
-      const b = unlock('ten_pros');
-      if (b) lines.push(b);
+    let round = 0;
+    let ikusei = false;
+    if (score >= 82) round = 1;
+    else if (score >= 76) round = randInt(1, 3);
+    else if (score >= 70) round = randInt(2, 5);
+    else if (score >= 64 && chance(0.6)) round = randInt(4, 7);
+    else if (score >= 60 && chance(0.3)) {
+      round = randInt(1, 4);
+      ikusei = true;
     }
+    if (!round) {
+      passed.push(p);
+      continue;
+    }
+    const team = pick(PRO_TEAMS);
+    p.draft = { team, round: ikusei ? 0 : round };
+    picks.push({ pid: p.id, name: fullName(p), team, round, ikusei });
+    note(p, `选秀会议：${team} ${ikusei ? `育成第 ${round} 轮` : `第 ${round} 轮`}指名`);
+    G.mgr.totals.drafted++;
+    if (!ikusei && round === 1) G.flags.draft1 = (G.flags.draft1 ?? 0) + 1;
   }
-  return { picks, mine, lines };
+  for (const d of picks) log(`选秀会议：${d.name} 被${d.team}${d.ikusei ? '育成' : ''}第 ${d.round} 轮指名！`, 'gold');
+  if (picks.length) milestone(`选秀会议：${picks.map((d) => `${d.name}（${d.team}${d.ikusei ? '育成' : ''}第${d.round}轮）`).join('、')}`);
+  return { picks, passed };
 }
 
-/** 毕业：三年级离队，本校毕业生写入 OB 名鉴 */
-export function graduate(): string[] {
-  const lines: string[] = [];
-  const me = G.club.schoolId;
-  for (const s of Object.values(G.schools)) {
-    if (!s.roster) continue;
-    const keep: number[] = [];
-    for (const id of s.roster) {
-      const p = G.players[id];
-      if (!p) continue;
-      if (p.grade !== 3) {
-        keep.push(id);
-        continue;
-      }
-      if (s.id === me) {
-        const path = p.path ?? (p.wish === 'pro' || overall(p) >= 55 ? (chance(0.7) ? '大学' : '社会人') : p.wish === 'univ' ? '大学' : p.wish === 'corp' ? '社会人' : '就业');
-        const bat = p.stats.career.bat;
-        const pit = p.stats.career.pit;
-        const summary = isPitcher(p)
-          ? `通算 ${pit.w}胜${pit.l}败 防御率 ${pit.outs ? ((pit.er * 27) / pit.outs).toFixed(2) : '-'} 三振 ${pit.so}`
-          : `通算 ${bat.ab ? (bat.h / bat.ab).toFixed(3).replace(/^0/, '') : '-'} ${bat.hr}本垒打 ${bat.rbi}打点`;
-        const entry: AlumniEntry = {
-          pid: p.id,
-          name: fullName(p),
-          pos: p.pos,
-          schoolName: s.name,
-          gradYear: G.year + 1,
-          path,
-          pro: !!p.proTeam,
-          proTeam: p.proTeam,
-          round: p.draftRound,
-          proStatus: p.proTeam ? '二军' : undefined,
-          proYears: 0,
-          summary,
-        };
-        G.records.alumni.push(entry);
-      }
-      delete G.players[id];
-    }
-    s.roster = keep;
+function careerSummary(p: Player): string {
+  const s = p.stats.career;
+  const parts: string[] = [POS_NAME[p.pos]];
+  if (isPitcher(p)) {
+    parts.push(`最速 ${Math.round(p.a.velocity)} km/h`);
+    if (s.pit.outs) parts.push(`${s.pit.w} 胜 ${s.pit.l} 负 · 防御率 ${eraOf(s.pit).toFixed(2)}`);
+    if (p.pitches.length) parts.push(p.pitches.map((x) => x.sig ?? '').filter(Boolean).join('') || `${p.pitches.length} 种变化球`);
+  } else if (s.bat.ab) {
+    parts.push(`打率 ${avgOf(s.bat).toFixed(3).replace(/^0/, '')} · ${s.bat.hr} 本垒打`);
   }
-  const n = G.records.alumni.filter((a) => a.gradYear === G.year + 1).length;
-  if (n) lines.push(`${n} 名三年级生毕业了。他们的名字将被记录在 OB 名鉴中。`);
-  if (G.club.captainId && !G.players[G.club.captainId]) G.club.captainId = null;
-  return lines;
+  const k = p.stats.koshien;
+  if (k.bat.g || k.pit.g) parts.push(`甲子园 ${Math.max(k.bat.g, k.pit.g)} 场`);
+  return parts.join(' · ');
 }
 
-/** 每年一次：职业 OB 的发展 */
-export function progressPros(): string[] {
-  const lines: string[] = [];
-  for (const a of G.records.alumni) {
-    if (!a.pro || a.proStatus === '退役') continue;
+/** 3 月 1 日：三年级毕业 */
+export function graduate(): Alumni[] {
+  const out: Alumni[] = [];
+  const s = mySchool();
+  const y = yearIdx(G.day);
+  for (const p of G.roster.map((id) => G.players[id]).filter((x) => x && x.grade === 3)) {
+    const ov = overall(p);
+    let path: Alumni['path'];
+    if (p.draft) path = 'pro';
+    else if (p.wish === 'job') path = 'job';
+    else if (p.wish === 'corp' || (ov >= 55 && chance(0.3))) path = 'corp';
+    else path = p.academics > 40 || ov >= 50 ? 'univ' : chance(0.5) ? 'univ' : 'job';
+    const a: Alumni = {
+      id: p.id,
+      name: fullName(p),
+      pos: p.pos,
+      gradYear: y,
+      schoolName: s.name,
+      path,
+      proTeam: p.draft?.team,
+      round: p.draft?.round,
+      ovr: Math.round(ov),
+      summary: careerSummary(p),
+      face: p.face,
+      proYears: 0,
+    };
+    if (path === 'pro') a.proStatus = p.draft?.round ? '新人' : '育成选手';
+    out.push(a);
+    G.alumni.unshift(a);
+    G.roster = G.roster.filter((id) => id !== p.id);
+    delete G.players[p.id];
+  }
+  if (G.alumni.length > 150) {
+    // 职业球员的记录永远保留，其余只留最近的
+    const pros = G.alumni.filter((a) => a.path === 'pro');
+    const rest = G.alumni.filter((a) => a.path !== 'pro').slice(0, 150 - Math.min(100, pros.length));
+    G.alumni = [...pros, ...rest].sort((a, b) => b.gradYear - a.gradYear);
+  }
+  if (out.length) log(`毕业典礼：${out.length} 名三年级毕业了`, 'info');
+  return out;
+}
+
+/** 每年：已经是职业球员的 OB 们的近况 */
+export function proYearly(): string[] {
+  const news: string[] = [];
+  for (const a of G.alumni) {
+    if (a.path !== 'pro' || a.proStatus === '已退役') continue;
     a.proYears = (a.proYears ?? 0) + 1;
-    const r = a.round ?? 6;
-    const talent = (8 - Math.min(7, r || 7)) / 7;
-    if (a.proStatus === '二军' && chance(0.18 + talent * 0.3)) {
-      a.proStatus = '一军';
-      lines.push(`OB ${a.name}（${a.proTeam}）升上一军！`);
-    } else if (a.proStatus === '一军' && chance(0.15 + talent * 0.25)) {
-      a.proStatus = '一军主力';
-      lines.push(`OB ${a.name}在${a.proTeam}站稳了主力位置！`);
-    } else if (a.proStatus === '一军主力' && chance(0.05 + talent * 0.06)) {
-      a.proStatus = '明星球员';
-      lines.push(`OB ${a.name}入选了职业棒球全明星赛！母校与有荣焉。`);
-      addRep(2);
-    }
-    if ((a.proYears ?? 0) > 3 && a.proStatus === '二军' && chance(0.35)) {
-      a.proStatus = '退役';
-      lines.push(`OB ${a.name}结束了职业生涯。`);
-    } else if ((a.proYears ?? 0) > 9 && chance(0.25)) {
-      a.proStatus = '退役';
-      lines.push(`OB ${a.name}宣布引退。`);
+    // 职业生涯：选秀顺位越高、高中时越强，越可能出头（每个人的「天花板」由 id 决定，年年一样）
+    const ceiling = a.ovr + (a.round ? 7 - a.round * 1.5 : -6) + ((a.id * 7919) % 13) - 6;
+    const yrs = a.proYears;
+    const peak = ceiling + Math.min(yrs, 5) * 1.5 - Math.max(0, yrs - 9) * 2;
+    let st = a.proStatus ?? '新人';
+    if (yrs >= 3 && peak < 64 && chance(0.3)) st = '已退役';
+    else if (yrs >= 13 && chance(0.3)) st = '已退役';
+    else if (peak >= 86 && yrs >= 3) st = chance(0.35) ? '日本代表' : '一军主力';
+    else if (peak >= 78 && yrs >= 2) st = '一军主力';
+    else if (peak >= 70 && yrs >= 2) st = '一军';
+    else st = '二军';
+    if (st !== a.proStatus) {
+      if (st === '一军主力' || st === '日本代表') news.push(`${a.name}（${a.proTeam}）成为${st}！`);
+      if (st === '已退役') news.push(`${a.name} 结束了 ${yrs} 年的职业生涯`);
+      a.proStatus = st;
     }
   }
-  return lines;
+  return news;
+}
+
+export function proAlumni(): Alumni[] {
+  return G.alumni.filter((a) => a.path === 'pro');
+}
+
+export const PATH_NAME: Record<Alumni['path'], string> = { pro: '职业', univ: '大学', corp: '社会人', job: '就业', left: '退部' };
+
+export function clampPop(v: number): number {
+  return clamp(v, 0, 100);
 }

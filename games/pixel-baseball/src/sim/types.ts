@@ -53,12 +53,16 @@ export interface TeamSetup {
   teamTactics: number; // 战术熟练度 0..100
   chemistry: number;
   crowd: number; // 应援 0..1
+  /** 换投倾向倍率（>1 更早换投、<1 让先发投更久） */
+  hook?: number;
 }
 
 export type PitchResult = 'ball' | 'called' | 'swinging' | 'foul' | 'inplay' | 'hbp' | 'bunt_foul' | 'bunt_miss' | 'pitchout';
 
 export interface PitchInfo {
   type: PitchType | 'FB';
+  /** 魔球的名字 */
+  sig?: string;
   kmh: number;
   x: number; // 好球带坐标 -1..1 为好球带
   y: number;
