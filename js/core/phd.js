@@ -110,7 +110,7 @@
     }
     if (n >= 4) {
       g.groups.forEach(gr => {
-        const c = S.groupMembers(g, gr).filter(m => S.canLead(g, m) && !S.leadsGroup(g, m)).sort((a, b) => S.memberYears(g, b) - S.memberYears(g, a))[0];
+        const c = S.bestLeader(g, gr);
         if (c) gr.lead = c.id;
       });
     }

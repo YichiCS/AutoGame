@@ -104,7 +104,7 @@
           if (sid === last) tags.push('接着做');
           if (fit === 1) tags.push('你最想做');
           const r = gr ? alloc.ratio[gr.id] : 9;
-          const comp = gr ? (alloc.dem[gr.id] > 0 ? (r >= 1 ? '组里算力充足' : `组里算力只够 ${Math.round(r * 100)}%`) : '组里算力空闲') : '组里没人做，用共享算力';
+          const comp = gr ? (alloc.dem[gr.id] > 0 ? `组里${r >= 1 ? '算力充足' : '算力紧张'}（实验 ×${S().computeSpeed(r).toFixed(1)}）` : '组里算力空闲') : '组里没人做，用共享算力';
           const hint = [
             `${t.name} · 实验室积累 ${(g.expertise[s.topic] || 0).toFixed(1)} · ${heatWord(S().heat(g, sid))} · ${comp}`,
             S().teamPreview(g, m, sid),

@@ -120,7 +120,7 @@
     if (m.funding === 'ta') d -= 0.015;
     if (g.funds < 0) d -= 0.04;
     if (g.pi.energy < 20) d -= 0.03;
-    if (g.members.length > G.desks(g)) d -= 0.02;
+    if (m.desk < 0) d -= m.role === 'ug' || m.role === 'visit' ? 0.008 : 0.02; // 没有工位：挤在别处，心情慢慢变差
     if (S.isHoliday(g)) d += 0.1;
     // 信任高的学生更扛得住压力
     const trust = m.trust == null ? 55 : m.trust;
@@ -130,16 +130,20 @@
     if (cur) d += 0.01 * S.interestFit(m, cur.sub);
     if (S.leadsGroup(g, m)) { d -= 0.004; S.bumpStat(m, 'idea', 0.004); }
     if (m.isPlayer && g.phd) d += S.PACE[g.phd.pace].mood;
+    if (d < 0) d *= 1.3 - S.st(m, 'grit') / 166;
     S.addMood(m, d + U.normal(0, 0.15));
+    // 在小组里天天讨论，协作能力慢慢提高
+    if ((m.groups || []).length) S.bumpStat(m, 'team', 0.002);
     if (pol.intensity === 'crunch') S.addTrust(m, -0.01);
     else if (pol.intensity === 'chill') S.addTrust(m, 0.004);
     if (pol.focus === 'mentor' && g.pi.energy >= 25) S.addTrust(m, 0.003);
     if (m.mood < 18) m.lowMood++;
     else m.lowMood = Math.max(0, m.lowMood - 2);
-    if (m.lowMood >= 20 + trust * 0.3 && m.quitCd <= g.day && m.role !== 'visit') {
+    if (m.lowMood >= 20 + trust * 0.3 + (S.st(m, 'grit') - 50) * 0.2 && m.quitCd <= g.day && m.role !== 'visit') {
       m.quitCd = g.day + 120;
       m.lowMood = 0;
-      G.queue(g, { type: 'event', id: m.isPlayer ? 'phd_slump' : 'quit_threat', ctx: { mid: m.id } });
+      if (m.role === 'jpi') G.queue(g, { type: 'event', id: 'jpi_leave', ctx: RS.EVENTS.jpi_leave.mk(g, m, true) });
+      else G.queue(g, { type: 'event', id: m.isPlayer ? 'phd_slump' : 'quit_threat', ctx: { mid: m.id } });
     }
     if (m.funding === 'fellow' && m.fellowUntil && g.day >= m.fellowUntil) {
       m.funding = 'ra';
@@ -313,6 +317,9 @@
     const stats = S.genStats(q + ROLE_Q[role]);
     const traits = RS.randomTraits(q);
     if (traits.includes('mathy')) stats.idea = U.clamp(stats.idea + 6, 8, 95);
+    S.fillStats(stats, q + ROLE_Q[role], traits);
+    const est = {};
+    S.STATS.forEach(s => { est[s.k] = noisyRange(stats[s.k]); });
     const fellow = g.region === 'us' && role === 'phd' && q > 66 && U.chance(0.35);
     const bio = RS.genBio(role, traits, school);
     bio.interest = opts.interest || S.randomInterest(g);
@@ -324,7 +331,7 @@
       school, own, q, stats, traits, bio,
       pot: U.clamp(U.normal(1 + (q - 50) / 200, 0.15), 0.65, 1.45), fellow,
       pubs: q > 70 ? U.int(1, 3) : q > 58 ? U.int(0, 2) : U.chance(0.2) ? 1 : 0, accept,
-      est: { idea: noisyRange(stats.idea), code: noisyRange(stats.code), write: noisyRange(stats.write) },
+      est,
       shown: traits.filter(() => U.chance(0.5)), interviewed: false,
     };
   };
@@ -774,6 +781,188 @@
     G.milestone(g, b.name);
     RS.bus.emit('expand', {});
     return null;
+  };
+
+  // ---------- 跳槽 ----------
+  // 别的学校开出的条件：档次越高要求越高；成果够这所学校的长聘标准，就能直接带着长聘（甚至升一级）过去
+  S.MOVE_GAP = 720; // 跳槽以后两年内没人来挖
+  S.canMove = g => !g.phd && (!g.ended || g.flags.continued) && G.careerYear(g) >= 2 && !(g.flags.movedDay && g.day - g.flags.movedDay < S.MOVE_GAP);
+  S.offerTiers = function (g) {
+    return G.region(g).tiers.map((T, t) => (g.rep >= T.req.rep * (t < g.tier ? 0.75 : t === g.tier ? 0.5 : 0.3) ? t : -1)).filter(t => t >= 0);
+  };
+  S.genPIOffer = function (g, tier) {
+    const R = G.region(g), T = R.tiers[tier];
+    const pool = (T.schools || []).filter(s => s !== g.school);
+    if (!pool.length) return null;
+    let title = g.pi.title, tenure = g.pi.tenured;
+    if (!tenure && g.rep >= T.req.rep && g.stats.pubs.A >= T.req.papersA) { tenure = true; title = Math.max(title, 1); }
+    // 去不比现在差的学校，有时还能升一级
+    const pr = R.promotions.find(p => p.to === title + 1);
+    if (tenure && pr && tier >= g.tier && g.rep >= pr.rep * 0.85 && g.stats.pubs.A >= pr.papersA * 0.8) title = pr.to;
+    const lvl = [0.55, 0.75, 0.95, 1.2][title] || 1;
+    const startup = Math.round((T.startup * lvl * U.range(0.85, 1.15) * (tier > g.tier ? 1.25 : 1)) / 1000) * 1000;
+    const room = Math.min(RS.ROOMS.length - 1, Math.max(g.room, [2, 1, 1][tier] + (title >= 2 ? 1 : 0)) + (U.chance(0.35) ? 1 : 0));
+    return { school: U.pick(pool), tier, title, tenure, startup, room };
+  };
+  // 猎头上门：一个 offer，好学校更愿意来挖
+  S.headhuntOffer = function (g) {
+    if (!S.canMove(g)) return null;
+    const ts = S.offerTiers(g);
+    if (!ts.length) return null;
+    return S.genPIOffer(g, U.weighted(ts, t => (t < g.tier ? 3 : t === g.tier ? 2 : 1)));
+  };
+  // 主动投简历：每个够得着的档次都有机会
+  S.jobBlock = function (g) {
+    if (g.phd) return '读博的时候不能跳槽';
+    if (g.ended && !g.flags.continued) return '游戏已经结束了';
+    if (!S.canMove(g)) return G.careerYear(g) < 2 ? '入职满一年后才能去看机会' : '刚换过学校，先安顿两年吧';
+    if ((g.cooldowns.jobs || 0) > g.day) return `${G.daysText(g.cooldowns.jobs - g.day)}才能再去看机会`;
+    return null;
+  };
+  S.jobSearch = function (g) {
+    const why = S.jobBlock(g);
+    if (why) return why;
+    if (g.pi.energy < 6) return '你自己都没精力了';
+    g.cooldowns.jobs = g.day + 360;
+    S.addEnergy(g, -6);
+    const offers = S.offerTiers(g).filter(() => U.chance(0.65)).map(t => S.genPIOffer(g, t)).filter(Boolean);
+    if (!offers.length) {
+      G.queue(g, { type: 'notice', tone: 'info', icon: 'mail', title: '投出去的简历', text: '你悄悄给几所学校投了简历，面试了几轮，最后没有拿到合适的 offer。<br>多发几篇好论文、攒攒声望，明年再看看吧。' });
+      return null;
+    }
+    G.queue(g, { type: 'offers', src: 'search', offers });
+    return null;
+  };
+  // 学生愿不愿意跟你走：博士生、博士后多半愿意；硕士生、本科生大多留在原校
+  S.followChance = function (g, m, o) {
+    const trust = m.trust == null ? 55 : m.trust;
+    const yrs = S.memberYears(g, m);
+    let p = { phd: 0.35 + (yrs < 2 ? 0.1 : yrs >= 4 ? -0.25 : 0), postdoc: 0.6, jpi: 0.45, ms: 0.15 + (yrs < 0.8 ? 0.1 : 0), visit: 0.35 }[m.role] || 0.05;
+    p += (trust - 50) / (m.role === 'phd' ? 100 : 150) + (m.mood - 50) / 300 + (o.tier < g.tier ? 0.1 : o.tier > g.tier ? -0.12 : 0);
+    return U.clamp(p, 0.03, 0.95);
+  };
+  // 不愿意走的人可以劝一劝（每人一次）
+  S.persuadeFollow = function (g, item, mid) {
+    const m = G.member(g, mid);
+    if (!m || item.will[mid] || item.tried[mid]) return '不用再劝了';
+    if (g.pi.energy < 4) return '你自己都没精力了';
+    item.tried[mid] = true;
+    S.addEnergy(g, -4);
+    if (Math.random() < S.persuadeChance(item, mid)) {
+      item.will[mid] = true;
+      if (!item.pick.includes(mid)) item.pick.push(mid);
+      S.addTrust(m, 2);
+      return { ok: `${m.name} 被你说动了，愿意跟你走` };
+    }
+    S.addTrust(m, -2);
+    return `${m.name} 还是想留在 ${g.school}`;
+  };
+  S.persuadeChance = (item, mid) => Math.min(0.85, (item.chance[mid] || 0) + 0.25);
+  S.retainCost = g => Math.round((G.tierCfg(g).startup * 0.4) / 1000) * 1000;
+  S.offersResolve = function (g, item, pay) {
+    const o = pay && pay.accept != null ? item.offers[pay.accept] : null;
+    if (o) {
+      // 带谁走：每个人愿不愿意现在就定下来，之后可以劝
+      const will = {}, chance = {};
+      g.members.forEach(m => { if (m.isPlayer) return; chance[m.id] = S.followChance(g, m, o); will[m.id] = Math.random() < chance[m.id]; });
+      G.queue(g, { type: 'move', offer: o, will, chance, tried: {}, pick: g.members.filter(m => will[m.id]).map(m => m.id) });
+      return;
+    }
+    const canRetain = (g.cooldowns.retain || 0) <= g.day;
+    if (canRetain && (pay === 'negotiate' || (pay == null && item.src === 'headhunt'))) {
+      const v = S.retainCost(g);
+      g.cooldowns.retain = g.day + 720;
+      S.earn(g, v, 'dept');
+      S.addRep(g, 2);
+      G.log(g, `你拿着 ${item.offers[0].school} 的 offer 和学院谈了谈，学院为了留住你追加了 ${G.money(g, v)} 的经费`, 'gold');
+      return;
+    }
+    G.log(g, `你婉拒了${item.offers.map(x => x.school).join('、')}的邀请，留在 ${g.school}`, 'info');
+  };
+  S.movePI = function (g, o, bring) {
+    const old = g.school;
+    const take = new Set(bring || []);
+    const staying = g.members.filter(m => !m.isPlayer && !take.has(m.id));
+    staying.forEach(m => S.removeMember(g, m, 'stayed', `留在 ${old}`));
+    g.members.forEach(m => { if (m.sup && !G.member(g, m.sup)) m.sup = null; });
+    const up = o.tier < g.tier;
+    g.school = o.school;
+    g.tier = o.tier;
+    if (o.tenure && !g.pi.tenured) { g.pi.tenured = true; g.pi.tenureDay = g.day; g.evalDone.mid = true; g.evalDone.final = true; }
+    if (o.title > g.pi.title) { g.pi.title = o.title; g.pi.promoDay = g.day; }
+    S.earn(g, o.startup, 'startup');
+    if (o.room > g.room) g.room = o.room;
+    S.assignDesks(g);
+    let ta = 0;
+    g.members.forEach(m => { if (m.funding === 'ta' && ++ta > G.tierCfg(g).taSlots) m.funding = 'ra'; });
+    g.teaching.current = null; // 原学校的课不用上了
+    g.flags.moveUntil = g.day + 45; // 搬家的一个多月里大家都没法好好干活
+    g.flags.movedDay = g.day;
+    g.flags.moves = (g.flags.moves || 0) + 1;
+    S.addRep(g, up ? 8 : 3);
+    S.addEnergy(g, -15);
+    g.members.forEach(m => { S.addMood(m, -4); S.addTrust(m, 4); S.story(g, m, `跟着你从 ${old} 转到了 ${g.school}`); });
+    const left = staying.length ? `，${staying.length} 人留在了 ${old}` : '';
+    G.log(g, `你离开了 ${old}，以${G.titleName(g)}的身份加入 ${g.school}${left}`, 'gold');
+    G.milestone(g, `离开 ${old}，加入 ${g.school}（${G.titleName(g)}）`);
+    G.queue(g, { type: 'notice', tone: 'gold', icon: 'home', fx: 'confetti', title: `你好，${g.school}！`,
+      text: `你正式加入了 <b>${U.esc(g.school)}</b>（${U.esc(G.tierCfg(g).name)}），职称：<b>${U.esc(G.titleName(g))}</b>${g.pi.tenured ? '' : '（考核按新学校的标准，时间照旧）'}。<br>启动经费 ${G.money(g, o.startup)} 已经到账，实验室是「${RS.ROOMS[g.room].name}」（${G.desks(g)} 个工位）。<br>${g.members.length ? `跟着你过来的有 ${g.members.length} 人` : '这次是一个人过来的'}${left}。搬家的这一个多月，大家的效率都会打折扣。` });
+  };
+
+  // ---------- 青年教师（小导师） ----------
+  // 大导师的组里会有青年教师带着自己的学生挂靠进来：TA 自己做课题，也帮你带学生；你可以指定每个学生由谁来带
+  S.jpis = g => g.members.filter(m => m.role === 'jpi');
+  S.jpiJoin = function (g, c) {
+    const j = S.createMember(g, 'jpi', { name: c.name, avatar: c.avatar, q: c.q, school: c.from, interest: c.sid, trust: 62, startDay: g.day });
+    j.bio.goal = 'academia';
+    S.addMember(g, j, true);
+    const v = S.bumpDeskFor(g, j); // 青年教师得有张桌子
+    if (v) G.log(g, `给 ${j.name} 腾了一个工位，${v.name} 暂时没有工位了`, 'info');
+    S.story(g, j, `从 ${c.from} 带着学生加入了实验室`);
+    // TA 的学生：默认还是 TA 来带
+    const kids = c.team.map(t => {
+      const m = S.createMember(g, t.role, { name: t.name, avatar: t.avatar, q: t.q, school: c.from, interest: c.sid, startDay: g.day - Math.round(t.yrs * 360), trust: 50 });
+      m.sup = j.id;
+      S.addMember(g, m, true);
+      S.story(g, m, `跟着导师 ${j.name} 加入了实验室`);
+      return m;
+    });
+    // 小组：有这个子方向的组就进；没有就新开一个，让 TA 当组长
+    let gr = S.groupOfSub(g, c.sid);
+    const fresh = !gr && !S.canCreateGroup(g, c.sid);
+    if (fresh) gr = S.createGroup(g, c.sid);
+    if (gr) {
+      [j].concat(kids).forEach(m => { if ((m.groups || []).length < S.MAX_MEMBER_GROUPS) S.setMemberGroup(g, m, gr.id, true); });
+      if (fresh || !G.member(g, gr.lead)) S.setGroupLead(g, gr.id, j.id);
+    }
+    if (c.grant) g.grants.push({ id: 'jpi_' + j.id, name: `${j.name} 带来的科研经费`, kind: 'grant', group: null, total: c.grant, net: c.grant, monthly: c.grant / 36, months: 36, monthsLeft: 36, start: g.day });
+    G.log(g, `青年教师 ${j.name} 带着 ${kids.length} 名学生加入了实验室${c.grant ? `，还带来了 ${G.money(g, c.grant)} 的经费` : ''}`, 'good');
+    G.milestone(g, `青年教师 ${j.name} 带着团队加入实验室`);
+    RS.bus.emit('member_join', j);
+    return j;
+  };
+  // 指定学生由谁来带：null 表示你自己
+  S.setSup = function (g, m, jid) {
+    if (!S.STUDENT_ROLES.includes(m.role)) return '只有学生需要指定导师';
+    if (m.isPlayer) return '你的导师是不能换的';
+    const j = jid ? G.member(g, jid) : null;
+    if (jid && (!j || j.role !== 'jpi')) return '没有这位青年教师';
+    if ((m.sup || null) === (jid || null)) return null;
+    m.sup = jid || null;
+    G.log(g, `${m.name} 改由 ${j ? j.name : '你'} 指导`, 'info');
+    S.story(g, m, `改由 ${j ? j.name : g.pi.name} 指导`);
+    return null;
+  };
+  // 青年教师独立出去：TA 带的学生可以跟着走，也可以留下由你来带
+  S.jpiLeave = function (g, j, dest, take) {
+    const kids = g.members.filter(m => m.sup === j.id);
+    kids.forEach(m => {
+      if (take) S.removeMember(g, m, 'followed', `跟随 ${j.name} 去了 ${dest}`);
+      else { m.sup = null; S.addMood(m, -4); S.story(g, m, `导师 ${j.name} 去了 ${dest}，改由你来带`); }
+    });
+    g.grants = g.grants.filter(x => x.id !== 'jpi_' + j.id);
+    S.removeMember(g, j, 'independent', dest);
+    return kids.length;
   };
 
   // ---------- 玩家对成员的操作 ----------

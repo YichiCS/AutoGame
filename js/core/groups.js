@@ -11,7 +11,16 @@
 
   // ---------- 查询 ----------
   // 每个小组做一个子方向（gr.sub），gr.topic 是它所属的方向
-  S.maxGroups = g => Math.min(G.area(g).subs.length, 2 + g.room);
+  // 小组上限：每 3 个人才能撑起一个小组（不然全是一两个人的“光杆组”），同时受实验室空间限制
+  S.GROUP_PER = 3;
+  S.groupRoomCap = g => 2 + g.room;
+  S.groupCapWhy = function (g) {
+    const max = S.maxGroups(g);
+    if (g.groups.length < max) return null;
+    if (max >= G.area(g).subs.length) return '每个子方向都已经有小组了';
+    return max < S.groupRoomCap(g) ? `实验室现在 ${g.members.length} 人，最多设 ${max} 个小组（每 ${S.GROUP_PER} 人一个）` : `现在的实验室最多设 ${max} 个小组，扩建实验室后可以设更多`;
+  };
+  S.maxGroups = g => Math.max(1, Math.min(G.area(g).subs.length, S.groupRoomCap(g), Math.floor(g.members.length / S.GROUP_PER)));
   S.group = (g, id) => g.groups.find(x => x.id === id) || null;
   S.groupOfSub = (g, sid) => g.groups.find(x => x.sub === sid) || null;
   S.groupName = (g, gr) => G.sub(g, gr.sub).name + '组';
@@ -21,15 +30,15 @@
   S.memberSubs = (g, m) => S.memberGroups(g, m).map(x => x.sub);
   S.interestOf = m => (m && m.bio && m.bio.interest) || null;
   S.leadsGroup = (g, m) => g.groups.find(x => x.lead === m.id) || null;
-  S.canLead = (g, m) => m.role === 'postdoc' || (m.role === 'phd' && S.memberYears(g, m) >= 2);
+  S.canLead = (g, m) => m.role === 'postdoc' || m.role === 'jpi' || (m.role === 'phd' && S.memberYears(g, m) >= 2);
+  // 组内互助时算一整个人的：研究生、博士后、青年教师（本科生、访问学生算半个）
+  S.fullHelper = x => S.CONSULT_ROLES.includes(x.role) || x.role === 'jpi';
 
   // ---------- 成立 / 解散 / 分组 ----------
   S.canCreateGroup = function (g, sid) {
     if (!G.area(g).subs.some(s => s.id === sid)) return '没有这个子方向';
     if (S.groupOfSub(g, sid)) return '这个子方向已经有小组了';
-    const max = S.maxGroups(g);
-    if (g.groups.length >= max) return `现在的实验室最多设 ${max} 个小组，扩建实验室后可以设更多`;
-    return null;
+    return S.groupCapWhy(g);
   };
   S.createGroup = function (g, sid, silent) {
     sid = G.asSub(g, sid);
@@ -66,6 +75,21 @@
     }
     return null;
   };
+  // 组长自动任命：组里资历够的人里，博士后 / 青年教师优先；同等资历选总评最高的
+  const LEAD_RANK = { jpi: 2, postdoc: 2, phd: 1 };
+  S.bestLeader = function (g, gr) {
+    const c = S.groupMembers(g, gr).filter(m => !m.isPlayer && S.canLead(g, m) && !S.leadsGroup(g, m) && !(m.leadCd > g.day));
+    c.sort((a, b) => (LEAD_RANK[b.role] || 0) - (LEAD_RANK[a.role] || 0) || S.overall(b.stats) - S.overall(a.stats));
+    return c[0] || null;
+  };
+  S.autoLeaders = function (g) {
+    if (!g.phd && (g.policies.autoLead || 'auto') !== 'auto') return;
+    g.groups.forEach(gr => {
+      if (G.member(g, gr.lead)) return;
+      const b = S.bestLeader(g, gr);
+      if (b) S.setGroupLead(g, gr.id, b.id);
+    });
+  };
   S.setGroupLead = function (g, gid, mid) {
     const gr = S.group(g, gid);
     if (!gr) return '没有这个小组';
@@ -99,7 +123,7 @@
 
   // ---------- 小组带来的效果 ----------
   // 组长帮你分担指导工作（博士后本来就能分担，额外加得少一些）
-  S.leaderCap = g => U.sum(g.groups, gr => { const l = G.member(g, gr.lead); return l ? (l.role === 'postdoc' ? 1 : 1.5) : 0; });
+  S.leaderCap = g => U.sum(g.groups, gr => { const l = G.member(g, gr.lead); return l ? (l.role === 'postdoc' || l.role === 'jpi' ? 1 : 1.5) : 0; });
   // 单干：不在任何小组、自己负责课题的研究生 / 博士后。可以做自己想做的方向，但没人讨论、也没有组长带
   S.isSolo = m => !!m && !(m.groups || []).length && S.CONSULT_ROLES.includes(m.role);
   S.SOLO_WORK = 0.88;
@@ -109,7 +133,8 @@
     if (S.isSolo(m)) return S.SOLO_GROW;
     const gs = S.memberGroups(g, m);
     if (!gs.length) return 1;
-    return 1.05 + (gs.some(gr => gr.lead && gr.lead !== m.id) ? 0.07 : 0);
+    const leads = gs.map(gr => (gr.lead && gr.lead !== m.id ? G.member(g, gr.lead) : null)).filter(Boolean);
+    return 1.05 + (leads.length ? 0.07 * (0.5 + Math.max(...leads.map(l => S.st(l, 'team'))) / 100) : 0);
   };
   // 组内互助：在小组的方向上做课题时，组里其他在岗的人帮着讨论、调代码、跑实验——
   // 研究生 / 博士后每人 +5%，本科生 / 访问学生每人 +2.5%，最多 +20%；有组长（不是自己）再 +5%
@@ -121,7 +146,7 @@
   S.teamMult = function (g, m, p) {
     const gr = S.groupOfSub(g, p.sub);
     if (gr && S.inGroup(m, gr.id)) {
-      const n = U.sum(S.teamHelpers(g, m, p), x => (S.CONSULT_ROLES.includes(x.role) ? 1 : 0.5));
+      const n = U.sum(S.teamHelpers(g, m, p), x => (S.fullHelper(x) ? 1 : 0.5));
       return 1 + Math.min(0.2, 0.05 * n) + (gr.lead && gr.lead !== m.id ? 0.05 : 0);
     }
     // 单干的学生做自己的课题：效率打折
@@ -134,7 +159,7 @@
     if (!hs.length) return [];
     let mates = (p.mates || []).map(id => hs.find(x => x.id === id)).filter(Boolean);
     if (!mates.length) {
-      mates = U.shuffle(hs.slice()).sort((a, b) => S.CONSULT_ROLES.includes(b.role) - S.CONSULT_ROLES.includes(a.role)).slice(0, 2);
+      mates = U.shuffle(hs.slice()).sort((a, b) => S.fullHelper(b) - S.fullHelper(a)).slice(0, 2);
       p.mates = mates.map(x => x.id);
     }
     return mates;
@@ -156,7 +181,7 @@
     const inIt = gr && (S.inGroup(m, gr.id) || (m.groups || []).length < S.MAX_MEMBER_GROUPS);
     if (inIt) {
       const others = S.groupMembers(g, gr).filter(x => x.id !== m.id && x.status === 'active');
-      const n = U.sum(others, x => (S.CONSULT_ROLES.includes(x.role) ? 1 : 0.5));
+      const n = U.sum(others, x => (S.fullHelper(x) ? 1 : 0.5));
       const pct = Math.round((Math.min(0.2, 0.05 * n) + (gr.lead && gr.lead !== m.id ? 0.05 : 0)) * 100);
       return pct ? `组内互助：效率 +${pct}%` : '组里暂时没有别人，还没有互助';
     }
@@ -168,6 +193,31 @@
     S.memberGroups(g, m).forEach(gr => S.setMemberGroup(g, m, gr.id, false));
     S.story(g, m, '退出小组，开始单干');
     G.log(g, `${m.name} 退出了小组，开始单干`, 'info');
+  };
+  // 调组：退出现在的小组，换到另一个
+  S.switchGroup = function (g, m, gid) {
+    const gr = S.group(g, gid);
+    if (!gr) return '没有这个小组';
+    const old = S.memberGroups(g, m).filter(x => x.id !== gid);
+    old.forEach(x => S.setMemberGroup(g, m, x.id, false));
+    S.setMemberGroup(g, m, gid, true);
+    if (old.length) S.story(g, m, `从「${old.map(x => S.groupName(g, x)).join('、')}」调到「${S.groupName(g, gr)}」`);
+    G.log(g, `${m.name} ${old.length ? '调到' : '加入'}了「${S.groupName(g, gr)}」`, 'info');
+    return null;
+  };
+  // 让学生自由选方向：选最想做的；那个方向有小组就加入（已经在两个组里就调过去），没有小组就单干
+  S.freePick = function (g, m) {
+    const sid = S.interestOf(m) || S.pickSubFor(g, m);
+    if (S.memberSubs(g, m).includes(sid)) return { sid, how: 'stay' };
+    const gr = S.groupOfSub(g, sid);
+    if (gr) return { sid, gr, how: (m.groups || []).length < S.MAX_MEMBER_GROUPS ? 'join' : 'switch' };
+    return { sid, how: (m.groups || []).length ? 'solo' : 'free' };
+  };
+  S.doFreePick = function (g, m) {
+    const f = S.freePick(g, m);
+    if (f.how === 'switch') S.switchGroup(g, m, f.gr.id);
+    else if (f.how === 'solo') S.goSolo(g, m);
+    return S.startNext(g, m, f.sid, 'self');
   };
   // 同组的人多，讨论起来想法更多；组长也会帮着把关。单干的课题少了讨论
   S.groupSynergy = function (g, p) {
@@ -217,45 +267,80 @@
       }
     });
   };
-  // 每个小组能用的算力：先用本组的专用服务器，不够的部分按缺口比例分共享池
+  // ---------- 算力像水 ----------
+  // 每个在做实验的课题是一根水管，「需求」是让它按正常速度跑要流过的水。实验速度 = 流进来的水 / 需求：
+  // 水多流得快，但一根管子最多只能快到 PIPE_MAX 倍（再多的卡也得有人改代码、看结果）；一滴水都没有，也能用自己的电脑和学校的公共算力平台以 PIPE_MIN 倍慢慢跑。
+  S.PIPE_MAX = 1.5;
+  S.PIPE_MIN = 0.35;
+  // 专用服务器的好处：环境、数据都为这个组配好了，不用排队抢卡——同样一台，给专门的小组用能顶 1.25 台。
+  // 代价是闲着的时候也不外借，所以要分给实验一直排得满的组
+  S.DEDICATED_BONUS = 1.25;
+  S.computeSpeed = r => U.clamp(r, S.PIPE_MIN, S.PIPE_MAX);
+  // 注水：水先流向水位最低的水管，填平以后再一起往上涨。tanks: [{ dem, lv }]，返回最终水位
+  function fillLevel(tanks, water) {
+    const t = tanks.filter(x => x.dem > 0 && x.lv < S.PIPE_MAX).sort((a, b) => a.lv - b.lv);
+    if (!t.length) return S.PIPE_MAX;
+    let width = 0, level = t[0].lv, left = water;
+    for (let i = 0; i < t.length; i++) {
+      width += t[i].dem;
+      const next = i + 1 < t.length ? t[i + 1].lv : S.PIPE_MAX;
+      const room = width * (next - level);
+      if (left <= room) return level + left / width;
+      left -= room;
+      level = next;
+    }
+    return S.PIPE_MAX;
+  }
+  // 每个小组的水位：专用服务器只往本组的水管里流（多出来的闲着，不外借）；
+  // 没分配的服务器和云算力是共享水箱，先流向最缺水的组，再一起往上涨
   S.computeAlloc = function (g) {
     S.fixAlloc(g);
     const f = g.flags;
     // 机房过热限功率时所有服务器都打折；临时租的云算力进共享池
     const cut = f.cutUntil > g.day ? f.computeCut || 1 : 1;
     const temp = f.tempUntil > g.day ? f.tempUnits || 0 : 0;
-    const total = G.computeUnits(g) * cut + temp;
     const own = {}, dem = { _pool: 0 };
-    let dedicated = 0;
-    g.groups.forEach(gr => { own[gr.id] = S.allocUnits(g, gr.id) * cut; dedicated += own[gr.id]; dem[gr.id] = 0; });
+    let raw = 0;
+    g.groups.forEach(gr => { const u = S.allocUnits(g, gr.id) * cut; raw += u; own[gr.id] = u * S.DEDICATED_BONUS; dem[gr.id] = 0; });
     for (const p of g.projects) {
       if (p.phase !== 'exp') continue;
       const gr = S.groupOfSub(g, p.sub);
       dem[gr ? gr.id : '_pool'] += S.projectDemand(g, p);
     }
-    const pool = Math.max(0, total - dedicated);
-    let need = dem._pool, idle = 0;
-    const gap = {};
-    g.groups.forEach(gr => {
-      gap[gr.id] = Math.max(0, dem[gr.id] - own[gr.id]);
-      need += gap[gr.id];
-      idle += Math.max(0, own[gr.id] - dem[gr.id]);
-    });
-    const share = need > 0 ? pool / need : 0;
-    const got = { _pool: dem._pool * share }, ratio = { _pool: dem._pool > 0 ? share : 9 };
-    g.groups.forEach(gr => {
-      got[gr.id] = own[gr.id] + gap[gr.id] * share;
-      ratio[gr.id] = dem[gr.id] > 0 ? got[gr.id] / dem[gr.id] : 9;
-    });
-    // DDL 前你指定优先保证的小组：多分一些，其他人让一让
+    const pool = Math.max(0, G.computeUnits(g) * cut - raw) + temp;
+    const dedicated = raw * S.DEDICATED_BONUS;
+    const total = pool + dedicated;
+    const keys = Object.keys(dem).filter(k => dem[k] > 0);
+    const lv = {};
+    keys.forEach(k => { lv[k] = k === '_pool' ? 0 : Math.min(S.PIPE_MAX, own[k] / dem[k]); });
+    const ownUsed = U.sum(keys, k => (k === '_pool' ? 0 : lv[k] * dem[k]));
+    const base = Object.assign({}, lv);
+    let water = pool;
+    // DDL 前你指定优先保证的小组：共享水箱先灌满它的水管，剩下的再分给别人
     if (f.prioUntil > g.day && dem[f.prio] > 0) {
-      Object.keys(ratio).forEach(k => {
-        if (!(dem[k] > 0)) return;
-        ratio[k] *= k === f.prio ? 1.5 : 0.8;
-        got[k] = ratio[k] * dem[k];
-      });
+      const add = Math.min(water, dem[f.prio] * (S.PIPE_MAX - lv[f.prio]));
+      lv[f.prio] += add / dem[f.prio];
+      water -= add;
     }
-    return { total, pool, dedicated, own, dem, got, ratio, idle };
+    const level = fillLevel(keys.map(k => ({ dem: dem[k], lv: lv[k] })), water);
+    keys.forEach(k => { lv[k] = Math.max(lv[k], Math.min(S.PIPE_MAX, level)); });
+    const got = {}, ratio = {};
+    Object.keys(dem).forEach(k => {
+      ratio[k] = dem[k] > 0 ? lv[k] : 9;
+      got[k] = dem[k] > 0 ? lv[k] * dem[k] : 0;
+    });
+    const poolUsed = U.sum(keys, k => (lv[k] - base[k]) * dem[k]);
+    return {
+      total, pool, dedicated, own, dem, got, ratio, level,
+      idle: Math.max(0, dedicated - ownUsed), // 专用但闲着的
+      spare: Math.max(0, pool - poolUsed), // 共享水箱里没流出去的
+    };
+  };
+  // 全实验室的平均实验速度（按需求加权）
+  S.avgSpeed = al => {
+    const keys = Object.keys(al.dem).filter(k => al.dem[k] > 0);
+    const d = U.sum(keys, k => al.dem[k]);
+    return d > 0 ? U.sum(keys, k => al.dem[k] * S.computeSpeed(al.ratio[k])) / d : 1;
   };
   S.projRatio = (g, p, ctx) => {
     if (!ctx.alloc) return ctx.ratio;
@@ -360,7 +445,7 @@
 
   // 想换组的人：最感兴趣的子方向有小组，但自己不在里面
   S.switchCands = g => g.members.filter(m => {
-    if (m.status !== 'active' || m.role === 'visit') return false;
+    if (m.status !== 'active' || m.role === 'visit' || m.role === 'jpi') return false;
     const gr = S.groupOfSub(g, S.interestOf(m));
     return !!gr && !S.inGroup(m, gr.id);
   });
@@ -417,7 +502,7 @@
     const first = m.first || 0, firstA = m.firstA || 0;
     // 一篇论文要做大半年，每篇都很有分量
     const papers = firstA * 4.5 + Math.max(0, m.pubsA - firstA) * 2.25 + first * 1.5 + Math.max(0, m.pubs - first) * 0.75;
-    return papers + (avg - 50) / 5 + g.rep / 80 + (trust - 50) / 12 + (m.ledGroup ? 2 : 0);
+    return papers + (avg - 50) / 5 + (S.st(m, 'talk') - 50) / 15 + g.rep / 80 + (trust - 50) / 12 + (m.ledGroup ? 2 : 0);
   };
   S.placementOutlook = function (g, m) {
     const s = S.placementScore(g, m);

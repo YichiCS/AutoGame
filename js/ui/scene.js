@@ -26,7 +26,13 @@
     { wall: '#b4c3ad', line: '#a8b8a1', trim: '#6f7f68', base: '#5d6b57', ceil: '#dde6d6', floor: '#8a5a3b', floorL: '#986745', floorD: '#764c31' },
     { wall: '#aebbd2', line: '#a1aec6', trim: '#6b7894', base: '#56627c', ceil: '#dfe6f1', floor: '#cfc8b6', floorL: '#dbd5c4', floorD: '#b9b19c' },
     { wall: '#d8c9a2', line: '#cbbc95', trim: '#8f7f57', base: '#6e5f3d', ceil: '#efe5cb', floor: '#4f6a91', floorL: '#5a77a0', floorD: '#435b7d' },
+    { wall: '#c7d3cf', line: '#bac7c3', trim: '#5f7470', base: '#4c5f5b', ceil: '#e8efed', floor: '#6d5a7e', floorL: '#7a6790', floorD: '#5c4b6b' },
+    { wall: '#e2ddd3', line: '#d6d0c4', trim: '#7d7466', base: '#5e564a', ceil: '#f4f1ea', floor: '#d8d4cc', floorL: '#e6e3dc', floorD: '#bdb8ad' },
   ];
+  // 一层画得下 16 个工位；更大的实验室分成两层，画面左上角切换
+  const FLOOR_N = 16;
+  let floor = 0;
+  const floorPing = [0, 0];
 
   let cv = null, ctx = null, g = null;
   let T = 0;
@@ -43,16 +49,21 @@
 
   // ---------- 布局 ----------
   function deskPos(d) {
-    const col = Math.floor(d / 2), row = d % 2;
+    const k = d % FLOOR_N;
+    const col = Math.floor(k / 2), row = k % 2;
     return { col, row, x: DESK_X0 + col * DESK_DX, y: ROW_Y[row] };
   }
   function deskSeat(d) {
     const p = deskPos(d);
-    return { kind: 'desk', d, x: p.x + 17, y: p.y + 36 };
+    return { kind: 'desk', d, fl: d >= FLOOR_N ? 1 : 0, x: p.x + 17, y: p.y + 36 };
   }
+  const twoFloors = () => !!g && RS.G.desks(g) > FLOOR_N;
+  // 没有工位的人坐在地上：实验室分两层时都挤在二楼
   function floorSeat(i) {
-    return { kind: 'floor', d: -1 - i, x: 84 + (i % 12) * 26, y: 236 };
+    return { kind: 'floor', d: -1 - i, fl: twoFloors() ? 1 : 0, x: 84 + (i % 12) * 26, y: 236 };
   }
+  const flOf = a => (!a || a.isPI ? 0 : a.seat.fl || 0);
+  const here = a => flOf(a) === floor;
   function laneOf(pt) {
     if (pt.y <= 112) return LANES.back;
     if (pt.y <= 160) return LANES.mid;
@@ -73,9 +84,16 @@
   }
 
   // ---------- 角色 ----------
+  // 青年教师穿西装
+  const suitCache = new Map();
+  function jpiAvatar(m) {
+    let av = suitCache.get(m.id);
+    if (!av || av.src !== m.avatar) { av = Object.assign({ suit: true }, m.avatar); av.src = m.avatar; suitCache.set(m.id, av); }
+    return av;
+  }
   function newActor(m, seat, how) {
     const a = {
-      id: m.id, m, av: m.avatar, role: m.role, seat, state: 'sit', x: seat.x, y: seat.y,
+      id: m.id, m, av: m.role === 'jpi' ? jpiAvatar(m) : m.avatar, role: m.role, seat, state: 'sit', x: seat.x, y: seat.y,
       path: [], after: 'sit', timer: U.range(4, 20), stay: 0, face: 1, walkT: 0, jumpT: 0, cheerT: 0, sofa: -1, pendingEmote: null,
     };
     if (how === 'enter') {
@@ -122,11 +140,19 @@
         actors.set(m.id, a);
       }
       a.m = m;
-      a.av = m.avatar;
+      a.av = m.role === 'jpi' ? jpiAvatar(m) : m.avatar;
       a.role = m.role;
-      if (a.seat.d !== seat.d) {
+      if (a.seat.d !== seat.d || (a.seat.fl || 0) !== seat.fl) {
+        const moved = (a.seat.fl || 0) !== seat.fl;
         a.seat = seat;
-        if (a.state === 'sit') { a.state = 'walk'; a.path = route({ x: a.x, y: a.y }, seat); a.after = 'sit'; }
+        if (moved && a.state !== 'hidden') {
+          // 换了楼层：从那一层的门口走进来
+          freeSofa(a);
+          a.x = DOOR.x; a.y = DOOR.y;
+          a.path = route(DOOR, seat);
+          a.state = 'walk';
+          a.after = 'sit';
+        } else if (a.state === 'sit') { a.state = 'walk'; a.path = route({ x: a.x, y: a.y }, seat); a.after = 'sit'; }
       }
       const away = m.status !== 'active';
       if (away && a.state !== 'hidden') { freeSofa(a); a.state = 'hidden'; a.path = []; }
@@ -149,14 +175,16 @@
     const f = g.facilities;
     const m = a.m;
     const p = m.projectId ? RS.G.project(g, m.projectId) : null;
+    // 沙发、零食柜、荣誉墙和猫都在一楼；二楼只有窗户、白板和咖啡机
+    const up = flOf(a) === 1;
     const opts = [['window', 1]];
     if (f.coffee) opts.push(['coffee', 3]);
     if (p && p.phase === 'idea') opts.push(['whiteboard', 3]);
-    if (f.sofa && sofaUsed.some(x => !x)) opts.push(['sofa', m.mood < 60 ? 3 : 1]);
-    if (f.snack) opts.push(['snack', 1.2]);
-    if (g.papers.length) opts.push(['honor', 0.5]);
-    if (cat) opts.push(['cat', 1.2]);
-    const others = Array.from(actors.values()).filter(o => o !== a && o.state === 'sit' && o.seat.kind === 'desk');
+    if (!up && f.sofa && sofaUsed.some(x => !x)) opts.push(['sofa', m.mood < 60 ? 3 : 1]);
+    if (!up && f.snack) opts.push(['snack', 1.2]);
+    if (!up && g.papers.length) opts.push(['honor', 0.5]);
+    if (!up && cat) opts.push(['cat', 1.2]);
+    const others = Array.from(actors.values()).filter(o => o !== a && o.state === 'sit' && o.seat.kind === 'desk' && flOf(o) === flOf(a));
     if (others.length) opts.push(['chat', 2]);
     const pick = U.weighted(opts, o => o[1]);
     if (!pick) return;
@@ -283,7 +311,7 @@
     if (g.pi.energy < 20) return emote(a, 'sweat', 3);
     const f = g.policies.focus;
     if (f === 'mentor' && Math.random() < 0.6) {
-      const c = Array.from(actors.values()).filter(o => o.state === 'sit' && o.seat.kind === 'desk');
+      const c = Array.from(actors.values()).filter(o => o.state === 'sit' && o.seat.kind === 'desk' && flOf(o) === 0);
       if (c.length) {
         const o = U.pick(c);
         a.path = route(PI_STAND, { x: o.seat.x + 13, y: o.seat.y });
@@ -324,6 +352,7 @@
     if (parts.length > 400) parts.splice(0, parts.length - 400);
   }
   function floatText(x, y, text, color) {
+    x = U.clamp(x, 1, W - SP.textWidth(text) - 1);
     floats.push({ x, y, text, color: color || P.yellow, life: 2.2, vy: -10 });
     if (floats.length > 6) floats.shift();
   }
@@ -334,8 +363,15 @@
   function actorOf(id) {
     return id === 'pi' ? pi : actors.get(id);
   }
+  // 楼层切换按钮的位置：别的楼层发生的事，特效画在按钮旁边，按钮也会闪一会儿
+  const TAB_POS = f => ({ x: 4 + f * 17, y: 1 });
   function headPos(a) {
     if (!a) return { x: W / 2, y: 120 };
+    if (!here(a)) {
+      const f = flOf(a);
+      floorPing[f] = T + 4;
+      return { x: TAB_POS(f).x + 7, y: 16 };
+    }
     if (a.state === 'sit' && a.seat.kind === 'desk') { const p = deskPos(a.seat.d); return { x: p.x + 17, y: p.y + 6 }; }
     if (a.isPI && a.state === 'sit') return { x: PI_DESK.x + 29, y: PI_DESK.y - 14 };
     return { x: a.x, y: a.y - 19 };
@@ -364,8 +400,9 @@
       emote(a, { idea: 'gear', exp: 'pen', write: 'sparkle' }[d.from] || 'sparkle', 2);
     });
     RS.bus.on('grant', () => {
-      burst(PI_DESK.x + 29, PI_DESK.y - 10, 'coin', 26);
-      floatText(PI_DESK.x + 14, PI_DESK.y - 22, 'GRANT!', P.yellow);
+      const h = floor === 0 ? { x: PI_DESK.x + 29, y: PI_DESK.y - 10 } : headPos(pi || { isPI: true });
+      burst(h.x, h.y, 'coin', 26);
+      floatText(h.x - 15, h.y - 12, 'GRANT!', P.yellow);
       if (pi) { pi.cheerT = 2; pi.jumpT = 1; }
     });
     RS.bus.on('member_leave', d => {
@@ -409,8 +446,17 @@
     ghosts = []; parts = []; floats = [];
     pi = null; cat = null;
     sofaUsed[0] = sofaUsed[1] = null;
+    floor = 0;
+    floorPing[0] = floorPing[1] = 0;
     if (g) sync(true);
   };
+  Scene.setFloor = function (f) {
+    if (!twoFloors()) f = 0;
+    if (f === floor) return;
+    floor = f;
+    parts = []; floats = [];
+  };
+  Scene.floor = () => floor;
   Scene.update = function (dt) {
     T += dt;
     if (!g) return;
@@ -468,7 +514,7 @@
       R(x - 3, 17, 7, 1, L.night ? P.yellow : '#e8e0c0');
     });
     // 实验室门牌
-    const name = (g.labName || 'LAB').toUpperCase().replace(/[^A-Z0-9 &+\-!.#]/g, '').slice(0, 18) || 'LAB';
+    const name = ((g.labName || 'LAB').toUpperCase().replace(/[^A-Z0-9 &+\-!.#]/g, '').slice(0, 18) || 'LAB') + (twoFloors() ? ` ${floor + 1}F` : '');
     const tw = SP.textWidth(name);
     R(236 - tw / 2 - 4, 1, tw + 8, 8, P.dark);
     R(236 - tw / 2 - 3, 2, tw + 6, 6, P.navy);
@@ -555,7 +601,7 @@
     R(x + 6, y + h + 1, 6, 1, P.red);
     R(x + 14, y + h + 1, 6, 1, P.blue);
     // 随课题变化的涂鸦
-    const seed0 = Math.floor(g.day / 30) * 7 + g.projects.length;
+    const seed0 = Math.floor(g.day / 30) * 7 + g.projects.length + floor * 101;
     const cols = [P.blue, P.black, P.red, P.teal];
     for (let i = 0; i < (big ? 14 : 9); i++) {
       const s = hash(seed0 * 13 + i);
@@ -1005,9 +1051,37 @@
     ctx.drawImage(SP.icon(e.icon), x + 2, y + 2, 8, 8);
   }
 
+  // 地板花纹画一次存起来，换房间时再重画
+  let floorCv = null, floorKey = '';
   function drawFloor(th) {
+    const key = g.room + '|' + th.floor;
+    if (!floorCv || floorKey !== key) {
+      floorKey = key;
+      floorCv = SP.makeCanvas(W, H);
+      const main = ctx;
+      ctx = floorCv.getContext('2d');
+      floorPattern(th);
+      ctx = main;
+    }
+    ctx.drawImage(floorCv, 0, WALL_B, W, H - WALL_B, 0, WALL_B, W, H - WALL_B);
+    // 地毯（休息区）
+    if (floor === 0 && g.facilities.sofa) {
+      R(0, 188, 62, 44, '#00000018');
+    }
+  }
+  function floorPattern(th) {
     R(0, WALL_B, W, H - WALL_B, th.floor);
-    if (g.room === 3) {
+    if (g.room === 5) {
+      // 研究中心：大块石材地砖
+      for (let r = 0, y = WALL_B; y < H; r++, y += 24) {
+        R(0, y, W, 1, th.floorD);
+        for (let x = r % 2 ? 0 : 24; x < W; x += 48) R(x, y, 1, 24, th.floorD);
+        for (let x = r % 2 ? 6 : 30; x < W; x += 48) R(x, y + 3, 10, 1, th.floorL);
+      }
+    } else if (g.room === 4) {
+      // 两层楼：地毯
+      for (let r = 0, y = WALL_B + 2; y < H; r++, y += 4) for (let x = r % 2 ? 0 : 3; x < W; x += 6) R(x, y, 1, 1, th.floorL);
+    } else if (g.room === 3) {
       for (let y = WALL_B + 4; y < H; y += 8) for (let x = (y / 8) % 2 ? 0 : 8; x < W; x += 16) R(x, y, 2, 2, th.floorL);
     } else if (g.room === 2) {
       for (let y = WALL_B; y < H; y += 16) R(0, y, W, 1, th.floorD);
@@ -1019,10 +1093,6 @@
         for (let x = off; x < W; x += 48) R(x, y - 7, 1, 7, th.floorD);
       }
       for (let y = WALL_B + 2; y < H; y += 16) R(0, y, W, 1, th.floorL);
-    }
-    // 地毯（休息区）
-    if (g.facilities.sofa) {
-      R(0, 188, 62, 44, '#00000018');
     }
   }
 
@@ -1058,6 +1128,8 @@
       R(0, 0, W, H, P.black);
       return;
     }
+    if (floor && !twoFloors()) floor = 0;
+    const up = floor === 1;
     const th = THEMES[g.room] || THEMES[0];
     const L = lighting();
     drawWall(th, L);
@@ -1066,32 +1138,37 @@
     drawClock(wbEnd + 6, 16);
     drawCalendar(wbEnd + 5, 34);
     drawWindow(266, 18, 40, 44, L);
-    drawHonorWall();
+    if (up) drawNoticeBoard(); else drawHonorWall();
     drawDoor();
     drawCounter();
-    drawRacks();
-    if (g.facilities.projector) { R(200, 11, 12, 5, P.silver); R(202, 16, 3, 2, P.dark); R(206, 13, 2, 2, P.sky); }
+    if (up) drawShelves(); else drawRacks();
+    if (!up && g.facilities.projector) { R(200, 11, 12, 5, P.silver); R(202, 16, 3, 2, P.dark); R(206, 13, 2, 2, P.sky); }
     drawFloor(th);
     const list = [];
     const desks = RS.G.desks(g);
     const bySeat = new Map();
     actors.forEach(a => bySeat.set(a.seat.d, a));
-    for (let d = 0; d < 16; d++) {
+    for (let d = floor * FLOOR_N; d < (floor + 1) * FLOOR_N; d++) {
       const p = deskPos(d);
       if (d >= desks) { list.push({ z: p.y + 26, fn: () => drawBoxes(d) }); continue; }
       const a = bySeat.get(d);
       list.push({ z: p.y + 32, fn: () => drawDesk(d, a) });
     }
     actors.forEach(a => {
+      if (!here(a)) return;
       if (a.seat.kind === 'floor' && (a.state === 'sit' || a.state === 'hidden')) drawFloorSeat(a, list);
       if (a.state === 'walk' || a.state === 'stand') drawWalker(a, list);
     });
-    ghosts.forEach(a => drawWalker(a, list));
-    if (pi && (pi.state === 'walk' || pi.state === 'stand')) drawWalker(pi, list);
-    drawPIDesk(list);
-    drawSofaArea(list);
-    drawGadgets(list);
-    drawCat(list);
+    ghosts.forEach(a => { if (here(a)) drawWalker(a, list); });
+    if (up) {
+      drawMeetingCorner(list);
+    } else {
+      if (pi && (pi.state === 'walk' || pi.state === 'stand')) drawWalker(pi, list);
+      drawPIDesk(list);
+      drawSofaArea(list);
+      drawGadgets(list);
+      drawCat(list);
+    }
     list.sort((a, b) => a.z - b.z);
     for (const it of list) it.fn();
     parts.forEach(p => R(p.x, p.y, p.s, p.s, p.c));
@@ -1107,7 +1184,78 @@
       else SP.text(ctx, f.text, Math.round(f.x), Math.round(f.y), f.color, P.black);
       ctx.globalAlpha = 1;
     });
+    drawFloorTabs();
   };
+
+  // ---------- 两层楼 ----------
+  // 左上角的楼层按钮：另一层有人中稿、毕业时按钮会闪
+  function drawFloorTabs() {
+    if (!twoFloors()) return;
+    for (let f = 0; f < 2; f++) {
+      const p = TAB_POS(f), on = f === floor;
+      const ping = !on && floorPing[f] > T;
+      R(p.x, p.y, 15, 9, P.black);
+      R(p.x + 1, p.y + 1, 13, 7, on ? P.navy : P.dark);
+      SP.text(ctx, (f + 1) + 'F', p.x + 4, p.y + 2, on || (ping && Math.floor(T * 4) % 2) ? P.yellow : P.silver);
+      if (ping) R(p.x + 12, p.y + 1, 2, 2, P.red);
+      hits.push({ x: p.x - 1, y: 0, w: 17, h: 12, info: { kind: 'floor', f } });
+    }
+  }
+  // 二楼：荣誉墙换成公告板，机柜换成书架，PI 办公桌的位置是讨论区
+  function drawNoticeBoard() {
+    const x0 = 310, y0 = 10;
+    R(x0, y0, 94, 64, P.woodD);
+    R(x0 + 1, y0 + 1, 92, 62, '#b98b57');
+    for (let i = 0; i < 30; i++) { const s = hash(i * 13 + 9); R(x0 + 2 + (s % 90), y0 + 2 + ((s >>> 8) % 60), 1, 1, '#a57746'); }
+    [[x0 + 6, y0 + 5, 22, 30, P.sky], [x0 + 35, y0 + 7, 20, 26, P.orange], [x0 + 63, y0 + 5, 24, 31, P.green]].forEach(([x, y, w, h, c], i) => {
+      R(x, y, w, h, P.white);
+      R(x + 2, y + 2, w - 4, 8, c);
+      for (let k = 0; k < 4; k++) R(x + 2, y + 13 + k * 4, w - 4 - (hash(i * 7 + k) % 6), 1, P.silver);
+      R(x + Math.floor(w / 2) - 1, y - 1, 2, 2, P.red);
+    });
+    for (let i = 0; i < 6; i++) {
+      const s = hash(i * 31 + Math.floor(g.day / 60));
+      const x = x0 + 6 + (i % 3) * 29 + (s % 6), y = y0 + 41 + Math.floor(i / 3) * 10;
+      R(x, y, 9, 8, [P.yellow, '#ffd0e0', P.lime, P.cyan][s % 4]);
+      R(x + 1, y + 2, 6, 1, '#00000040');
+      R(x + 1, y + 4, 5, 1, '#00000040');
+    }
+    const label = 'NOTICE', tw = SP.textWidth(label);
+    R(x0 + 47 - tw / 2 - 3, y0 + 65, tw + 6, 8, P.dark);
+    SP.text(ctx, label, Math.round(x0 + 47 - tw / 2), y0 + 66, P.yellow);
+  }
+  function drawShelves() {
+    for (let i = 0; i < 2; i++) {
+      const x = 408 + i * 35, y = 28;
+      R(x, y, 32, 68, P.woodD);
+      for (let r = 0; r < 5; r++) {
+        R(x + 2, y + 3 + r * 13, 28, 11, '#3b2a1f');
+        for (let k = 0; k < 7; k++) {
+          const s = hash(i * 50 + r * 7 + k);
+          if (s % 9 === 0) continue;
+          const h = 7 + (s % 4);
+          R(x + 3 + k * 4, y + 14 + r * 13 - h, 3, h, [P.red, P.blue, P.green, P.yellow, P.purple, P.orange, P.teal][s % 7]);
+        }
+      }
+    }
+  }
+  function drawMeetingCorner(list) {
+    list.push({ z: 176, fn: () => {
+      const x = 404, y = 150;
+      [[x + 8, y - 8], [x + 30, y - 8], [x + 52, y - 8]].forEach(([cx, cy]) => { R(cx, cy, 10, 8, P.gray); R(cx + 1, cy + 1, 8, 1, P.silver); });
+      R(x, y, 70, 4, P.woodL);
+      R(x, y + 4, 70, 18, P.wood);
+      R(x + 2, y + 21, 3, 5, P.woodD);
+      R(x + 65, y + 21, 3, 5, P.woodD);
+      R(x + 10, y - 3, 12, 3, P.silver);
+      R(x + 11, y - 6, 10, 3, P.dark);
+      R(x + 40, y - 2, 4, 3, P.white);
+      R(x + 52, y - 2, 4, 3, P.white);
+      R(x + 53, y - 1, 2, 1, '#6b4423');
+    } });
+    list.push({ z: 236, fn: () => plant(462, 230) });
+    list.push({ z: 100, fn: () => plant(61, 92) });
+  }
 
   Scene.hitTest = function (x, y) {
     for (let i = hits.length - 1; i >= 0; i--) {
@@ -1120,6 +1268,8 @@
   // 外部触发：比如点击成员时让他冒个气泡
   Scene.ping = function (id) {
     const a = actorOf(id);
-    if (a) emote(a, 'exclam', 1.5);
+    if (!a) return;
+    if (!here(a)) Scene.setFloor(flOf(a));
+    emote(a, 'exclam', 1.5);
   };
 })();

@@ -5,15 +5,16 @@
   const U = RS.U, G = RS.G;
   const S = (RS.Sys = {});
 
-  S.ROLE_NAMES = { phd: '博士生', ms: '硕士生', ug: '本科生', postdoc: '博士后', visit: '访问学生' };
-  const ROLE_OFFSET = { phd: 0, ms: -8, ug: -16, postdoc: 14, visit: -4 };
-  const ROLE_WORK = { phd: 1, ms: 0.9, ug: 0.6, postdoc: 1.1, visit: 0.85 };
+  S.ROLE_NAMES = { phd: '博士生', ms: '硕士生', ug: '本科生', postdoc: '博士后', visit: '访问学生', jpi: '青年教师' };
+  // 青年教师（小导师）：带着自己的学生挂靠在你的大组里，工资学校发；自己也做课题，但要上课、带学生，花在科研上的时间少一些
+  const ROLE_OFFSET = { phd: 0, ms: -8, ug: -16, postdoc: 14, visit: -4, jpi: 22 };
+  const ROLE_WORK = { phd: 1, ms: 0.9, ug: 0.6, postdoc: 1.1, visit: 0.85, jpi: 0.75 };
   const ROLE_YEARS = { ms: 2, ug: 1.5, postdoc: 2, visit: 1 };
   S.PHASE_NAMES = { idea: '构思', exp: '实验', write: '写作', revise: '修改', ready: '待投稿', review: '审稿中' };
   S.WORK_PHASES = ['idea', 'exp', 'write'];
   const STAT_OF = { idea: 'idea', exp: 'code', write: 'write', revise: 'write' };
   const GROW = { idea: 0.04, exp: 0.016, write: 0.035, revise: 0.035 };
-  const NEED_MULT = 1.3;
+  S.NEED_MULT = 1.4;
   S.soft = s => Math.max(0.03, Math.pow(Math.max(0, (100 - s) / 50), 1.5));
 
   S.fundName = (g, f) => (g.region === 'cn' ? { ra: '助研补贴', ta: '助教', fellow: '奖学金', self: '无需资助' } : { ra: 'RA', ta: 'TA', fellow: 'Fellowship', self: '无需资助' })[f] || f;
@@ -67,6 +68,34 @@
   // ---------- 成员 ----------
   const clampStat = v => U.clamp(Math.round(v), 8, 95);
   S.genStats = q => ({ idea: clampStat(q + U.normal(0, 9)), code: clampStat(q + U.normal(0, 9)), write: clampStat(q + U.normal(0, 9)) });
+  // 属性：研究能力（想法、编程、写作、数理）+ 软实力（协作、表达、抗压）。总评以研究能力为主
+  S.STATS = [
+    { k: 'idea', n: '想法', tip: '构思阶段的速度，以及想法新不新' },
+    { k: 'code', n: '编程', tip: '实验阶段的速度，以及实验做得扎不扎实' },
+    { k: 'write', n: '写作', tip: '写作、改稿的速度，以及论文写得清不清楚' },
+    { k: 'math', n: '数理', tip: '理论功底：想法更新颖、实验结论更扎实。做构思和实验时会慢慢提高' },
+    { k: 'team', n: '协作', soft: true, tip: '给别人帮忙时出力更多；当组长时组员成长更快。在小组里、帮别人干活时会慢慢提高' },
+    { k: 'talk', n: '表达', soft: true, tip: 'Rebuttal 更有说服力，更容易拿 Oral 和最佳论文；讲得好的去开会能给实验室攒声望；毕业找工作也更顺。写论文、去开会时会提高' },
+    { k: 'grit', n: '抗压', soft: true, tip: '心情不容易变差，被拒稿也扛得住，不容易想退出。每次被拒稿都会更扛打一点' },
+  ];
+  const OVR_W = { idea: 0.24, code: 0.22, write: 0.2, math: 0.12, team: 0.08, talk: 0.07, grit: 0.07 };
+  S.st = (m, k) => (m && m.stats && m.stats[k] != null ? m.stats[k] : 50);
+  S.overall = st => Math.round(U.sum(Object.keys(OVR_W), k => (st[k] == null ? 50 : st[k]) * OVR_W[k]));
+  S.ovrGrade = v => (v >= 80 ? 'S' : v >= 70 ? 'A' : v >= 60 ? 'B' : v >= 50 ? 'C' : 'D');
+  // 新属性：数理跟着整体水平走；软实力和学业水平关系不大，更多看性格
+  const TRAIT_STATS = { mathy: { math: 12 }, social: { team: 12, talk: 6 }, loner: { team: -12 }, influencer: { talk: 10 }, writer: { talk: 4 }, optimist: { grit: 10 }, fragile: { grit: -15 }, grinder: { grit: 6 }, slacker: { grit: -4 } };
+  S.fillStats = function (st, q, traits) {
+    const base = q != null ? q : U.avg(['idea', 'code', 'write'], k => (st[k] == null ? 50 : st[k]));
+    const gen = { math: () => base + U.normal(0, 10), team: () => 50 + (base - 50) * 0.3 + U.normal(0, 11), talk: () => 50 + (base - 50) * 0.3 + U.normal(0, 11), grit: () => 50 + (base - 50) * 0.2 + U.normal(0, 11) };
+    Object.keys(gen).forEach(k => {
+      if (st[k] != null) return;
+      let v = gen[k]();
+      (traits || []).forEach(t => { const d = TRAIT_STATS[t]; if (d && d[k]) v += d[k]; });
+      st[k] = clampStat(v);
+    });
+    return st;
+  };
+  const statBase = st => { const b = {}; S.STATS.forEach(s => { if (st[s.k] != null) b[s.k] = Math.round(st[s.k]); }); return b; };
 
   S.defaultFunding = (g, role) => {
     if (role === 'phd' || role === 'postdoc') return 'ra';
@@ -80,6 +109,7 @@
     const traits = o.traits || RS.randomTraits(q);
     const stats = o.stats ? Object.assign({}, o.stats) : S.genStats(q);
     if (!o.stats && traits.includes('mathy')) stats.idea = clampStat(stats.idea + 6);
+    S.fillStats(stats, o.stats ? null : q, traits);
     const startDay = o.startDay != null ? o.startDay : g.day;
     const m = {
       id: G.nid(g, 'm'), name: o.name || RS.randomName(g.region), role,
@@ -94,7 +124,7 @@
       internYear: 0, talkCd: 0, bonusCd: 0, extended: 0,
       bio: RS.genBio(role, traits, o.school || ''),
       trust: o.trust != null ? o.trust : U.int(45, 60),
-      base: { idea: stats.idea, code: stats.code, write: stats.write },
+      base: statBase(stats),
       story: [],
       groups: [], lastDone: null, ledGroup: false,
     };
@@ -128,6 +158,11 @@
       if (!m.bio) m.bio = RS.genBio(m.role, m.traits, m.school || '');
       if (m.trust == null) m.trust = 55;
       if (!m.base) m.base = { idea: Math.round(m.stats.idea), code: Math.round(m.stats.code), write: Math.round(m.stats.write) };
+      // 旧存档只有想法、编程、写作：按现在的水平和性格补上新属性（成长从现在开始算）
+      if (m.stats.math == null || m.stats.grit == null) {
+        S.fillStats(m.stats, null, m.traits);
+        S.STATS.forEach(s => { if (m.base[s.k] == null) m.base[s.k] = Math.round(m.stats[s.k]); });
+      }
       if (!m.story) m.story = [];
       if (m.first == null) {
         // 旧存档没有记录一作，从已发表的论文里数（旧论文的作者顺序就是负责人在前）
@@ -169,17 +204,64 @@
     RS.bus.emit('member_join', m);
   };
 
+  // ---------- 工位 ----------
+  // 有固定工位的人效率正常；没有的只能找地方凑合，效率和心情都打折扣。
+  // 空出来的工位按资历分给还在等工位的人；被你收回过工位的人（noDesk）不会自动分到
+  const DESK_ORDER = { jpi: 1, postdoc: 2, phd: 3, ms: 4, visit: 5, ug: 6 };
+  S.NO_DESK_WORK = { ug: 0.92, visit: 0.92 };
+  S.noDeskMult = m => (m.desk >= 0 ? 1 : S.NO_DESK_WORK[m.role] || 0.85);
   S.assignDesks = function (g) {
     const n = G.desks(g);
     const used = new Set();
     g.members.forEach(m => {
-      if (m.desk >= 0 && m.desk < n && !used.has(m.desk)) used.add(m.desk);
+      if (!m.noDesk && m.desk >= 0 && m.desk < n && !used.has(m.desk)) used.add(m.desk);
       else m.desk = -1;
     });
-    g.members.forEach(m => {
-      if (m.desk !== -1) return;
-      for (let i = 0; i < n; i++) if (!used.has(i)) { m.desk = i; used.add(i); return; }
-    });
+    const wait = g.members.filter(m => m.desk === -1 && !m.noDesk)
+      .sort((a, b) => (a.isPlayer ? 0 : DESK_ORDER[a.role] || 9) - (b.isPlayer ? 0 : DESK_ORDER[b.role] || 9) || a.startDay - b.startDay);
+    let i = 0;
+    for (const m of wait) {
+      while (i < n && used.has(i)) i++;
+      if (i >= n) break;
+      m.desk = i;
+      used.add(i);
+    }
+  };
+  S.freeDesks = g => G.desks(g) - g.members.filter(m => m.desk >= 0).length;
+  // 给新来的人腾一个工位：资历最浅、来得最晚的人先让出来
+  S.bumpDeskFor = function (g, m) {
+    if (m.desk >= 0) return null;
+    const rank = x => (x.isPlayer ? 0 : DESK_ORDER[x.role] || 9);
+    const seated = g.members.filter(x => x !== m && x.desk >= 0 && rank(x) > rank(m));
+    if (!seated.length) return null;
+    const v = seated.sort((a, b) => rank(b) - rank(a) || b.startDay - a.startDay)[0];
+    m.desk = v.desk;
+    v.desk = -1;
+    S.assignDesks(g);
+    return v;
+  };
+  S.giveDesk = function (g, m) {
+    if (m.desk >= 0) return 'TA 已经有工位了';
+    if (S.freeDesks(g) <= 0) return '工位都满了：先收回别人的工位，或者去「设施」页扩建实验室';
+    m.noDesk = false;
+    const others = g.members.filter(x => x !== m && x.desk < 0 && !x.noDesk);
+    others.forEach(x => { x.noDesk = true; }); // 先让给 TA
+    S.assignDesks(g);
+    others.forEach(x => { x.noDesk = false; });
+    S.assignDesks(g);
+    S.addMood(m, 4);
+    G.log(g, `给 ${m.name} 安排了工位`, 'info');
+    return null;
+  };
+  S.takeDesk = function (g, m) {
+    if (m.desk < 0) return 'TA 本来就没有工位';
+    m.desk = -1;
+    m.noDesk = true;
+    S.addMood(m, -6);
+    S.addTrust(m, -2);
+    S.assignDesks(g);
+    G.log(g, `收回了 ${m.name} 的工位`, 'info');
+    return null;
   };
 
   S.releaseMemberProjects = function (g, m) {
@@ -187,7 +269,7 @@
       if (p.helpers.includes(m.id)) p.helpers = p.helpers.filter(x => x !== m.id);
       if (p.lead !== m.id) continue;
       if (!S.WORK_PHASES.includes(p.phase)) continue; // 已完成的论文继续走投稿流程
-      const heir = p.helpers.map(id => G.member(g, id)).find(h => h && (h.role === 'phd' || h.role === 'postdoc' || h.role === 'ms'));
+      const heir = p.helpers.map(id => G.member(g, id)).find(h => h && (h.role === 'phd' || h.role === 'postdoc' || h.role === 'ms' || h.role === 'jpi'));
       if (heir) {
         p.lead = heir.id;
         p.helpers = p.helpers.filter(x => x !== heir.id);
@@ -270,7 +352,7 @@
     sid = G.asSub(g, sid || S.pickSub(g));
     const scale = { phd: 1, postdoc: 1, ms: 0.9, ug: 0.75, visit: 0.85 }[lead.role] || 1;
     const need = {};
-    S.WORK_PHASES.forEach(ph => { need[ph] = Math.round(A.need[ph] * NEED_MULT * U.range(0.85, 1.15) * scale); });
+    S.WORK_PHASES.forEach(ph => { need[ph] = Math.round(A.need[ph] * S.NEED_MULT * U.range(0.85, 1.15) * scale); });
     const p = {
       id: G.nid(g, 'p'), title: S.uniqueTitle(g, sid), topic: RS.SUBS[sid].topic, sub: sid,
       lead: lead.id, helpers: [], authors: [lead.id],
@@ -328,12 +410,11 @@
     const meeting = { weekly: 1.05, biweekly: 1.0, monthly: 0.95 }[pol.meeting] || 1;
     const resting = g.flags.restUntil > g.day || g.flags.sabbaticalUntil > g.day;
     const piMentor = resting ? 0.93 : pol.focus === 'mentor' && g.pi.energy >= 25 ? 1.07 : g.pi.energy < 15 ? 0.92 : 1;
-    const crowd = g.members.length > G.desks(g) ? 0.93 : 1;
     const contracts = g.grants.filter(x => x.kind === 'contract').length;
     // 假期效率低；暴雪/台风停课的那几天也差不多
-    const holiday = S.isHoliday(g) ? 0.45 : g.flags.closedUntil > g.day ? 0.6 : 1;
+    const holiday = (S.isHoliday(g) ? 0.45 : g.flags.closedUntil > g.day ? 0.6 : 1) * (g.flags.moveUntil > g.day ? 0.7 : 1);
     const mentor = S.mentorLoad(g);
-    const labMult = intensity * meeting * piMentor * (1 + fac.prod) * crowd * Math.pow(0.93, contracts) * holiday * mentor.factor;
+    const labMult = intensity * meeting * piMentor * (1 + fac.prod) * Math.pow(0.93, contracts) * holiday;
     const units = G.computeUnits(g);
     const demand = S.computeDemand(g);
     const teamMood = U.sum(g.members, m => (m.status === 'active' ? tAdd(m, 'teamMood') : 0));
@@ -346,12 +427,31 @@
   };
 
   // 指导负担：PI 的精力有限，学生太多时每个人得到的指导变少；博士后和组长可以帮忙带学生
+  // 小导师：每位青年教师能精心带 JPI_CAP 个学生（本科生、访问学生算半个），带的学生不算在你头上
+  S.JPI_CAP = 4;
+  S.STUDENT_ROLES = ['phd', 'ms', 'ug', 'visit'];
+  const loadOf = m => (m.role === 'ug' || m.role === 'visit' ? 0.5 : 1);
+  S.supOf = (g, m) => { const s = m && m.sup ? G.member(g, m.sup) : null; return s && s.role === 'jpi' ? s : null; };
   S.mentorLoad = function (g) {
+    const sup = {};
+    g.members.forEach(m => { if (m.role === 'jpi') sup[m.id] = { load: 0, cap: S.JPI_CAP, factor: 1, n: 0 }; });
+    let load = 0;
+    g.members.forEach(m => {
+      if (!S.STUDENT_ROLES.includes(m.role)) return;
+      const s = m.sup && sup[m.sup];
+      if (s) { s.load += loadOf(m); s.n++; } else load += loadOf(m);
+    });
+    Object.values(sup).forEach(s => { s.factor = s.load > s.cap ? Math.sqrt(s.cap / s.load) : 1; });
     const postdocs = g.members.filter(m => m.role === 'postdoc').length;
-    const load = U.sum(g.members, m => (m.role === 'postdoc' ? 0 : m.role === 'ug' || m.role === 'visit' ? 0.5 : 1));
     const leaders = S.leaderCap(g);
     const cap = 6 + 2.5 * postdocs + leaders + (g.pi.title >= 2 ? 2 : 0) + (g.policies.focus === 'mentor' ? 1 : 0);
-    return { load, cap, leaders, factor: load > cap ? Math.sqrt(cap / load) : 1 };
+    return { load, cap, leaders, factor: load > cap ? Math.sqrt(cap / load) : 1, sup };
+  };
+  // 每个学生得到的指导：跟着谁就看谁忙不忙；博士后和青年教师自己能独立工作
+  S.mentorFactor = (g, m, ctx) => {
+    if (!S.STUDENT_ROLES.includes(m.role)) return 1;
+    const s = m.sup && ctx.mentor.sup && ctx.mentor.sup[m.sup];
+    return s ? s.factor : ctx.mentor.factor;
   };
 
   // 能力越强干得越快，而且越往上越明显：在管理得好的组里，顶尖的学生三四个月出一篇，普通学生要八九个月，能力差的一年多
@@ -359,9 +459,9 @@
   // 成长看投入的功夫，不看产出：能力差的学生虽然做得慢，但一样在进步
   const effort = (m, ph, w) => (w * 0.88) / S.statSpeed(S.phaseStat(m, ph));
   S.workRate = function (g, m, ph, ctx) {
-    let w = S.statSpeed(S.phaseStat(m, ph));
+    let w = S.statSpeed(S.phaseStat(m, ph)) * S.noDeskMult(m);
     w *= 0.6 + (0.6 * m.mood) / 100;
-    w *= ctx.labMult * (1 + (ctx.phaseBonus[ph] || 0));
+    w *= ctx.labMult * S.mentorFactor(g, m, ctx) * (1 + (ctx.phaseBonus[ph] || 0));
     w *= tMul(m, 'prod') * tPhase(m, ph) * ROLE_WORK[m.role];
     if (m.funding === 'ta') w *= 0.65;
     if (m.traits.includes('coffee')) w *= g.facilities.coffee ? 1.1 : 0.95;
@@ -376,18 +476,25 @@
   S.epoch = g => g.epoch || G.BASE_YEAR;
   S.projectDemand = (g, p) => 6 * G.area(g).compute * G.sub(g, p.sub).compute * Math.pow(1.15, Math.max(0, G.calYear(g) - S.epoch(g)));
   S.computeDemand = g => U.sum(g.projects, p => (p.phase === 'exp' ? S.projectDemand(g, p) : 0));
-  // 课题用所在小组的算力（没有对应小组的课题用共享池）
-  S.computeFactor = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : U.clamp(Math.pow(S.projRatio(g, p, ctx), 0.6), 0.25, 1.15));
+  // 课题用所在小组的算力（没有对应小组的课题用共享池）：实验速度 = 分到的算力 / 需求（见 S.computeAlloc）
+  S.computeFactor = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : S.computeSpeed(S.projRatio(g, p, ctx)));
+  // 算力对结果扎不扎实的影响：不够时少跑几组对比实验；够用就行，再多帮助不大
+  S.computeQual = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : U.clamp(Math.pow(S.projRatio(g, p, ctx), 0.6), 0.25, 1.15));
 
   S.grow = function (g, m, ph, w) {
     const key = STAT_OF[ph];
     const s = m.stats[key];
-    const mentor = (g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1) * S.groupGrowth(g, m) *
+    const mentor = (g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1) * S.groupGrowth(g, m) * (S.supOf(g, m) ? 1.12 : 1) *
       (m.isPlayer && g.phd ? S.PACE[g.phd.pace].grow : 1);
-    m.stats[key] = Math.min(100, s + GROW[ph] * w * m.pot * tMul(m, 'growth') * mentor * S.soft(s));
+    const k = GROW[ph] * w * m.pot * tMul(m, 'growth') * mentor;
+    m.stats[key] = Math.min(100, s + k * S.soft(s));
+    // 副属性：构思和实验练数理，写作和改稿练表达
+    const side = SIDE_GROW[ph];
+    if (side) { const v = S.st(m, side[0]); m.stats[side[0]] = Math.min(100, v + k * side[1] * S.soft(v)); }
   };
+  const SIDE_GROW = { idea: ['math', 0.35], exp: ['math', 0.25], write: ['talk', 0.25], revise: ['talk', 0.15] };
   S.bumpStat = function (m, key, v) {
-    const s = m.stats[key];
+    const s = S.st(m, key);
     m.stats[key] = Math.min(100, s + v * S.soft(s));
   };
 
@@ -408,14 +515,13 @@
     const ph = p.phase;
     const lead = p.lead === m.id;
     let w = S.workRate(g, m, ph, ctx) * (1 - share);
-    if (!lead) w *= 0.5 * tMul(m, 'helper');
+    if (!lead) w *= 0.5 * tMul(m, 'helper') * (0.75 + S.st(m, 'team') / 200);
     else if (!p.helpers.length) w *= tMul(m, 'solo');
     w *= 1 + 0.05 * S.interestFit(m, p.sub); // 做自己感兴趣的方向，更有干劲
     if (S.leadsGroup(g, m)) w *= 0.92; // 组长要花时间带组员
     if (ph === 'exp') {
-      const cf = S.computeFactor(g, p, ctx);
-      w *= cf;
-      p.cf.sum += cf; p.cf.n++;
+      w *= S.computeFactor(g, p, ctx);
+      p.cf.sum += S.computeQual(g, p, ctx); p.cf.n++;
     }
     if (p.rush > 0) w *= 1.6 * tMul(m, 'ddl');
     // 组内互助：组员帮忙多出来的那部分记在他们头上；单干：效率打折
@@ -518,6 +624,9 @@
       order = plan.concat(order.filter(id => !plan.includes(id)));
       co = plan.length;
     } else if (order.length > 1 && score(order[1]) >= top * 0.8) co = 2;
+    // 小导师（青年教师）带的学生的论文，导师署在后面
+    const sup = S.supOf(g, G.member(g, p.lead));
+    if (sup && !order.includes(sup.id)) order.push(sup.id);
     return { order, co };
   };
   // 可能闹署名纠纷的论文：写作后期或刚写完，第二作者的工作量不小、但还没到自动共一的程度
@@ -564,13 +673,13 @@
     const exp = g.expertise[p.topic] || 0;
     const ph = p.phase;
     if (ph === 'idea') {
-      p.sc.nov = 0.72 * avg('idea') + 0.28 * pi.research + exp * 0.5 + S.groupSynergy(g, p) + (p.bold ? 10 : 0) + U.normal(0, 5);
+      p.sc.nov = 0.72 * avg('idea') + 0.28 * pi.research + exp * 0.5 + S.groupSynergy(g, p) + (p.bold ? 10 : 0) + (lead ? (S.st(lead, 'math') - 50) * 0.08 : 0) + U.normal(0, 5);
       p.phase = 'exp';
       if (p.bold) p.need.exp = Math.round(p.need.exp * 1.4);
       if (lead) S.bumpStat(lead, 'idea', 0.8 * lead.pot);
     } else if (ph === 'exp') {
       const cf = p.cf.n ? p.cf.sum / p.cf.n : 1;
-      p.sc.sol = 0.78 * avg('exp') + 0.22 * pi.research + (Math.min(cf, 1.15) - 0.85) * 18 + exp * 0.3 + U.normal(0, 5);
+      p.sc.sol = 0.78 * avg('exp') + 0.22 * pi.research + (Math.min(cf, 1.15) - 0.85) * 18 + exp * 0.3 + (lead ? (S.st(lead, 'math') - 50) * 0.1 : 0) + U.normal(0, 5);
       p.phase = 'write';
       if (lead) S.bumpStat(lead, 'code', 0.8 * lead.pot);
     } else if (ph === 'write') {
@@ -726,7 +835,7 @@
     }
     // 博士阶段只有你自己负责的论文会来问你，其余的导师说了算
     const ask = g.phd ? p.lead === g.player && g.phd.submit === 'ask' : g.policies.submit === 'ask';
-    if (ask && g.policies.auto !== 'all') {
+    if (ask && !RS.Sim.catAuto(g, 'venue')) {
       if (!p.asking) {
         p.asking = true;
         G.queue(g, { type: 'venue', pid: p.id });
@@ -759,6 +868,7 @@
     p.target = null;
     g.stats.submissions++;
     g.year.subs++;
+    S.vstat(g, v.id, 's');
     G.log(g, `《${short(p.title)}》投稿至 ${v.name}`, 'info');
     RS.bus.emit('submit', p);
   };
@@ -777,7 +887,7 @@
     const margin = p.q + (lead ? tAdd(lead, 'luck') : 0) - S.venueThr(g, v, p);
     const scores = S.genScores(v, margin + U.normal(0, 3), margin > 0);
     const ask = g.phd ? p.lead === g.player && g.phd.rebuttal === 'ask' : g.policies.rebuttal === 'ask';
-    if (ask && g.policies.auto === 'off') {
+    if (ask && !RS.Sim.catAuto(g, 'paper')) {
       G.queue(g, { type: 'event', id: 'rebuttal', ctx: { pid: p.id, scores, quote: U.pick(RS.REVIEWS.bad) } });
     } else {
       p.q += 2.5;
@@ -793,8 +903,15 @@
     const margin = qe - S.venueThr(g, v, p);
     const ok = Math.random() < Math.min(0.8, U.sigmoid(margin / 5.5));
     const scores = S.genScores(v, margin, ok);
+    S.vstat(g, v.id, ok ? 'a' : 'r');
     if (ok) S.publish(g, p, v, { margin, scores });
     else S.reject(g, p, v, scores);
+  };
+  // 每个会议 / 期刊的投稿记录（统计页算中稿率）：s 投稿、a 录用、r 拒稿、w 撤稿
+  S.vstat = function (g, vid, k) {
+    const all = g.venueStats || (g.venueStats = {});
+    const x = all[vid] || (all[vid] = { s: 0, a: 0, r: 0, w: 0 });
+    x[k]++;
   };
 
   S.citeRate = function (g, p, v, best) {
@@ -817,8 +934,11 @@
     if (v.tier === 'A' && v.type === 'conf') {
       g.flags.bestAt = g.flags.bestAt || {};
       const key = v.id + year;
-      if (margin > 18 && !g.flags.bestAt[key] && U.chance(Math.min(0.12, 0.01 + (margin - 18) * 0.006))) { best = true; g.flags.bestAt[key] = 1; }
-      else if (margin > 10 && U.chance(0.5)) oral = true;
+      // 讲得好的作者更容易拿 Oral 和最佳论文
+      const lt = G.member(g, p.lead);
+      const mt = margin + (lt ? (S.st(lt, 'talk') - 50) / 8 : 0);
+      if (mt > 18 && !g.flags.bestAt[key] && U.chance(Math.min(0.12, 0.01 + (mt - 18) * 0.006))) { best = true; g.flags.bestAt[key] = 1; }
+      else if (mt > 10 && U.chance(0.5)) oral = true;
     }
     const ao = S.authorOrder(g, p);
     const paper = {
@@ -826,6 +946,7 @@
       q: Math.round(p.q * 10) / 10, cites: 0, acc: 0, rate: S.citeRate(g, p, v, best) * (p.guest ? 1.1 : 1), best, oral,
       authors: ao.order, co: ao.co, lead: ao.order[0], ext: p.collab ? p.collab.who : null, guest: p.guest || null,
       scores: info.scores || null, pid: p.id,
+      rej: (p.history || []).map(h => h.v), // 之前被哪些地方拒过 / 撤过稿
     };
     g.papers.unshift(paper);
     if (p.fake && v.tier !== 'P' && U.chance(0.45)) G.schedule(g, g.day + U.int(120, 540), 'scandal', { paperId: paper.id });
@@ -917,6 +1038,11 @@
     if (pol === 'none') { S.addMood(lead, -4); return; }
     S.spend(g, cost, 'travel');
     S.addMood(lead, 6);
+    // 去开会讲论文：表达越练越好；讲得好的，大家会记住这个实验室
+    if (lead) {
+      S.bumpStat(lead, 'talk', 1.2);
+      if (S.st(lead, 'talk') >= 70) S.addRep(g, 0.3);
+    }
     if (pol === 'both') {
       S.spend(g, cost, 'travel');
       S.addRep(g, 0.8);
@@ -931,7 +1057,7 @@
     g.stats.rejects++;
     g.year.rejects++;
     const lead = G.member(g, p.lead);
-    if (lead) S.addMood(lead, -8 * tMul(lead, 'rejectMood'));
+    if (lead) { S.addMood(lead, -8 * tMul(lead, 'rejectMood') * (1.4 - S.st(lead, 'grit') / 125)); S.bumpStat(lead, 'grit', 1); }
     const quote = U.pick(RS.REVIEWS.bad);
     G.log(g, `《${short(p.title)}》被 ${v.name} 拒稿（评分 ${scores.join('/')}）。Reviewer 2：“${quote}”`, 'bad');
     if (lead && lead.bio && U.chance(0.35)) G.log(g, `${lead.name} 叹了口气：“${lead.bio.motto}”`, 'info');
@@ -1138,13 +1264,29 @@
       g.grants = g.grants.filter(x => x.monthsLeft > 0);
       done.forEach(x => G.log(g, `${x.name} 执行期结束，顺利结题`, 'info'));
     }
-    g.history.push({ d: g.day, f: Math.round(g.funds), r: Math.round(g.rep), c: g.stats.cites });
+    g.history.push({ d: g.day, f: Math.round(g.funds), r: Math.round(g.rep), c: g.stats.cites, h: g.stats.h });
     if (g.history.length > 600) g.history.shift();
     if (g.funds < 0 && (g.cooldowns.deficit || 0) <= g.day) {
       g.cooldowns.deficit = g.day + 90;
       G.queue(g, { type: 'event', id: 'deficit', ctx: {} });
     }
-    if (g.policies.auto === 'all' && !g.phd) S.autoCompute(g);
+    if (!g.phd && RS.Sim.catAuto(g, 'compute')) S.autoCompute(g);
+    S.autoLeaders(g);
+    if (!g.phd) S.interestDrift(g);
+  };
+  // 兴趣会变：每个月都可能有学生迷上别的方向（心情差、方向冷门的时候更容易变），一个月最多一个
+  S.interestDrift = function (g) {
+    if (g.queue.some(q => q.type === 'event' && q.id === 'interest_change')) return;
+    const c = g.members.filter(m => m.status === 'active' && !m.isPlayer && ['phd', 'ms', 'postdoc', 'ug'].includes(m.role) && (m.interestCd || 0) <= g.day);
+    for (const m of U.shuffle(c.slice())) {
+      const it = S.interestOf(m);
+      if (!U.chance(0.022 + (m.mood < 40 ? 0.015 : 0) + (it && S.heat(g, it) < 0.9 ? 0.01 : 0))) continue;
+      const ctx = RS.EVENTS.interest_change.mk(g, m);
+      if (!ctx) continue;
+      m.interestCd = g.day + 240;
+      G.queue(g, { type: 'event', id: 'interest_change', ctx });
+      return;
+    }
   };
   // 全部托管时，算力明显不够、经费又宽裕，就添一台性价比最高的服务器
   S.autoCompute = function (g) {

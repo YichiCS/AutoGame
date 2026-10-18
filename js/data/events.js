@@ -81,9 +81,12 @@
         if (!p || p.phase !== 'review') return null;
         const v = RS.VENUES[p.venue];
         const lead = M(g, p.lead);
+        // 一作的表达能力决定 rebuttal 有多大说服力
+        const talkB = lead ? (S().st(lead, 'talk') - 50) / 25 : 0;
         const withdraw = { label: '撤稿，改投别处', hint: '按审稿意见改完再投（要占用负责人一段时间）', apply: g => {
           p.attempts++;
           p.history.push({ v: v.id, d: g.day, scores: c.scores, withdrawn: true });
+          S().vstat(g, v.id, 'w');
           G().log(g, `《${S().short(p.title)}》从 ${v.name} 撤稿`, 'info');
           S().startRevision(g, p);
         } };
@@ -92,11 +95,11 @@
           text: `《${U.esc(p.title)}》在 <b>${v.name}</b> 收到了初审意见：<b>${c.scores.join(' / ')}</b><br>Reviewer 2：“${c.quote}”<br>要怎么回复？`,
           choices: lead && lead.isPlayer ? [
             // 博士阶段：你自己的论文，rebuttal 由你来写
-            { label: '熬夜逐条认真回复', hint: '论文质量 +4 · 你的心情 -5', def: true, apply: () => { p.q += 4; S().addMood(lead, -5); } },
+            { label: '熬夜逐条认真回复', hint: `论文质量 +${(4 + talkB).toFixed(1)}（看你的表达能力）· 你的心情 -5`, def: true, apply: () => { p.q += 4 + talkB; S().addMood(lead, -5); } },
             { label: '简单回复一下', hint: '论文质量 +1.5', apply: () => { p.q += 1.5; } },
             withdraw,
           ] : [
-            { label: '逐条认真回复', hint: '论文质量 +4 · 你的精力 -6 · 学生心情 -3', def: true, apply: g => { p.q += 4; S().addEnergy(g, -6); S().addMood(M(g, p.lead), -3); } },
+            { label: '逐条认真回复', hint: `论文质量 +${(4 + talkB).toFixed(1)}（${lead ? `${sn(lead.name)}的表达 ${Math.round(S().st(lead, 'talk'))}` : '作者都不在了'}）· 你的精力 -6 · 学生心情 -3`, def: true, apply: g => { p.q += 4 + talkB; S().addEnergy(g, -6); S().addMood(M(g, p.lead), -3); } },
             { label: '简单回复一下', hint: '论文质量 +1.5 · 精力 -1', apply: g => { p.q += 1.5; S().addEnergy(g, -1); } },
             withdraw,
           ],
@@ -299,7 +302,7 @@
           if (sid === last) tags.push('接着做');
           if (fit === 1) tags.push('TA 想做');
           const r = gr ? alloc.ratio[gr.id] : 9;
-          const comp = gr ? (alloc.dem[gr.id] > 0 ? (r >= 1 ? `${S().groupName(g, gr)}算力充足` : `${S().groupName(g, gr)}算力只够 ${Math.round(r * 100)}%`) : `${S().groupName(g, gr)}算力空闲`) : '用共享算力';
+          const comp = gr ? (alloc.dem[gr.id] > 0 ? `${S().groupName(g, gr)}${r >= 1 ? '算力充足' : '算力紧张'}（实验 ×${S().computeSpeed(r).toFixed(1)}）` : `${S().groupName(g, gr)}算力空闲`) : '用共享算力';
           const hint = [
             `${t.name}${s.topic === g.policies.coreTopic ? '（核心方向）' : ''} · 积累 ${(g.expertise[s.topic] || 0).toFixed(1)} · ${heatWord(S().heat(g, sid))} · ${comp}`,
             S().teamPreview(g, m, sid),
@@ -309,28 +312,36 @@
           const label = join ? `加入「${S().groupName(g, gr)}」，做「${s.name}」` : mine.length || gr ? `做「${s.name}」` : `单干做「${s.name}」`;
           return { label: `${label}${tags.length ? `（${tags.join('，')}）` : ''}`, hint, def: sid === def, apply: g => { S().startNext(g, m, sid, 'pi'); } };
         });
-        // 单干的学生：也可以劝 TA 加入最合适的小组
-        if (!mine.length && g.groups.length) {
-          const best = g.groups.filter(gr => !opts.includes(gr.sub)).sort((a, b) => S().interestFit(m, b.sub) - S().interestFit(m, a.sub) || S().groupMembers(g, b).length - S().groupMembers(g, a).length)[0];
-          if (best) {
-            const fit = S().interestFit(m, best.sub);
-            ch.push({ label: `加入「${S().groupName(g, best)}」，做「${S().subName(g, best.sub)}」`,
-              hint: [S().teamPreview(g, m, best.sub), fit === 1 ? 'TA 想做：心情 +6' : fit ? 'TA 有点兴趣：心情 +2' : 'TA 不太想做：心情 -3'].join(' · '),
-              apply: g => { S().startNext(g, m, best.sub, 'pi'); } });
-          }
+        const moodHint = sid => { const f = S().interestFit(m, sid); return f === 1 ? 'TA 想做：心情 +6 · 信任 +2' : f ? 'TA 有点兴趣：心情 +2' : interest ? 'TA 不太想做：心情 -3' : null; };
+        const nowIn = S().memberGroups(g, m).map(gr => `「${S().groupName(g, gr)}」`).join('');
+        // 分到别的小组：组员可以调组，单干的可以进组（TA 想做的、人多的组排在前面）
+        g.groups.filter(gr => !mine.includes(gr.sub) && !opts.includes(gr.sub))
+          .sort((a, b) => S().interestFit(m, b.sub) - S().interestFit(m, a.sub) || S().groupMembers(g, b).length - S().groupMembers(g, a).length)
+          .forEach(gr => {
+            const tags = S().interestFit(m, gr.sub) === 1 ? '（TA 想做）' : '';
+            ch.push({ label: `${mine.length ? '调到' : '加入'}「${S().groupName(g, gr)}」，做「${S().subName(g, gr.sub)}」${tags}`,
+              hint: [mine.length ? `离开${nowIn}` : null, S().teamPreview(g, Object.assign({}, m, { groups: [] }), gr.sub), moodHint(gr.sub)].filter(Boolean).join(' · '),
+              apply: g => { if (mine.length) S().switchGroup(g, m, gr.id); S().startNext(g, m, gr.sub, 'pi'); } });
+          });
+        // 小组成员想做组外的方向，而且那个方向有小组：可以同时待在两个组
+        const gi = interest && !mine.includes(interest) ? S().groupOfSub(g, interest) : null;
+        if (mine.length && gi && (m.groups || []).length < S().MAX_MEMBER_GROUPS) {
+          ch.push({ label: `让 TA 也加入「${S().groupName(g, gi)}」，做「${S().subName(g, interest)}」`,
+            hint: `TA 最想做的方向：心情 +6 · 信任 +2 · ${S().teamPreview(g, m, interest)} · 同时在两个小组`,
+            apply: g => { S().startNext(g, m, interest, 'pi'); } });
         }
-        // 小组成员想做组外的方向：那个方向有小组、TA 还能再进一个组，就加入；否则只能退出小组单干
-        if (mine.length && interest && !mine.includes(interest)) {
-          const gi = S().groupOfSub(g, interest);
-          if (gi && (m.groups || []).length < S().MAX_MEMBER_GROUPS) {
-            ch.push({ label: `让 TA 也加入「${S().groupName(g, gi)}」，做「${S().subName(g, interest)}」`,
-              hint: `TA 最想做的方向：心情 +6 · 信任 +2 · ${S().teamPreview(g, m, interest)} · 同时在两个小组`,
-              apply: g => { S().startNext(g, m, interest, 'pi'); } });
-          } else if (!gi) {
-            ch.push({ label: `让 TA 退出小组，单干做「${S().subName(g, interest)}」`,
-              hint: `TA 最想做的方向：心情 +6 · 信任 +2 · 但没有组内互助和组长指导：效率 -${Math.round((1 - S().SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S().SOLO_GROW) * 100)}%`,
-              apply: g => { S().goSolo(g, m); S().startNext(g, m, interest, 'pi'); } });
-          }
+        // TA 想做的方向还没有小组：为 TA 成立一个
+        if (interest && !S().groupOfSub(g, interest)) {
+          const why = S().canCreateGroup(g, interest);
+          ch.push({ label: `为 TA 成立「${S().subName(g, interest)}组」`, disabled: why || null,
+            hint: `新开一个子方向小组，TA 是第一个成员${mine.length ? `（离开${nowIn}）` : ''} · TA 最想做的方向：心情 +6 · 信任 +4`,
+            apply: g => {
+              if (S().canCreateGroup(g, interest)) return;
+              const gr = S().createGroup(g, interest);
+              S().switchGroup(g, m, gr.id);
+              S().addTrust(m, 2);
+              S().startNext(g, m, interest, 'pi');
+            } });
         }
         const help = S().helpTarget(g, m);
         if (help) {
@@ -338,15 +349,25 @@
           ch.push({ label: `先帮 ${hl ? sn(hl.name) : '同门'} 做《${S().short(help.title)}》`, hint: `作为合作者加入（${S().PHASE_NAMES[help.phase]}阶段，完成 ${Math.round(S().projectPct(help) * 100)}%），做完再来商量`,
             apply: g => S().helpWith(g, m, help) });
         }
-        // 让 TA 自己决定：小组成员在组里挑自己最喜欢的，单干的做自己最想做的
-        const self = mine.length ? mine.slice().sort((a, b) => S().interestFit(m, b) - S().interestFit(m, a))[0] : interest || def;
-        if (self) ch.push({ label: '让 TA 自己决定', hint: `TA 会选「${S().subName(g, self)}」· 信任 +3 · 心情 +4`, apply: g => { S().startNext(g, m, self, 'self'); } });
+        // 让 TA 自己决定：组员可以在组里挑；也可以完全放手，让 TA 自由选方向（需要的话换组或者单干）
+        if (mine.length > 1) {
+          const self = mine.slice().sort((a, b) => S().interestFit(m, b) - S().interestFit(m, a))[0];
+          ch.push({ label: '让 TA 在组里自己挑', hint: `TA 会选「${S().subName(g, self)}」· 信任 +3 · 心情 +4`, apply: g => { S().startNext(g, m, self, 'self'); } });
+        }
+        const fp = S().freePick(g, m);
+        if (fp.sid) {
+          const what = { stay: '就在组里做', join: `同时加入「${fp.gr ? S().groupName(g, fp.gr) : ''}」`, switch: `调到「${fp.gr ? S().groupName(g, fp.gr) : ''}」`,
+            solo: `退出${nowIn}单干（效率 -${Math.round((1 - S().SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S().SOLO_GROW) * 100)}%）`, free: '单干' }[fp.how];
+          const how = { join: `（也加入「${fp.gr ? S().groupName(g, fp.gr) : ''}」）`, switch: `（调到「${fp.gr ? S().groupName(g, fp.gr) : ''}」）`, solo: '（退出小组单干）' }[fp.how] || '';
+          ch.push({ label: `让 TA 自由选方向${how}`, hint: `TA 会选「${S().subName(g, fp.sid)}」，${what} · 信任 +3 · 心情 +4${S().interestFit(m, fp.sid) === 1 ? '（做自己最想做的，心情再 +6）' : ''}`,
+            apply: g => { S().doFreePick(g, m); } });
+        }
         if (!ch.length) return null;
         if (!ch.some(x => x.def)) ch[0].def = true;
         const groups = S().memberGroups(g, m).map(gr => S().groupName(g, gr)).join('、') || '单干';
         return {
           title: `${m.name} 来商量下一个课题`, portrait: { member: m.id },
-          text: `${c.title ? `《${U.esc(c.title)}》写完了，进入投稿流程。<br>` : ''}${U.esc(m.name)} 来办公室找你：“老师，我接下来做什么方向好？”<br><span class="dim">所在小组：${U.esc(groups)} · 最感兴趣：${U.esc(S().dirName(g, interest))} · 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}${mine.length ? '<br>小组成员只做小组的方向；想做别的，只能退出小组单干。' : '<br>单干可以做自己想做的方向，但没有组内互助和组长指导。'}</span>`,
+          text: `${c.title ? `《${U.esc(c.title)}》写完了，进入投稿流程。<br>` : ''}${U.esc(m.name)} 来办公室找你：“老师，我接下来做什么方向好？”<br><span class="dim">所在小组：${U.esc(groups)} · 最感兴趣：${U.esc(S().dirName(g, interest))} · 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}${mine.length ? '<br>小组成员只做小组的方向；想做别的，可以调到别的组，或者退出小组单干。' : '<br>单干可以做自己想做的方向，但没有组内互助和组长指导。'}</span>`,
           choices: ch,
         };
       },
@@ -935,7 +956,7 @@
       weight: g => (g.region === 'cn' ? 1.2 : 0), cd: 150, minor: true,
       ctx: () => ({}),
       build: g => {
-        const ms = activeOf(g, m => m.role !== 'postdoc');
+        const ms = activeOf(g, m => m.role !== 'postdoc' && m.role !== 'jpi');
         return {
           title: '报销噩梦', portrait: { icon: 'paper' },
           text: '财务处又把你的报销单退回来了：发票抬头少了一个字，附件缺一张验收单，还要补三个签字……',
@@ -974,17 +995,11 @@
       }),
     },
 
+    // 猎头上门：别的学校来挖你（接受、拿去和学院谈条件、婉拒，都在弹出的 offer 里选）
     poach_pi: {
-      weight: g => (g.rep >= 120 && g.pi.tenured ? 0.5 : 0), cd: 720,
-      ctx: g => ({ univ: U.pick(G().region(g).univs), v: Math.round(G().tierCfg(g).startup * 0.5) }),
-      build: (g, c) => ({
-        title: '挖角', portrait: { icon: 'mail' },
-        text: `<b>${c.univ}</b> 向你抛出了橄榄枝，开出了非常优厚的条件。你可以拿着这个 offer 和学院谈谈……`,
-        choices: [
-          { label: '拿 offer 和学院谈条件', hint: `学院给一笔留任经费 ${money(g, c.v)} · 声望 +2`, def: true, apply: g => { S().earn(g, c.v, 'dept'); S().addRep(g, 2); G().log(g, '学院为了留住你，追加了一笔经费', 'gold'); } },
-          { label: '婉拒，这里就是我的家', hint: '全组心情 +5', apply: g => S().labMood(g, 5) },
-        ],
-      }),
+      weight: g => (S().canMove(g) && g.rep >= 60 && G().careerYear(g) >= 3 ? 0.3 + Math.min(0.4, g.rep / 1000) : 0), cd: 540,
+      ctx: g => { const o = S().headhuntOffer(g); return o ? { offer: o } : null; },
+      instant: (g, c) => { G().queue(g, { type: 'offers', src: 'headhunt', offers: [c.offer] }); return true; },
     },
 
     proctor: {
@@ -1045,7 +1060,7 @@
     student_sick: {
       weight: 0.6, cd: 200, minor: true,
       ctx: g => {
-        const c = activeOf(g);
+        const c = activeOf(g, m => m.role !== 'jpi');
         return c.length ? { mid: U.pick(c).id } : null;
       },
       build: (g, c) => {
@@ -1169,16 +1184,21 @@
 
     // 迷上了新方向
     interest_change: {
-      weight: g => (activeOf(g, m => m.role !== 'visit').length ? 0.8 : 0), cd: 200, minor: true,
-      ctx: g => {
-        const c = activeOf(g, m => m.role !== 'visit');
-        if (!c.length) return null;
-        const m = U.pick(c);
+      // 除了随机发生，每个月也会按学生各自的情况检查一次（Sys.interestDrift）
+      weight: g => (activeOf(g, m => m.role !== 'visit' && m.role !== 'jpi').length ? 0.3 : 0), cd: 200, minor: true,
+      mk: (g, m) => {
         // 多半是同一个方向里的相邻子方向，也可能跨到别的方向
         const it = S().interestOf(m);
         const cur = it && RS.SUBS[it];
         const s = U.weighted(G().area(g).subs.filter(x => x.id !== it), x => Math.pow(S().heat(g, x.id), 1.5) * (cur && x.topic === cur.topic ? 3 : 1));
-        return s ? { mid: m.id, sid: s.id } : null;
+        if (!s) return null;
+        // 劝 TA 坚持原来的方向：看信任和抗压
+        const trust = m.trust == null ? 55 : m.trust;
+        return { mid: m.id, sid: s.id, keep: U.clamp(0.35 + (trust - 50) / 100 + (S().st(m, 'grit') - 50) / 200, 0.1, 0.9), roll: Math.random() };
+      },
+      ctx: g => {
+        const c = activeOf(g, m => m.role !== 'visit' && m.role !== 'jpi' && !m.isPlayer);
+        return c.length ? RS.EVENTS.interest_change.mk(g, U.pick(c)) : null;
       },
       build: (g, c) => {
         const m = M(g, c.mid);
@@ -1202,7 +1222,26 @@
               S().story(g, m, `牵头成立了「${S().groupName(g, ng)}」`);
             } });
         }
-        ch.push({ label: '先专注眼前的方向', hint: '兴趣不变 · 心情 -3', apply: () => S().addMood(m, -3) });
+        const old = S().interestOf(m);
+        if (old) {
+          const keep = c.keep != null ? c.keep : 0.5;
+          const oldName = G().sub(g, old).name;
+          ch.push({ label: `劝 TA 继续深耕「${oldName}」`, hint: `你的精力 -3 · 成功率约 ${U.pct(keep)}（看信任和抗压）· 劝住了：兴趣不变、信任 +2；没劝住：兴趣还是会变、心情 -3`,
+            apply: g => {
+              S().addEnergy(g, -3);
+              if ((c.roll != null ? c.roll : Math.random()) < keep) {
+                S().addTrust(m, 2);
+                S().story(g, m, `被你劝住，继续深耕「${oldName}」`);
+                G().log(g, `${m.name} 被你说服，继续深耕「${oldName}」`, 'info');
+              } else {
+                m.bio.interest = sid;
+                S().addMood(m, -3);
+                S().story(g, m, `迷上了「${t.name}」`);
+                G().log(g, `没劝住，${m.name} 还是更想做「${t.name}」`, 'info');
+              }
+            } });
+        }
+        ch.push({ label: '不行，先专注眼前的方向', hint: '兴趣不变 · 心情 -5 · 信任 -3', apply: () => { S().addMood(m, -5); S().addTrust(m, -3); } });
         return {
           title: '迷上了新方向', portrait: { member: m.id },
           text: `${U.esc(m.name)} 最近一口气读了十几篇「${U.esc(S().dirName(g, sid))}」的论文，越看越着迷，跑来说想往这个方向发展。<br><span class="dim">TA 原来最想做的是「${U.esc(S().dirName(g, S().interestOf(m)))}」。</span>`,
@@ -1238,7 +1277,7 @@
             { label: '发一笔组长补贴', hint: `经费 -${money(g, cost)} · 心情 +12 · 信任 +3`, def: g.pi.energy < 20, disabled: g.funds < cost ? '经费不足' : null,
               apply: g => { S().spend(g, cost, 'welfare'); S().addMood(m, 12); S().addTrust(m, 3); } },
             { label: '卸下组长的担子', hint: '心情 +10 · 这个小组暂时没有组长（你要亲自协调）',
-              apply: g => { S().setGroupLead(g, gr.id, null); S().addMood(m, 10); S().story(g, m, `卸任了「${S().groupName(g, gr)}」组长`); } },
+              apply: g => { S().setGroupLead(g, gr.id, null); m.leadCd = g.day + 360; S().addMood(m, 10); S().story(g, m, `卸任了「${S().groupName(g, gr)}」组长`); } },
           ],
         };
       },
@@ -1264,11 +1303,11 @@
           title: 'DDL 前的算力争夺', portrait: { icon: 'gpu' },
           text: `截稿日越来越近，「${U.esc(S().groupName(g, A))}」和「${U.esc(S().groupName(g, B))}」的实验都在排队，服务器根本不够分。两边的人都来找你要卡。`,
           choices: [
-            { label: `优先保证「${S().groupName(g, A)}」`, hint: '一个月内这个组算力 ×1.5、其他组 ×0.8 · 这组心情 +3，那组 -4', apply: prio(A, B) },
-            { label: `优先保证「${S().groupName(g, B)}」`, hint: '一个月内这个组算力 ×1.5、其他组 ×0.8 · 这组心情 +3，那组 -4', apply: prio(B, A) },
+            { label: `优先保证「${S().groupName(g, A)}」`, hint: '一个月内共享算力先灌满这个组的实验，剩下的再给别人 · 这组心情 +3，那组 -4', apply: prio(A, B) },
+            { label: `优先保证「${S().groupName(g, B)}」`, hint: '一个月内共享算力先灌满这个组的实验，剩下的再给别人 · 这组心情 +3，那组 -4', apply: prio(B, A) },
             { label: `临时租 ${n} 份${R.cloud.name}`, hint: `经费 -${money(g, cost)} · 一个月内共享算力 +${R.cloud.units * n}`, def: rich, disabled: g.funds < cost ? '经费不足' : null,
               apply: g => { S().spend(g, cost, 'compute'); g.flags.tempUnits = R.cloud.units * n; g.flags.tempUntil = g.day + 30; } },
-            { label: '一视同仁，按缺口分', hint: '两组心情 -1', def: !rich, apply: () => { mood(A, -1); mood(B, -1); } },
+            { label: '一视同仁，谁缺先给谁', hint: '两组心情 -1', def: !rich, apply: () => { mood(A, -1); mood(B, -1); } },
           ],
         };
       },
@@ -1459,6 +1498,90 @@
             { label: '帮 TA 熟悉学院的情况', hint: '精力 -5 · 声望 +1（同事们都说你人好）', apply: g => { S().addEnergy(g, -5); S().addRep(g, 1); } },
             { label: '各做各的', hint: '没有影响', apply: nop },
           ],
+        };
+      },
+    },
+
+    // 大导师的团队：青年教师带着自己的学生挂靠进来
+    jpi_join: {
+      weight: g => (g.pi.tenured && (g.pi.title >= 2 || g.rep >= 300) && S().jpis(g).length < 3 ? 0.6 : 0), cd: 360,
+      ctx: g => {
+        const pool = G().region(g).univs.filter(u => u !== g.school);
+        const n = U.int(1, 3);
+        const team = [];
+        for (let i = 0; i < n; i++) {
+          team.push({ role: U.chance(0.6) ? 'phd' : 'ms', q: Math.round(U.clamp(50 + U.normal(0, 8), 32, 72)), yrs: Math.round(U.range(0, 2.5) * 10) / 10, name: RS.randomName(g.region), avatar: RS.randomAvatar() });
+        }
+        return {
+          name: RS.randomName(g.region), avatar: RS.randomAvatar(), sid: S().randomInterest(g),
+          q: Math.round(U.clamp(50 + U.normal(0, 5) + Math.min(6, g.rep / 150), 40, 64)),
+          team, from: U.pick(pool), grant: Math.round((G().tierCfg(g).startup * U.range(0.12, 0.25)) / 1000) * 1000,
+        };
+      },
+      build: (g, c) => {
+        const free = Math.max(0, S().freeDesks(g));
+        const need = c.team.length + 1;
+        const gr = S().groupOfSub(g, c.sid);
+        const where = gr ? `TA 们会加入「${U.esc(S().groupName(g, gr))}」。` : !S().canCreateGroup(g, c.sid) ? `会新开一个「${U.esc(S().subName(g, c.sid))}组」，由 TA 当组长。` : '';
+        return {
+          title: '青年教师想加入你的团队', portrait: { icon: 'people' },
+          text: `${U.esc(c.from)} 的青年教师 <b>${U.esc(c.name)}</b> 来找你：“老师，我想带着学生加入您的团队，跟着您做「${U.esc(S().dirName(g, c.sid))}」。”<br>TA 会带来 ${c.team.length} 名学生：${c.team.map(t => `${U.esc(t.name)}（${S().ROLE_NAMES[t.role]}）`).join('、')}，还有一笔 <b>${money(g, c.grant)}</b> 的科研经费（分三年到账）。<br><span class="dim">青年教师的工资由学校发。TA 自己做课题，也帮你带学生——加入后可以在「成员」页指定每个学生由谁来带。${where}需要 ${need} 个工位（现在空着 ${free} 个）。</span>`,
+          choices: [
+            { label: '欢迎加入！', hint: `青年教师 +1 · 学生 +${c.team.length} · 经费 +${money(g, c.grant)}${free < need ? ' · 工位不够，有人得先挤一挤' : ''}`, def: free >= need, apply: g => { S().jpiJoin(g, c); } },
+            { label: '婉拒', hint: '实验室已经够大了', def: free < need, apply: nop },
+          ],
+        };
+      },
+    },
+
+    // 青年教师拿到独立教职（或者待得不开心）要走
+    jpi_leave: {
+      weight: g => (S().jpis(g).some(j => S().memberYears(g, j) >= 3) ? 0.5 : 0), cd: 300,
+      mk: (g, j, unhappy) => {
+        const pool = G().region(g).univs.filter(u => u !== g.school);
+        const trust = j.trust == null ? 55 : j.trust;
+        const senior = j.pubsA >= 4;
+        return {
+          mid: j.id, unhappy: !!unhappy, univ: U.pick(pool),
+          title: g.region === 'cn' ? (senior ? '长聘副教授' : '助理教授（预聘）') : senior ? '副教授' : '助理教授',
+          stay: U.clamp(0.45 + (trust - 50) / 100 + (j.mood - 50) / 200 - (unhappy ? 0.25 : 0), 0.1, 0.9), roll: Math.random(),
+        };
+      },
+      ctx: g => {
+        const c = S().jpis(g).filter(j => S().memberYears(g, j) >= 3 && j.status === 'active');
+        return c.length ? RS.EVENTS.jpi_leave.mk(g, U.weighted(c, j => 1 + j.pubsA), false) : null;
+      },
+      build: (g, c) => {
+        const j = M(g, c.mid);
+        if (!j) return null;
+        const kids = g.members.filter(m => m.sup === j.id);
+        const cost = Math.round((G().tierCfg(g).startup * 0.08) / 1000) * 1000;
+        const dest = `${c.univ} ${c.title}`;
+        const go = take => g => {
+          const n = S().jpiLeave(g, j, dest, take);
+          S().addRep(g, 3);
+          G().log(g, `${j.name} 去 ${c.univ} 独立建组了${n ? (take ? `，带走了 ${n} 名学生` : `，${n} 名学生留下来改由你带`) : ''}`, 'info');
+          G().milestone(g, `青年教师 ${j.name} 出去独立，成为 ${dest}`);
+        };
+        const ch = kids.length
+          ? [
+            { label: '祝贺 TA，学生跟着 TA 走', hint: `${kids.map(m => sn(m.name)).join('、')} 跟着去 ${c.univ} · 声望 +3（你的团队又走出一位独立 PI）`, def: true, apply: go(true) },
+            { label: '祝贺 TA，学生留下来由你带', hint: `${kids.length} 名学生改由你指导（心情 -4，你的指导负担变重）· 声望 +3`, apply: go(false) },
+          ]
+          : [{ label: '祝贺 TA', hint: '声望 +3（你的团队又走出一位独立 PI）', def: true, apply: go(true) }];
+        ch.push({ label: '挽留：给 TA 更多资源', hint: `经费 -${money(g, cost)} · 成功率约 ${U.pct(c.stay)}${c.unhappy ? '（TA 待得不开心，不太好留）' : ''} · 留不住的话学生会跟着 TA 走`,
+          disabled: g.funds < cost ? '经费不足' : null,
+          apply: g => {
+            S().spend(g, cost, 'welfare');
+            if (c.roll < c.stay) { S().addMood(j, 20); S().addTrust(j, 8); S().story(g, j, `拒绝了 ${c.univ} 的 offer，留了下来`); G().log(g, `${j.name} 决定留下来`, 'good'); }
+            else { const n = S().jpiLeave(g, j, dest, true); G().log(g, `${j.name} 还是去了 ${c.univ}${n ? `，带走了 ${n} 名学生` : ''}`, 'bad'); }
+          } });
+        return {
+          title: c.unhappy ? '青年教师想离开' : '青年教师要独立了', portrait: { member: j.id },
+          text: (c.unhappy ? `${U.esc(j.name)} 在实验室待得不太开心，拿到了 <b>${U.esc(dest)}</b> 的 offer，想离开。`
+            : `${U.esc(j.name)} 在你的团队里做出了不少成果（论文 ${j.pubs} 篇，A 类 ${j.pubsA} 篇），拿到了 <b>${U.esc(dest)}</b> 的 offer，准备出去独立建组。`)
+            + (kids.length ? `<br>TA 现在带着 ${kids.length} 名学生：${kids.map(m => U.esc(m.name)).join('、')}。` : ''),
+          choices: ch,
         };
       },
     },

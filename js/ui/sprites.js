@@ -145,7 +145,7 @@
     return c;
   };
 
-  SP.ROLE_BG = { phd: '#3b5dc9', ms: '#38b764', ug: '#ef7d57', postdoc: '#5d275d', visit: '#257179', pi: '#c48a2c' };
+  SP.ROLE_BG = { phd: '#3b5dc9', ms: '#38b764', ug: '#ef7d57', postdoc: '#5d275d', visit: '#257179', jpi: '#9c3f2e', pi: '#c48a2c' };
   const urlCache = new Map();
   SP.portraitURL = function (av, role, scale) {
     scale = scale || 3;

@@ -166,6 +166,8 @@
     { name: '标准实验室', desks: 8, cost: 20000, rep: 30 },
     { name: '大实验室', desks: 12, cost: 80000, rep: 100 },
     { name: '整层楼', desks: 16, cost: 250000, rep: 250 },
+    { name: '两层楼', desks: 24, cost: 600000, rep: 450 },
+    { name: '研究中心', desks: 32, cost: 1400000, rep: 750 },
   ];
 
   // ---------- 审稿意见 ----------
@@ -233,5 +235,8 @@
     { id: 'turing', name: '图灵奖', desc: '计算机科学的最高荣誉', check: g => g.honors.some(h => h.id === 'turing') },
     { id: 'viral', name: '出圈了', desc: '论文在社交媒体上爆火', check: g => !!g.flags.viral },
     { id: 'zen', name: '佛系导师', desc: '3 人以上实验室平均心情达到 90', check: g => g.members.length >= 3 && U.avg(g.members, m => m.mood) >= 90 },
+    { id: 'move', name: '良禽择木而栖', desc: '第一次跳槽', check: g => (g.flags.moves || 0) >= 1 },
+    { id: 'jpi', name: '大组长', desc: '有青年教师带着学生加入你的团队', check: g => g.members.some(m => m.role === 'jpi') },
+    { id: 'lab32', name: '研究中心', desc: '实验室成员达到 32 人', check: g => g.members.length >= 32 },
   ];
 })();

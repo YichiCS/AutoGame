@@ -65,6 +65,15 @@
   function mini(v, cls) {
     return `<span class="mini ${cls || ''}"><i style="width:${U.clamp(v, 0, 100).toFixed(0)}%"></i></span><b class="num">${Math.round(v)}</b>`;
   }
+  // 七项属性：研究能力（蓝）+ 软实力（紫）
+  function statGrid(st) {
+    return `<div class="statgrid">${S.STATS.map(s => `<span class="st" data-tip="${esc(s.n)}：${esc(s.tip)}"><label>${s.n}</label>${mini(st[s.k] == null ? 50 : st[s.k], s.soft ? 'soft' : '')}</span>`).join('')}</div>`;
+  }
+  const OVR_TIP = '总评：研究能力为主（想法 24%、编程 22%、写作 20%、数理 12%），软实力为辅（协作 8%、表达 7%、抗压 7%）。S ≥ 80 · A ≥ 70 · B ≥ 60 · C ≥ 50';
+  function ovrTag(st) {
+    const v = S.overall(st), gr = S.ovrGrade(v);
+    return `<span class="ovr g${gr}" data-tip="${OVR_TIP}">总评 <b>${v}</b> ${gr}</span>`;
+  }
   function tag(text, cls, tip) {
     return `<span class="tag ${cls || ''}"${tip ? ` data-tip="${esc(tip)}"` : ''}>${esc(text)}</span>`;
   }
@@ -143,8 +152,12 @@
       ['free', '尊重兴趣', '优先做学生自己感兴趣的方向：心情和效率更好，但方向容易分散'],
     ] },
     { k: 'consult', name: '学生做完课题后', opts: [
-      ['ask', '来找我商量', '每做完一个课题，学生都会来找你商量下一个方向（也可以托管给“小事托管”）'],
+      ['ask', '来找我商量', '每做完一个课题，学生都会来找你商量下一个方向（也可以在「托管」里把「选题和分组」交给托管）'],
       ['auto', '自动安排', '按「选题倾向」在学生所属小组的方向里自动选题，不再来问你'],
+    ] },
+    { k: 'autoLead', name: '组长任命', opts: [
+      ['auto', '自动任命', '小组没有组长时，每月初自动任命：组里资历够的人（博士后、青年教师、二年级以上的博士生）里，博士后 / 青年教师优先，同等资历选总评最高的'],
+      ['manual', '我来任命', '组长由你在「小组」页亲自任命或撤销'],
     ] },
     { k: 'submit', name: '投稿策略', opts: [
       ['top', '只冲顶会', '前 4 次只投 A 类'],
@@ -162,9 +175,10 @@
       ['none', '都不去', '省钱，但学生有点失落'],
     ] },
     { k: 'auto', name: '托管', opts: [
-      ['off', '关闭', '所有决定都由你来做'],
-      ['minor', '小事托管', '排课、审稿邀请、Rebuttal 之类的日常小事，自动按推荐选项处理'],
-      ['all', '全部托管', '除了考核结果，所有事情都自动处理——真正的挂机模式'],
+      ['off', '全部问我', '所有决定都由你来做'],
+      ['minor', '小事托管', '学生选题和生活、小组里的事、学术机会、排课、杂事和年度总结，自动按推荐选项处理'],
+      ['all', '全部托管', '除了考核结果和跳槽时带谁走，所有事情都自动处理，算力不够还会自动添置服务器——真正的挂机模式'],
+      ['custom', '自定义', '逐类决定：下面每一类可以单独设成托管或者问我'],
     ] },
   ];
   const policyDesc = (k, v) => { const p = POLICIES.find(x => x.k === k); const o = p && p.opts.find(x => x[0] === v); return o ? o[2] : ''; };
@@ -279,12 +293,21 @@
         </div>
       </div>
       <div class="card"><div class="pstats">${piStat('research', '研究')}${piStat('writing', '写作')}${piStat('network', '人脉')}${piStat('teaching', '教学')}</div></div>
+      ${(() => {
+        const why = S.jobBlock(g);
+        return `<div class="card"><h3>${ico('mail')} 职业发展</h3>
+          ${g.flags.moveUntil > g.day ? `<p class="small warn">正在搬家：${G.daysText(g.flags.moveUntil - g.day)}安顿好，在那之前大家的效率 -30%。</p>` : ''}
+          <div class="row"><span class="grow small dim">悄悄投几份简历：声望越高越能拿到好学校的 offer；成果够新学校的长聘标准，就能直接带着长聘（甚至升一级）过去。offer 也可以拿去和学院谈条件。</span>
+          <button data-act="jobSearch" ${why || pi.energy < 6 ? 'disabled' : ''} data-tip="${esc(why || (pi.energy < 6 ? '精力不足' : '精力 -6，每年最多一次'))}">看看外面的机会</button></div>
+        </div>`;
+      })()}
       <div class="card"><h3>${ico('energy')} 精力分配</h3>${seg('focus', POLICIES[0].opts, pol.focus)}<p class="hint">${esc(policyDesc('focus', pol.focus))}</p></div>
       ${evalCard()}
       <div class="card"><h3>${ico('flask')} 实验室</h3>
-        <div class="kvline"><span>成员 / 工位</span><b class="${g.members.length > G.desks(g) ? 'bad' : ''}">${g.members.length} / ${G.desks(g)}</b></div>
-        <div class="kvline" data-tip="PI 一个人能精心指导的学生有限。博士后可以帮你带学生（每位 +2.5），小组组长也能分担（每位 +1.5，博士后组长 +1）。"><span>指导负担</span><b class="${ctx.mentor.factor < 1 ? 'warn' : ''}">${ctx.mentor.load.toFixed(1)} / ${ctx.mentor.cap.toFixed(1)}${ctx.mentor.factor < 1 ? `（效率 ${Math.round((ctx.mentor.factor - 1) * 100)}%）` : ''}</b></div>
-        <div class="kvline"><span>算力 / 需求</span><b class="${ctx.demand > 0 && ctx.ratio < 0.8 ? 'bad' : ''}">${ctx.units} / ${ctx.demand.toFixed(0)}</b></div>
+        <div class="kvline" data-tip="没有工位的人效率 -15%（本科生、访问学生 -8%），心情慢慢变差。可以在成员卡片上决定谁坐工位"><span>成员 / 工位</span><b class="${g.members.length > G.desks(g) ? 'bad' : ''}">${g.members.length} / ${G.desks(g)}${g.members.length > G.desks(g) ? `（${g.members.filter(m => m.desk < 0).length} 人没工位）` : ''}</b></div>
+        <div class="kvline" data-tip="PI 一个人能精心指导的学生有限。博士后可以帮你带学生（每位 +2.5），小组组长也能分担（每位 +1.5，博士后 / 青年教师组长 +1）。交给青年教师带的学生不算在你头上。"><span>指导负担</span><b class="${ctx.mentor.factor < 1 ? 'warn' : ''}">${ctx.mentor.load.toFixed(1)} / ${ctx.mentor.cap.toFixed(1)}${ctx.mentor.factor < 1 ? `（效率 ${Math.round((ctx.mentor.factor - 1) * 100)}%）` : ''}</b></div>
+        ${S.jpis(g).map(j => { const s = ctx.mentor.sup[j.id]; return `<div class="kvline small"><span>${esc(j.name)}（青年教师）带</span><b class="${s.factor < 1 ? 'warn' : ''}">${s.n} 人 · 负担 ${s.load.toFixed(1)} / ${s.cap}</b></div>`; }).join('')}
+        <div class="kvline" data-tip="实验速度 = 流进来的算力 / 需求，最多 ${S.PIPE_MAX} 倍。详见「设施」页的实验水管"><span>算力 / 需求</span><b class="${ctx.demand > 0 && ctx.ratio < 0.8 ? 'bad' : ''}">${ctx.units} / ${ctx.demand.toFixed(0)}${ctx.demand > 0 ? ` · 实验 ×${S.avgSpeed(ctx.alloc).toFixed(1)}` : ''}</b></div>
         <div class="kvline"><span>平均心情</span><b>${g.members.length ? Math.round(U.avg(g.members, m => m.mood)) : '-'}</b></div>
         <div class="kvline"><span>每月净收支</span><b class="${net >= 0 ? 'good' : 'bad'}">${net >= 0 ? '+' : ''}${money(net)}</b></div>
       </div>
@@ -350,7 +373,7 @@
       <div class="kvline" data-tip="做自己最想做的子方向：心情更好、效率 +5%；同一个方向下的其他子方向也有一半的效果。做完一个课题后，兴趣有时会转向刚做的子方向。"><span>感兴趣的方向</span><b>${esc(dirName(bio.interest))}</b></div>
       <div class="kvline"><span>爱好</span><b>${esc((bio.hobbies || []).join('、') || '—')}</b></div>
       <div class="kvline"><span>口头禅</span><b>“${esc(bio.motto || '……')}”</b></div>
-      <div class="kvline" data-tip="入组时的能力 → 现在"><span>成长</span><b class="growline">${grow('idea', '想法')}${grow('code', '编程')}${grow('write', '写作')}</b></div>
+      <div class="kvline" data-tip="入组时的能力 → 现在"><span>成长</span><b class="growline">${(() => { const b0 = S.overall(Object.assign({}, m.stats, base)), b1 = S.overall(m.stats); return `<span>总评 ${b0}→${b1}${b1 > b0 ? ` <b class="good">+${b1 - b0}</b>` : ''}</span>`; })()}${S.STATS.map(s => grow(s.k, s.n)).join('')}</b></div>
       <div class="sub">成长轨迹</div>
       ${(m.story || []).slice().reverse().map(s => `<div class="story"><span class="dim">${G.monthStr(s.d)}</span>${esc(s.t)}</div>`).join('') || '<div class="dim small">还没有什么故事。</div>'}
       <div class="sub">发表的论文（${papers.length}）</div>
@@ -358,6 +381,25 @@
     </div>`;
   }
 
+  // 工位
+  const waitingDesk = () => g.members.some(x => x.desk < 0);
+  const deskTip = m => `没有固定工位，只能找地方凑合：效率 -${Math.round((1 - S.noDeskMult(m)) * 100)}%，心情慢慢变差。${m.noDesk ? '工位被你收回了，有空位也不会自动分给 TA。' : '有空位时会按资历自动分到。'}`;
+  function deskLine() {
+    const none = g.members.filter(m => m.desk < 0);
+    if (!none.length) return '';
+    return `<p class="warn small">有 ${none.length} 人没有工位（${esc(none.slice(0, 4).map(m => RS.shortName(m.name)).join('、'))}${none.length > 4 ? ' 等' : ''}）：效率 -15%（本科生、访问学生 -8%），心情慢慢变差。可以在成员卡片上「给工位」「收回工位」决定谁坐，或者去「设施」页扩建。</p>`;
+  }
+  // 小导师：青年教师带了谁、负担多重；学生由谁来带
+  function supLine(m) {
+    if (m.role === 'jpi') {
+      const s = (S.mentorLoad(g).sup || {})[m.id] || { load: 0, cap: S.JPI_CAP, n: 0, factor: 1 };
+      const kids = g.members.filter(x => x.sup === m.id);
+      return `<div class="row small" data-tip="青年教师每人能精心带 ${S.JPI_CAP} 个学生（本科生、访问学生算半个）；TA 带的学生成长 +12%，不占你的指导负担，论文上也会署 TA 的名字。带得太多，学生的效率会打折"><span>带 ${s.n} 个学生</span><b class="${s.factor < 1 ? 'warn' : ''}">负担 ${s.load.toFixed(1)} / ${s.cap}${s.factor < 1 ? `（效率 ${Math.round((s.factor - 1) * 100)}%）` : ''}</b><span class="dim">${esc(kids.map(x => RS.shortName(x.name)).join('、'))}</span></div>`;
+    }
+    if (!S.STUDENT_ROLES.includes(m.role) || !S.jpis(g).length) return '';
+    const sup = S.supOf(g, m);
+    return `<div class="row small"><span>导师</span>${sup ? tag(sup.name, 'role-jpi', '青年教师带：成长 +12%，不占你的指导负担') : tag(g.phd ? g.pi.name : '你', 'gold', '由你亲自带')}</div>`;
+  }
   function memberCard(m) {
     const R = G.region(g);
     const sal = S.salary(g, m);
@@ -371,21 +413,24 @@
     return `<div class="mcard ${selMember === m.id ? 'sel' : ''}" data-key="${m.id}" id="m-${m.id}">
       <img class="portrait" src="${SP.portraitURL(m.avatar, m.role, 3)}" alt="" data-act="locate" data-arg="${m.id}" data-tip="在画面中找到 TA">
       <div class="grow">
-        <div class="row"><b class="name">${esc(m.name)}</b>${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}${fund}${bio.goal ? tag('想' + RS.GOALS[bio.goal].replace('还没想好', '再看看'), 't-mid', '职业理想：会影响 TA 对实习、跳槽和毕业去向的选择') : ''}</div>
+        <div class="row"><b class="name">${esc(m.name)}</b>${ovrTag(m.stats)}${tag(S.ROLE_NAMES[m.role], 'role-' + m.role)}${tag(S.memberYearLabel(g, m), 'dim')}${fund}${bio.goal && m.role !== 'jpi' ? tag('想' + RS.GOALS[bio.goal].replace('还没想好', '再看看'), 't-mid', '职业理想：会影响 TA 对实习、跳槽和毕业去向的选择') : ''}${m.desk < 0 ? tag('没有工位', 't-warn', deskTip(m)) : ''}</div>
         <div class="row traits">${traitTags(m)}</div>
         <div class="row small">${S.memberGroups(g, m).map(gr => groupTag(gr) + (gr.lead === m.id ? tag('组长', 'gold') : '')).join('') || (S.isSolo(m) ? tag('单干', 'dim', soloTip) : '<span class="dim">未分组</span>')}<span class="dim">想做「${esc(topicName(bio.interest))}」</span></div>
+        ${supLine(m)}
         ${bio.motto ? `<div class="motto small">“${esc(bio.motto)}”</div>` : ''}
-        <div class="stats3"><label>想法</label>${mini(m.stats.idea)}<label>编程</label>${mini(m.stats.code)}<label>写作</label>${mini(m.stats.write)}</div>
+        ${statGrid(m.stats)}
         <div class="row"><label class="small">心情</label>${bar(m.mood / 100, moodCls(m.mood))}<b class="num">${Math.round(m.mood)}</b></div>
         <div class="row" data-tip="师生信任：谈心、发奖金、一起发论文、支持实习会增加；内卷、拒绝实习、延期毕业会减少。&#10;信任高的学生更扛压、不容易被挖走，毕业时你的推荐信也更有分量。"><label class="small">信任</label>${bar(trust / 100, trust < 35 ? 'bad' : trust < 60 ? 'warn' : 'good')}<b class="num">${trust}</b></div>
         <div class="task small">${taskText(m)}</div>
         <div class="small dim">论文 ${m.pubs}（一作 ${m.first || 0} · A 类 ${m.pubsA}）· ${esc(m.school || '—')}${sal ? ` · 月薪 ${money(sal)}` : ''}</div>
         <div class="actions">
           <button data-act="talk" data-arg="${m.id}" ${talkCd || m.status !== 'active' ? 'disabled' : ''} data-tip="${talkCd ? '最近刚谈过' : '精力 -4，心情 +10~16，信任 +6'}">谈心</button>
-          <button data-act="bonus" data-arg="${m.id}" ${bonusCd ? 'disabled' : ''} data-tip="${bonusCd ? '最近刚发过' : `经费 -${money(S.bonusCost(g, m))}，心情 +18，信任 +4`}">发奖金</button>
+          ${m.role === 'jpi' ? `<button data-act="jpiStudents" data-arg="${m.id}" data-tip="指定哪些学生由 TA 来带">分配学生</button>` : `<button data-act="bonus" data-arg="${m.id}" ${bonusCd ? 'disabled' : ''} data-tip="${bonusCd ? '最近刚发过' : `经费 -${money(S.bonusCost(g, m))}，心情 +18，信任 +4`}">发奖金</button>`}
+          ${S.STUDENT_ROLES.includes(m.role) && S.jpis(g).length ? `<button data-act="supPick" data-arg="${m.id}" data-tip="指定 TA 由你还是哪位青年教师来带">换导师</button>` : ''}
           ${canTA ? `<button data-act="fund" data-arg="${m.id}" data-tip="${m.funding === 'ta' ? '改回 RA：由你发工资，效率恢复' : `当助教：系里发工资，但效率 -35%（名额 ${S.taUsed(g)}/${G.tierCfg(g).taSlots}）`}">${m.funding === 'ta' ? '改回 RA' : '去当助教'}</button>` : ''}
+          ${m.desk < 0 ? `<button data-act="giveDesk" data-arg="${m.id}" ${S.freeDesks(g) <= 0 ? 'disabled' : ''} data-tip="${S.freeDesks(g) <= 0 ? '工位都满了：先收回别人的工位，或者去「设施」页扩建' : `把空着的工位给 TA（心情 +4）。有工位效率才正常`}">给工位</button>` : waitingDesk() ? `<button data-act="takeDesk" data-arg="${m.id}" data-tip="把 TA 的工位收回来，让给没有工位的人（心情 -6，信任 -2；以后有空位也不会自动分给 TA，要你亲自给）">收回工位</button>` : ''}
           <button data-act="memberGroups" data-arg="${m.id}" data-tip="把 TA 分到某个（最多两个）子方向小组">分组</button>
-          <button data-act="grad" data-arg="${m.id}" data-tip="查看毕业要求和去向预估，由你安排毕业">毕业</button>
+          ${m.role === 'jpi' ? '' : `<button data-act="grad" data-arg="${m.id}" data-tip="查看毕业要求和去向预估，由你安排毕业">毕业</button>`}
           <button data-act="fold" data-arg="${key}">${open ? '收起档案' : '档案'}</button>
           <button class="danger" data-act="dismiss" data-arg="${m.id}" data-tip="让 TA 离开实验室（声望 -1，全组心情 -5）">${confirmDismiss === m.id ? '确定劝退？' : '劝退'}</button>
         </div>
@@ -395,16 +440,16 @@
   }
   function tabMembers() {
     const ugCd = (g.cooldowns.ug || 0) > g.day;
-    const roleOrder = { postdoc: 0, phd: 1, ms: 2, visit: 3, ug: 4 };
+    const roleOrder = { jpi: -1, postdoc: 0, phd: 1, ms: 2, visit: 3, ug: 4 };
     const list = g.members.slice().sort((a, b) => roleOrder[a.role] - roleOrder[b.role] || a.startDay - b.startDay);
-    const reasons = { graduated: '毕业', quit: '退出', poached: '被挖走', dismissed: '劝退', visit_end: '访问结束' };
+    const reasons = { graduated: '毕业', quit: '退出', poached: '被挖走', dismissed: '劝退', visit_end: '访问结束', independent: '独立建组', followed: '跟随导师离开', stayed: '留在原校' };
     return `
       <div class="toolbar">
         <span>成员 <b>${g.members.length}</b> / 工位 ${G.desks(g)}</span>
         <button data-act="ugPool" ${ugCd ? 'disabled' : ''} data-tip="${ugCd ? G.daysText(g.cooldowns.ug - g.day) + '后可以再招' : '本科生不用发工资，会给博士生打下手'}">招本科生</button>
         <button data-act="postdoc" ${g.flags.postdocSearch ? 'disabled' : ''} data-tip="${g.flags.postdocSearch ? '招聘中，等待申请' : `博士后能力强，还能分担指导工作；月薪 ${money(G.region(g).costs.postdoc)}`}">招博士后</button>
       </div>
-      ${g.members.length > G.desks(g) ? `<p class="warn small">工位不够了！挤在一起会让大家心情变差、效率下降。去「设施」页扩建实验室吧。</p>` : ''}
+      ${deskLine()}
       ${list.map(memberCard).join('') || '<p class="dim">实验室空空荡荡……</p>'}
       ${g.alumni.length ? fold('alumni', `已离开的成员（${g.alumni.length}）`, g.alumni.slice(0, 60).map(a => `<div class="kvline alum"><img class="portrait tiny" src="${SP.portraitURL(a.avatar, a.role, 2)}" alt=""><span class="grow">${esc(a.name)}<span class="dim small"> ${S.ROLE_NAMES[a.role]} · ${reasons[a.reason] || a.reason} · ${G.yearOfDay(a.leftDay)} · 论文 ${a.pubs || 0}（一作 ${a.first || 0} · A ${a.pubsA || 0}）</span></span><span class="small">${esc(a.dest || '')}</span></div>`).join(''), 'card') : ''}`;
   }
@@ -413,7 +458,7 @@
   function mchip(m, gr) {
     const it = S.interestOf(m);
     const lead = gr && gr.lead === m.id;
-    const tip = `${m.name}（${S.ROLE_NAMES[m.role]}）\n想做「${dirName(it)}」${lead ? '\n本组组长' : ''}\n点击调整 TA 的小组`;
+    const tip = `${m.name}（${S.ROLE_NAMES[m.role]} · 总评 ${S.overall(m.stats)}）\n想做「${dirName(it)}」${lead ? '\n本组组长' : ''}\n点击调整 TA 的小组`;
     return `<span class="mchip" data-key="${m.id}" data-act="memberGroups" data-arg="${m.id}" data-tip="${esc(tip)}"><img class="portrait mini" src="${SP.portraitURL(m.avatar, m.role, 2)}" alt="">${esc(RS.shortName(m.name))}${lead ? '<b class="gold">★</b>' : ''}${gr ? fitMark(m, gr.sub) : ''}${gr ? `<button class="x" data-act="groupKick" data-arg="${gr.id}" data-k="${m.id}" data-tip="移出本组">×</button>` : ''}</span>`;
   }
   function groupCard(gr, al) {
@@ -426,11 +471,12 @@
     const papers = g.papers.filter(p => p.sub === gr.sub && !p.retracted);
     const dem = al.dem[gr.id] || 0, got = al.got[gr.id] || 0, own = al.own[gr.id] || 0;
     const ratio = dem > 0 ? got / dem : 1;
-    const f = dem > 0 ? U.clamp(Math.pow(ratio, 0.6), 0.25, 1.15) : 1;
+    const f = dem > 0 ? S.computeSpeed(ratio) : 1;
     const owned = Object.keys(g.gpus).map(id => ({ s: G.gpuSpec(g, id), n: g.gpus[id] })).filter(x => x.s);
     const a = g.gpuAlloc[gr.id] || {};
+    const ownUsed = Math.min(own, got);
     const compLabel = dem > 0
-      ? `需求 ${dem.toFixed(0)} · 可用 ${got.toFixed(0)}（专用 ${own}${got - own >= 0.5 ? ` + 共享 ${(got - own).toFixed(0)}` : ''}）· 实验效率 ×${f.toFixed(2)}`
+      ? `需求 ${dem.toFixed(0)} · 流进 ${got.toFixed(0)}（专用 ${ownUsed.toFixed(0)}${got - ownUsed >= 0.5 ? ` + 共享 ${(got - ownUsed).toFixed(0)}` : ''}）· 实验速度 ×${f.toFixed(2)}`
       : `现在没有课题在做实验${own ? ` · 专用 ${own} 闲置` : ''}`;
     return `<div class="card gcard" data-key="${gr.id}" style="--gc:${gcolor(gr)}">
       <div class="row"><b class="gname">${esc(S.groupName(g, gr))}</b>${tag(t.name, gr.topic === g.policies.coreTopic ? 'gold' : 't-mid', gr.topic === g.policies.coreTopic ? '属于你的核心方向' : '所属方向')}${heatIcons(S.heat(g, gr.sub))}<span class="small dim" data-tip="实验室在「${esc(t.name)}」方向的积累，越高论文质量越好（同一方向的小组共用）">积累 ${(g.expertise[gr.topic] || 0).toFixed(1)}</span><span class="grow"></span>
@@ -439,7 +485,7 @@
       <div class="sub">成员（${mem.length}）</div>
       ${(() => {
         // 组内互助：按一位普通组员（不是组长）算
-        const w = U.sum(mem.filter(m => m.status === 'active'), m => (S.CONSULT_ROLES.includes(m.role) ? 1 : 0.5));
+        const w = U.sum(mem.filter(m => m.status === 'active'), m => (S.fullHelper(m) ? 1 : 0.5));
         const pct = Math.round((Math.min(0.2, 0.05 * Math.max(0, w - 1)) + (lead ? 0.05 : 0)) * 100);
         return `<div class="kvline small" data-tip="组员做本组子方向的课题时，组里其他在岗的人帮着讨论、调代码：研究生每人 +5%，本科生 / 访问学生每人 +2.5%，最多 +20%；有组长再 +5%。帮得多的组员会在论文上挂名。"><span>组内互助</span><b class="${pct ? 'good' : 'dim'}">${pct ? `组员做本组课题效率 +${pct}%` : '组里人太少，还没有互助'}</b></div>`;
       })()}
@@ -447,11 +493,11 @@
       <div class="kvline small"><span>在研课题</span><b>构思 ${cnt('idea')} · 实验 ${cnt('exp')} · 写作 ${cnt('write')} · 改稿 ${cnt('revise')} · 投稿/审稿 ${cnt('ready', 'review')}</b></div>
       <div class="kvline small"><span>已发表</span><b>${papers.length} 篇（A 类 ${papers.filter(p => p.tier === 'A').length}）</b></div>
       ${G.area(g).compute >= 0.3 || owned.length ? `<div class="sub">算力 <span class="small dim">· 这个子方向算力需求${computeWord(s.compute)}</span></div>
-      ${bar(dem > 0 ? ratio : 1, f < 0.8 ? 'bad' : f < 1 ? 'warn' : 'good', compLabel)}
+      ${bar(dem > 0 ? f / S.PIPE_MAX : 1, f < 0.8 ? 'bad' : f < 1 ? 'warn' : 'good', compLabel)}
       ${owned.map(x => {
         const n = a[x.s.id] || 0;
         const free = x.n - S.allocCount(g, x.s.id);
-        return `<div class="kvline small"><span class="grow">专用 ${esc(x.s.name)} <span class="dim">（每台 ${x.s.units} 算力，还有 ${free} 台没分配）</span></span><div class="stepper"><button data-act="alloc" data-arg="${gr.id}" data-k="${x.s.id}" data-v="-1" ${n <= 0 ? 'disabled' : ''}>-</button><b>${n}</b><button data-act="alloc" data-arg="${gr.id}" data-k="${x.s.id}" data-v="1" ${free <= 0 ? 'disabled' : ''}>+</button></div></div>`;
+        return `<div class="kvline small"><span class="grow">专用 ${esc(x.s.name)} <span class="dim">（每台 ${x.s.units} 算力，专用按 ${Math.round(x.s.units * S.DEDICATED_BONUS)} 算；还有 ${free} 台没分配）</span></span><div class="stepper"><button data-act="alloc" data-arg="${gr.id}" data-k="${x.s.id}" data-v="-1" ${n <= 0 ? 'disabled' : ''}>-</button><b>${n}</b><button data-act="alloc" data-arg="${gr.id}" data-k="${x.s.id}" data-v="1" ${free <= 0 ? 'disabled' : ''}>+</button></div></div>`;
       }).join('')}` : ''}
     </div>`;
   }
@@ -464,18 +510,22 @@
     const noLead = g.groups.filter(gr => !G.member(g, gr.lead)).length;
     return `
       <div class="card"><h3>${ico('branch')} 课题组 · 子方向（${g.groups.length} / ${max}）</h3>
-        <p class="small dim">把实验室分成几个子方向：每个学生可以加入一两个小组，<b>小组成员只做小组的方向</b>。组员之间互相帮忙——做小组方向的课题时，组里每多一位研究生效率 +5%（本科生 / 访问学生 +2.5%，最多 +20%），有组长再 +5%，帮得多的组员会挂名。不在任何小组的学生<b>单干</b>：可以做自己想做的方向，但没有互助和组长指导（效率 -${Math.round((1 - S.SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S.SOLO_GROW) * 100)}%）。服务器可以专门分给某个小组。小组太多方向就分散了，而且没有组长的小组要你亲自协调。</p>
+        <p class="small dim">把实验室分成几个子方向：每个学生可以加入一两个小组，<b>小组成员只做小组的方向</b>。组员之间互相帮忙——做小组方向的课题时，组里每多一位研究生效率 +5%（本科生 / 访问学生 +2.5%，最多 +20%），有组长再 +5%，帮得多的组员会挂名。不在任何小组的学生<b>单干</b>：可以做自己想做的方向，但没有互助和组长指导（效率 -${Math.round((1 - S.SOLO_WORK) * 100)}%、成长 -${Math.round((1 - S.SOLO_GROW) * 100)}%）。服务器可以专门分给某个小组：不用排队、环境配好，一台顶 ${S.DEDICATED_BONUS} 台，但闲着也不外借。小组太多方向就分散了，而且没有组长的小组要你亲自协调。</p>
         ${noLead > 1 ? `<p class="small warn">有 ${noLead} 个小组没有组长，你每天要多花 ${(S.groupEnergyCost(g)).toFixed(2)} 精力协调。</p>` : ''}
         <div class="sub">学生做完课题后</div>${seg('consult', pol.opts, g.policies.consult)}<p class="hint">${esc(policyDesc('consult', g.policies.consult))}</p>
         <div class="sub">选题倾向</div>${seg('topic', tpol.opts, g.policies.topic)}<p class="hint">${esc(policyDesc('topic', g.policies.topic))}</p>
-        <button class="wide" data-act="groupNew" ${g.groups.length >= max ? 'disabled' : ''} data-tip="${g.groups.length >= max ? '扩建实验室后可以设更多小组' : '选一个方向成立新的小组'}">成立新小组</button>
+        <div class="sub">组长任命</div>${seg('autoLead', POLICIES.find(p => p.k === 'autoLead').opts, g.policies.autoLead || 'auto')}<p class="hint">${esc(policyDesc('autoLead', g.policies.autoLead || 'auto'))}</p>
+        <p class="small dim">小组上限：每 ${S.GROUP_PER} 个人可以设一个小组（现在 ${g.members.length} 人），实验室空间最多 ${S.groupRoomCap(g)} 个。</p>
+        ${g.groups.length > max ? `<p class="small warn">小组比人还多：一两个人的小组没有组内互助，考虑把人合并到一起、解散多余的小组。</p>` : ''}
+        <button class="wide" data-act="groupNew" ${g.groups.length >= max ? 'disabled' : ''} data-tip="${g.groups.length >= max ? esc(S.groupCapWhy(g) || '小组已经够多了') : '选一个方向成立新的小组'}">成立新小组</button>
       </div>
       ${g.groups.map(gr => groupCard(gr, al)).join('')}
       <div class="card"><h3>${ico('gpu')} 共享算力池</h3>
         <div class="kvline"><span>共享算力（没分配的服务器 + 云）</span><b>${al.pool}</b></div>
         ${al.dem._pool > 0 ? `<div class="kvline"><span>不属于任何小组的课题在用</span><b>${al.got._pool.toFixed(0)} / 需求 ${al.dem._pool.toFixed(0)}</b></div>` : ''}
         ${al.idle >= 0.5 ? `<div class="kvline" data-tip="专用服务器只给本组用，本组用不完也不会借给别人"><span>专用但闲置</span><b class="warn">${al.idle.toFixed(0)}</b></div>` : ''}
-        <p class="small dim">专用服务器保证本组的实验不被别的组挤占，但闲着也不外借；共享池按各组的缺口分配。云算力始终共享。</p>
+        ${al.spare >= 0.5 && al.level >= S.PIPE_MAX ? `<div class="kvline" data-tip="每个实验最多只能快到 ${S.PIPE_MAX} 倍：水管都满了，多出来的算力用不上"><span>水管都满了，没用上</span><b class="dim">${al.spare.toFixed(0)}</b></div>` : ''}
+        <p class="small dim">算力像水：专用服务器只往本组的实验里流——环境和数据都为这个组配好了、不用排队，同样一台顶 ${S.DEDICATED_BONUS} 台，但闲着也不外借；共享池（没分配的服务器 + 云）先流给最缺水的实验，填平了再一起往上涨。实验速度 = 流进来的算力 / 需求，最多快到 ${S.PIPE_MAX} 倍。</p>
       </div>
       <div class="card"><h3>${ico('people')} 单干的成员（${free.length}）</h3>
         <div class="chips-wrap">${free.map(m => mchip(m, null)).join('') || '<span class="dim small">所有人都有小组了。</span>'}</div>
@@ -524,7 +574,7 @@
       ${work ? bar(p.prog / p.need[p.phase], p.rush > 0 ? 'warn' : '', `${S.PHASE_NAMES[p.phase]} ${Math.round((p.prog / p.need[p.phase]) * 100)}%${p.rush > 0 ? ' · DDL 冲刺中！' : ''}`) : ''}
       ${p.phase === 'revise' ? bar((p.revProg || 0) / p.revNeed, 'warn', `按审稿意见修改 ${Math.round(((p.revProg || 0) / p.revNeed) * 100)}%`) : ''}
       ${['write', 'revise', 'ready', 'review'].includes(p.phase) ? (() => { const ao = S.authorOrder(g, p); return `<div class="small authors" data-tip="按目前的实际工作量排序">署名：${authorsHTML(S.authorList(g, { authors: ao.order, co: ao.co, ext: p.collab ? p.collab.who : null, guest: p.guest }))}</div>`; })() : ''}
-      <div class="row small"><span data-tip="基于当前进度的估计，有误差">预估质量 <b>${Math.round(est)}</b></span>${p.attempts ? `<span class="bad">已被拒 ${p.attempts} 次</span>` : ''}${p.collab ? `<span class="good">合作：${esc(p.collab.who)}</span>` : ''}${p.bold ? '<span class="gold">大胆的想法</span>' : ''}</div>
+      <div class="row small"><span data-tip="基于当前进度的估计，有误差">预估质量 <b>${Math.round(est)}</b></span>${p.phase === 'exp' && curAlloc && S.projectDemand(g, p) >= 0.3 ? (() => { const x = expSpeed(p, curAlloc); return `<span class="${speedCls(x.sp)}" data-tip="实验速度 = 流进来的算力 / 需求（${(x.r * x.d).toFixed(1)} / ${x.d.toFixed(1)}），最多 ${S.PIPE_MAX} 倍">算力 ×${x.sp.toFixed(1)}</span>`; })() : ''}${p.attempts ? `<span class="bad">已被拒 ${p.attempts} 次</span>` : ''}${p.collab ? `<span class="good">合作：${esc(p.collab.who)}</span>` : ''}${p.bold ? '<span class="gold">大胆的想法</span>' : ''}</div>
       ${target}
       <div class="actions">${canEdit && p.phase === 'ready' ? `<button data-act="venue" data-arg="${p.id}">选择投稿目标</button>` : ''}${canEdit && p.phase === 'revise' ? `<button data-act="giveUp" data-arg="${p.id}" data-tip="不再修改和改投，直接挂到 arXiv（预印本价值很低），把负责人的精力腾出来做新课题">${confirmGiveUp === p.id ? '确定不改了？' : '不改了，挂 arXiv'}</button>` : ''}${canEdit && p.phase === 'idea' ? `<button data-act="topic" data-arg="${p.id}">换方向</button>` : ''}${mine ? '<span class="tag gold">我的</span>' : ''}</div>
     </div>`;
@@ -565,7 +615,9 @@
       + '<p class="small dim">按实验室在做的子方向筛出来的；「跨方向」是别的领域的会议，但也收这些子方向的论文。</p>';
     return fold('cal', `${ico('calendar')}<span class="grow">投稿日历：接下来一年 ${rows.length} 个 A / B 类截稿</span>`, body, 'card');
   }
+  let curAlloc = null; // 研究页里课题卡片显示实验速度用，每次渲染算一次
   function tabResearch() {
+    curAlloc = S.computeAlloc(g);
     const order = { idea: 0, exp: 1, write: 2, revise: 3, ready: 4, review: 5 };
     const phd = !!g.phd;
     // 博士阶段：你参与的课题排在最前面
@@ -686,21 +738,36 @@
   }
 
   // ---------- 设施 ----------
+  // 算力水管：每个在做实验的课题一根管子。水流的长度是实验速度（满格是最快的 PIPE_MAX 倍，黄线是正常速度），流得越快水纹走得越快
+  const expSpeed = (p, al) => { const gr = S.groupOfSub(g, p.sub); const r = al.ratio[gr ? gr.id : '_pool']; return { gr, r: r == null || r > 8 ? 0 : r, sp: S.computeSpeed(r == null || r > 8 ? 0 : r), d: S.projectDemand(g, p) }; };
+  const speedCls = sp => (sp < 0.6 ? 'bad' : sp < 1 ? 'warn' : 'good');
+  function pipesHTML(al) {
+    const exps = g.projects.filter(p => p.phase === 'exp' && S.projectDemand(g, p) >= 0.3);
+    const head = `<div class="sub">实验水管（${exps.length}）<span class="small dim"> · 总算力 ${al.total.toFixed(0)}：专用 ${al.dedicated.toFixed(0)}（每台按 ×${S.DEDICATED_BONUS} 算）+ 共享 ${al.pool.toFixed(0)}</span></div>`;
+    if (!exps.length) return head + '<p class="small dim">现在没有课题在做实验，水管都空着。</p>';
+    return head + `<div class="pipes">${exps.map(p => {
+      const x = expSpeed(p, al);
+      const tip = `《${p.title}》\n${x.gr ? `「${S.groupName(g, x.gr)}」的实验` : '没有对应小组，用共享算力'}\n流进 ${(x.r * x.d).toFixed(1)} / 需求 ${x.d.toFixed(1)} → 实验速度 ×${x.sp.toFixed(2)}${x.sp >= S.PIPE_MAX ? '\n管子已经满了，再多的算力也快不了' : x.r < S.PIPE_MIN ? '\n几乎没有算力，只能用自己的电脑和公共平台慢慢跑' : ''}`;
+      return `<div class="pipe-row" data-key="${p.id}" data-tip="${esc(tip)}"><span class="pname">${x.gr ? `<i class="gdot" style="--gc:${gcolor(x.gr)}"></i>` : ''}${esc(S.short(p.title))}</span><span class="pipe"><i class="water ${speedCls(x.sp)}" style="width:${((x.sp / S.PIPE_MAX) * 100).toFixed(1)}%;animation-duration:${(1.2 / x.sp).toFixed(2)}s"></i><i class="mark" style="left:${(100 / S.PIPE_MAX).toFixed(1)}%"></i></span><b class="${speedCls(x.sp)}">×${x.sp.toFixed(1)}</b></div>`;
+    }).join('')}</div>`;
+  }
   function tabFacility() {
     const ctx = S.dayContext(g);
     const R = G.region(g);
     const room = RS.ROOMS[g.room], next = RS.ROOMS[g.room + 1];
     const owned = Object.keys(g.gpus).map(id => ({ s: G.gpuSpec(g, id), n: g.gpus[id] })).filter(x => x.s);
     const shop = S.gpuAvailable(g);
-    const factor = ctx.demand > 0 ? U.clamp(Math.pow(ctx.ratio, 0.6), 0.25, 1.15) : 1;
+    const factor = S.avgSpeed(ctx.alloc);
     return `
       <div class="card"><h3>${ico('home')} 实验室空间</h3>
-        <div class="kvline"><span>当前</span><b>${esc(room.name)}（${room.desks} 个工位，已用 ${g.members.length}）</b></div>
+        <div class="kvline"><span>当前</span><b>${esc(room.name)}（${room.desks} 个工位，${g.members.length} 人${g.members.length > room.desks ? `，${g.members.filter(m => m.desk < 0).length} 人没工位` : ''}）</b></div>
+        <p class="small dim">有固定工位的人效率正常；没有工位的只能找地方凑合，效率 -15%（本科生、访问学生 -8%），心情也会慢慢变差。工位按资历自动分配，也可以在成员卡片上亲自安排。超过 16 个工位的实验室分成两层，画面左上角可以切换楼层。</p>
         ${next ? `<button class="wide" data-act="expand" ${g.rep < next.rep || g.funds < S.roomCost(g, next) ? 'disabled' : ''}>扩建为「${esc(next.name)}」· ${next.desks} 工位 · ${money(S.roomCost(g, next))}${g.rep < next.rep ? `（需要声望 ${next.rep}）` : ''}</button>` : '<p class="dim small">已经是最大的实验室了。</p>'}
       </div>
       <div class="card"><h3>${ico('gpu')} 算力</h3>
-        ${bar(ctx.demand > 0 ? ctx.units / ctx.demand : 1, factor < 0.8 ? 'bad' : factor < 1 ? 'warn' : 'good', `算力 ${ctx.units} / 当前需求 ${ctx.demand.toFixed(0)}`)}
-        <p class="small dim">${G.area(g).compute < 0.3 ? '你的方向基本不需要算力。' : `实验阶段的速度和质量取决于算力是否够用（当前实验效率 ×${factor.toFixed(2)}）。模型越来越大，需求每年增长约 15%。`}${owned.length ? '可以在「小组」页把服务器专门分给某个小组。' : ''}</p>
+        ${bar(ctx.demand > 0 ? ctx.units / ctx.demand : 1, factor < 0.8 ? 'bad' : factor < 1 ? 'warn' : 'good', `算力 ${ctx.units} / 当前需求 ${ctx.demand.toFixed(0)}${ctx.demand > 0 ? ` · 平均实验速度 ×${factor.toFixed(2)}` : ''}`)}
+        <p class="small dim">${G.area(g).compute < 0.3 ? '你的方向基本不需要算力。' : `算力像水，在做实验的课题是水管：<b>实验速度 = 流进来的算力 / 需求</b>。水不够，实验跑得慢、结果也不够扎实；水多了跑得快，但一根管子最多快到 ${S.PIPE_MAX} 倍（再多的卡也得有人改代码、看结果）；一点算力都没有，也能用自己的电脑和学校的公共算力平台以 ${S.PIPE_MIN} 倍慢慢跑。共享的算力先流给最缺水的实验；分给小组专用的服务器不用排队，一台顶 ${S.DEDICATED_BONUS} 台。模型越来越大，需求每年增长约 15%。`}${owned.length ? '可以在「小组」页把服务器专门分给某个小组。' : ''}</p>
+        ${G.area(g).compute < 0.3 ? '' : pipesHTML(ctx.alloc)}
         ${owned.length ? `<div class="sub">已拥有</div>${owned.map(x => `<div class="kvline"><span class="grow">${esc(x.s.name)} ×${x.n}</span><span class="small dim">+${x.s.units * x.n} 算力 · 维护 ${money(x.s.maint * x.n)}/月</span><button class="mini-btn" data-act="sellGpu" data-arg="${x.s.id}" data-tip="二手价 ${money(x.s.price * 0.25)}">卖</button></div>`).join('')}` : ''}
         <div class="sub">商店</div>
         ${shop.map(s => { const price = S.gpuPrice(g, s); return `<div class="shop-row"><div class="grow"><b>${esc(s.name)}</b> <span class="small dim">${esc(s.desc)}</span><div class="small">+${s.units} 算力 · 维护 ${money(s.maint)}/月</div></div><button data-act="buyGpu" data-arg="${s.id}" ${g.funds < price ? 'disabled' : ''}>${money(price)}</button></div>`; }).join('')}
@@ -728,8 +795,21 @@
   function tabPolicy() {
     const pol = g.policies;
     const A = G.area(g);
-    return POLICIES.map(p => `<div class="card"><h3>${esc(p.name)}</h3>${seg(p.k, p.opts, pol[p.k])}<p class="hint">${esc(policyDesc(p.k, pol[p.k]))}</p>
+    // 托管放在最前面：预设 + 每一类单独设置
+    const order = POLICIES.slice().sort((a, b) => (b.k === 'auto') - (a.k === 'auto'));
+    return order.map(p => `<div class="card"><h3>${esc(p.name)}</h3>${seg(p.k, p.opts, pol[p.k])}<p class="hint">${esc(policyDesc(p.k, pol[p.k]))}</p>
+      ${p.k === 'auto' ? autoCats() : ''}
       ${p.k === 'topic' ? `<div class="sub">核心方向</div><div class="chips-wrap">${A.topics.map(t => `<button class="chip-btn ${t.id === pol.coreTopic ? 'on' : ''}" data-act="core" data-arg="${t.id}">${esc(t.name)}</button>`).join('')}</div>` : ''}</div>`).join('');
+  }
+  // 托管的每一类：点一下在「托管」和「问我」之间切换（会自动切到自定义）
+  function autoCats() {
+    const groups = [];
+    RS.Sim.AUTO_CATS.forEach(c => { let gr = groups.find(x => x.name === c.group); if (!gr) groups.push(gr = { name: c.group, cats: [] }); gr.cats.push(c); });
+    return `<div class="autocats">${groups.map(gr => `<div class="sub">${esc(gr.name)}</div><div class="autogrid">${gr.cats.map(c => {
+      const on = RS.Sim.catAuto(g, c.id);
+      return `<button class="autocat ${on ? 'on' : ''}" data-act="autoCat" data-arg="${c.id}" data-tip="${esc(c.desc)}"><span>${esc(c.name)}</span><b>${on ? '托管' : '问我'}</b></button>`;
+    }).join('')}</div>`).join('')}
+      <p class="hint">考核结果、读博时的求职、跳槽时带谁走，一直由你来定。</p></div>`;
   }
 
   // ---------- 档案 ----------
@@ -750,6 +830,113 @@
         <div class="ach-grid">${ach.map(a => { const d = g.achievements[a.id]; return `<div class="ach ${d ? 'got' : ''}" data-tip="${esc(a.desc)}${d ? '\n' + G.dateStr(d) + ' 解锁' : ''}">${ico(d ? 'trophy' : 'question')}<span>${esc(d ? a.name : '？？？')}</span></div>`; }).join('')}</div>
       </div>
       <div class="card"><h3>${ico('list')} 大事记</h3>${g.timeline.slice().reverse().map(t => `<div class="kvline"><span class="small dim">${G.dateStr(t.d)}</span><span class="grow">${esc(t.t)}</span></div>`).join('')}</div>`;
+  }
+
+  // ---------- 统计 ----------
+  const fmtK = v => (v >= 10000 ? (v / 1000).toFixed(v >= 100000 ? 0 : 1) + 'k' : String(Math.round(v)));
+  // 折线图：series = [{ pts: [[天, 值]], cls, name }]，竖线是每年 1 月 1 日
+  function lineChart(series, x0, x1, cls) {
+    const W = 300, H = 90;
+    const ymax = Math.max(1, ...series.map(s => Math.max(0, ...s.pts.map(p => p[1]))));
+    const sx = x => (((x - x0) / Math.max(1, x1 - x0)) * W).toFixed(1);
+    const sy = y => (H - 2 - (y / ymax) * (H - 6)).toFixed(1);
+    let grid = '';
+    const ys = G.yearOfDay(x1) - G.yearOfDay(x0);
+    for (let y = G.yearOfDay(x0) + 1; y <= G.yearOfDay(x1); y++) {
+      if (ys > 12 && y % 5) continue;
+      const d = (y - G.BASE_YEAR) * 360;
+      grid += `<line class="grid" x1="${sx(d)}" y1="0" x2="${sx(d)}" y2="${H}"/>`;
+    }
+    const lines = series.map(s => `<polyline class="${s.cls}" points="${s.pts.map(p => `${sx(p[0])},${sy(p[1])}`).join(' ')}"/>`).join('');
+    const legend = series.length > 1 ? `<div class="legend">${series.map(s => `<span><i class="${s.cls}"></i>${esc(s.name)}</span>`).join('')}</div>` : '';
+    return `<div class="chart ${cls || ''}"><span class="ymax">${fmtK(ymax)}</span><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${lines}</svg>
+      <div class="xlab"><span>${G.yearOfDay(x0)}</span><span>${G.yearOfDay(x1)}</span></div>${legend}</div>`;
+  }
+  // 每年发表的论文：按等级堆起来（A 在最下面）
+  function yearBars(papers, y0, y1) {
+    const by = {};
+    papers.forEach(p => {
+      const y = G.yearOfDay(p.day), t = p.tier === 'W' ? 'C' : p.tier;
+      const b = by[y] || (by[y] = { A: 0, B: 0, C: 0 });
+      if (b[t] != null) b[t]++;
+    });
+    const years = [];
+    for (let y = y0; y <= y1; y++) years.push(y);
+    const tot = y => { const b = by[y]; return b ? b.A + b.B + b.C : 0; };
+    const max = Math.max(1, ...years.map(tot));
+    const label = y => (years.length <= 12 || y % 5 === 0 ? String(y).slice(2) : '');
+    return `<div class="ybars">${years.map(y => {
+      const b = by[y] || { A: 0, B: 0, C: 0 };
+      return `<div class="ycol" data-tip="${y} 年：${tot(y)} 篇（A 类 ${b.A} · B 类 ${b.B} · C 类 / Workshop ${b.C}）"><div class="ystack" style="height:${((tot(y) / max) * 100).toFixed(1)}%">${['C', 'B', 'A'].map(t => (b[t] ? `<i class="t${t}" style="flex:${b[t]}"></i>` : '')).join('')}</div></div>`;
+    }).join('')}</div>
+      <div class="ylabels">${years.map(y => `<span>${label(y)}</span>`).join('')}</div>
+      <div class="legend"><span><i class="tA"></i>A 类</span><span><i class="tB"></i>B 类</span><span><i class="tC"></i>C 类 / Workshop</span><span class="dim">最多一年 ${max} 篇</span></div>`;
+  }
+  function tabStats() {
+    const papers = g.papers.filter(p => !p.retracted && !p.phd);
+    const formal = papers.filter(p => p.tier !== 'P').slice().sort((a, b) => a.day - b.day);
+    const x0 = Math.min(g.startDay, formal.length ? formal[0].day : g.startDay), x1 = Math.max(g.day, x0 + 30);
+    // 引用：每月的记录 + 现在
+    const hist = g.history.filter(h => h.d >= x0);
+    const citePts = [[x0, 0]].concat(hist.map(h => [h.d, h.c]), [[g.day, g.stats.cites]]);
+    const hPts = hist.filter(h => h.h != null).map(h => [h.d, h.h]).concat([[g.day, g.stats.h]]);
+    const yearsIn = Math.max(1, (g.day - g.startDay) / 360);
+    const last = g.history.filter(h => h.d <= g.day - 360).pop();
+    const perYear = last ? g.stats.cites - last.c : g.stats.cites;
+    const top = papers.slice().sort((a, b) => b.cites - a.cites)[0];
+    // 论文：累计数量
+    let n = 0, na = 0;
+    const allPts = [[x0, 0]], aPts = [[x0, 0]];
+    formal.forEach(p => { n++; if (p.tier === 'A') na++; allPts.push([p.day, n]); aPts.push([p.day, na]); });
+    allPts.push([g.day, n]); aPts.push([g.day, na]);
+    const pre = papers.length - formal.length;
+    // 会议 / 期刊：发表在哪、中稿率
+    const vs = g.venueStats || {};
+    const pub = {};
+    formal.forEach(p => { const x = pub[p.venue] || (pub[p.venue] = { n: 0, c: 0, best: 0 }); x.n++; x.c += p.cites; if (p.best) x.best++; });
+    const ids = Object.keys(Object.assign({}, pub, vs)).filter(id => RS.VENUES[id] && id !== 'arxiv' && ((pub[id] && pub[id].n) || (vs[id] && vs[id].s)));
+    ids.sort((a, b) => ((pub[b] || {}).n || 0) - ((pub[a] || {}).n || 0) || ((vs[b] || {}).s || 0) - ((vs[a] || {}).s || 0));
+    const tot = { s: 0, a: 0, r: 0, w: 0 }, byTier = {};
+    Object.keys(vs).forEach(id => {
+      const v = RS.VENUES[id], x = vs[id];
+      if (!v) return;
+      ['s', 'a', 'r', 'w'].forEach(k => { tot[k] += x[k] || 0; });
+      const t = v.tier === 'W' ? 'C' : v.tier;
+      const b = byTier[t] || (byTier[t] = { a: 0, d: 0 });
+      b.a += x.a || 0;
+      b.d += (x.a || 0) + (x.r || 0);
+    });
+    const rate = (a, d) => (d > 0 ? pct(a / d) : '—');
+    const since = g.venueSince ? `<p class="small dim">投稿记录从 ${G.monthStr(g.venueSince)} 开始统计（之前的存档没有记下每次投稿的结果）。</p>` : '';
+    const vrow = id => {
+      const v = RS.VENUES[id], p = pub[id] || { n: 0, c: 0, best: 0 }, x = vs[id] || { s: 0, a: 0, r: 0, w: 0 };
+      const d = (x.a || 0) + (x.r || 0);
+      const wait = Math.max(0, (x.s || 0) - (x.a || 0) - (x.r || 0) - (x.w || 0));
+      const tip = `${v.full || v.name}\n发表 ${p.n} 篇${p.best ? `（最佳论文 ${p.best}）` : ''} · 引用 ${U.fmtInt(p.c)}\n投稿 ${x.s || 0} 次：录用 ${x.a || 0} · 拒稿 ${x.r || 0}${x.w ? ` · 撤稿 ${x.w}` : ''}${wait ? ` · 审稿中 ${wait}` : ''}`;
+      return `<div class="vstat" data-key="${id}" data-tip="${esc(tip)}"><span class="vname">${tierTag(v.tier)} ${esc(v.name)}</span><span class="vn"><b>${p.n}</b> 篇${p.best ? ' <span class="gold">★</span>' : ''}</span>${bar(d ? x.a / d : 0, d ? (x.a / d >= 0.5 ? 'good' : x.a / d >= 0.25 ? 'warn' : 'bad') : '', d ? `中稿 ${x.a}/${d} · ${pct(x.a / d)}` : wait ? `审稿中 ${wait}` : '还没有结果')}</div>`;
+    };
+    const shown = ids.slice(0, 15), rest = ids.slice(15);
+    return `
+      <div class="card"><h3>${ico('star')} 引用</h3>
+        <div class="statline"><span>总引用 <b>${U.fmtInt(g.stats.cites)}</b></span><span>h-index <b>${g.stats.h}</b></span><span>近一年 <b>+${U.fmtInt(perYear)}</b></span><span>年均 <b>${U.fmtInt(g.stats.cites / yearsIn)}</b></span></div>
+        ${lineChart([{ pts: citePts, cls: 's1', name: '总引用' }], x0, x1)}
+        ${hPts.length > 2 ? '<div class="sub">h-index</div>' + lineChart([{ pts: hPts, cls: 's3', name: 'h-index' }], x0, x1, 'short') : ''}
+        ${top && top.cites ? `<p class="small">引用最高：《${esc(S.short(top.title))}》<span class="dim">${esc(RS.VENUES[top.venue].name)} ${top.year}</span> · <b>${U.fmtInt(top.cites)}</b> 次</p>` : ''}
+      </div>
+      <div class="card"><h3>${ico('paper')} 论文</h3>
+        <div class="statline"><span>正式发表 <b>${formal.length}</b></span><span>A 类 <b>${na}</b></span><span>最佳论文 <b>${g.stats.bestPapers}</b></span>${pre ? `<span>预印本 ${pre}</span>` : ''}</div>
+        ${lineChart([{ pts: allPts, cls: 's1', name: '累计发表' }, { pts: aPts, cls: 's2', name: '其中 A 类' }], x0, x1)}
+        <div class="sub">每年发表</div>
+        ${yearBars(formal, G.yearOfDay(x0), G.yearOfDay(g.day))}
+      </div>
+      <div class="card"><h3>${ico('list')} 投稿与中稿率</h3>
+        ${since}
+        <div class="statline"><span>投稿 <b>${tot.s}</b></span><span>录用 <b>${tot.a}</b></span><span>拒稿 <b>${tot.r}</b></span>${tot.w ? `<span>撤稿 ${tot.w}</span>` : ''}<span>中稿率 <b>${rate(tot.a, tot.a + tot.r)}</b></span></div>
+        <div class="statline small">${['A', 'B', 'C'].map(t => `<span>${t === 'C' ? 'C 类 / Workshop' : t + ' 类'} ${rate((byTier[t] || {}).a || 0, (byTier[t] || {}).d || 0)}<span class="dim">（${(byTier[t] || {}).a || 0}/${(byTier[t] || {}).d || 0}）</span></span>`).join('')}</div>
+        <div class="sub">发表在哪 · 每个会议 / 期刊的中稿率</div>
+        ${shown.map(vrow).join('') || '<p class="dim small">还没有投过稿。</p>'}
+        ${rest.length ? fold('vstat-more', `还有 ${rest.length} 个会议 / 期刊`, rest.map(vrow).join(''), 'line') : ''}
+      </div>`;
   }
 
   // ---------- 博士阶段的页面 ----------
@@ -784,14 +971,14 @@
       <div class="card pi-card">
         <img class="portrait big" src="${SP.portraitURL(m.avatar, 'phd', 4)}" alt="" data-act="locate" data-arg="${m.id}" data-tip="在画面中找到自己">
         <div class="grow">
-          <div class="row"><b class="name">${esc(m.name)}</b>${tag('博士生', 'role-phd')}${tag(`第 ${Math.floor(yrs) + 1} 年`, 'dim')}</div>
+          <div class="row"><b class="name">${esc(m.name)}</b>${ovrTag(m.stats)}${tag('博士生', 'role-phd')}${tag(`第 ${Math.floor(yrs) + 1} 年`, 'dim')}</div>
           <div class="small dim">${esc(g.school)} · 导师 ${esc(g.pi.name)}（${esc(S.advisorType(g).name)}）</div>
           <div class="row traits">${traitTags(m)}</div>
           <div class="row small">${S.memberGroups(g, m).map(gr => groupTag(gr)).join('') || tag('单干', 'dim', soloTip)}<span class="dim">最想做「${esc(topicName(S.interestOf(m)))}」</span></div>
         </div>
       </div>
       <div class="card">
-        <div class="stats3"><label>想法</label>${mini(m.stats.idea)}<label>编程</label>${mini(m.stats.code)}<label>写作</label>${mini(m.stats.write)}</div>
+        ${statGrid(m.stats)}
         <div class="row"><label class="small">心情</label>${bar(m.mood / 100, moodCls(m.mood))}<b class="num">${Math.round(m.mood)}</b></div>
         <div class="row" data-tip="导师对你的信任：决定推荐信的分量。一起发论文、帮导师做事、主动沟通都会增加。"><label class="small">导师信任</label>${bar(trust / 100, trust < 35 ? 'bad' : trust < 60 ? 'warn' : 'good')}<b class="num">${trust}</b></div>
         <div class="task small">${taskText(m)}</div>
@@ -825,7 +1012,7 @@
     return `<div class="mcard" data-key="${x.id}">
       <img class="portrait" src="${SP.portraitURL(x.avatar, x.role, 3)}" alt="" data-act="locate" data-arg="${x.id}" data-tip="在画面中找到 TA">
       <div class="grow">
-        <div class="row"><b class="name">${esc(x.name)}</b>${tag(S.ROLE_NAMES[x.role], 'role-' + x.role)}${tag(S.memberYearLabel(g, x), 'dim')}${g.phd.mentees.includes(x.id) ? tag('你带过', 'gold') : ''}</div>
+        <div class="row"><b class="name">${esc(x.name)}</b>${ovrTag(x.stats)}${tag(S.ROLE_NAMES[x.role], 'role-' + x.role)}${tag(S.memberYearLabel(g, x), 'dim')}${g.phd.mentees.includes(x.id) ? tag('你带过', 'gold') : ''}</div>
         <div class="row small">${S.memberGroups(g, x).map(gr => groupTag(gr) + (gr.lead === x.id ? tag('组长', 'gold') : '')).join('')}<span class="dim">想做「${esc(topicName(S.interestOf(x)))}」</span></div>
         ${x.bio && x.bio.motto ? `<div class="motto small">“${esc(x.bio.motto)}”</div>` : ''}
         <div class="task small">${taskText(x)}</div>
@@ -861,7 +1048,7 @@
   }
   function tabPhdPolicy() {
     return PHD_POLICIES.map(p => `<div class="card"><h3>${esc(p.name)}</h3>${seg(p.k, p.opts, g.phd[p.k], 'phdPolicy')}<p class="hint">${esc((p.opts.find(o => o[0] === g.phd[p.k]) || [])[2] || '')}</p></div>`).join('') +
-      `<div class="card"><h3>托管</h3>${seg('auto', POLICIES.find(p => p.k === 'auto').opts, g.policies.auto)}<p class="hint">${esc(policyDesc('auto', g.policies.auto))}。只影响和你有关的事，导师实验室里的事一直由导师处理。</p></div>`;
+      `<div class="card"><h3>托管</h3>${seg('auto', POLICIES.find(p => p.k === 'auto').opts.filter(o => o[0] !== 'custom'), g.policies.auto)}<p class="hint">${esc(policyDesc('auto', g.policies.auto))}。只影响和你有关的事，导师实验室里的事一直由导师处理。</p></div>`;
   }
   function phdRecordCard(r) {
     const kv = (k, v) => `<div class="kvline"><span>${k}</span><b>${v}</b></div>`;
@@ -932,7 +1119,8 @@
 
   const TABS = [
     ['lab', '概览', 'home', tabLab], ['members', '成员', 'people', tabMembers], ['groups', '小组', 'branch', tabGroups], ['research', '研究', 'paper', tabResearch],
-    ['funding', '经费', 'money', tabFunding], ['facility', '设施', 'gpu', tabFacility], ['policy', '方针', 'list', tabPolicy], ['record', '档案', 'trophy', tabRecord],
+    ['funding', '经费', 'money', tabFunding], ['facility', '设施', 'gpu', tabFacility], ['policy', '方针', 'list', tabPolicy], ['stats', '统计', 'chart', tabStats],
+    ['record', '档案', 'trophy', tabRecord],
   ];
 
   function renderTabs() {
@@ -960,7 +1148,7 @@
   }
   function queueTitle(item) {
     if (item.type === 'event') { const ev = RS.Sim.buildEvent(g, item); return ev ? ev.title : '事件'; }
-    return { grants: '基金申请季', recruit: item.name, pool: item.title, venue: '选择投稿目标', notice: item.title, summary: `${item.data ? item.data.year : ''} 年度总结`, eval: '考核结果', ending: '人生的终章', jobmarket: item.stage === 'apply' ? '找教职' : '求职结果' }[item.type] || '待决定的事';
+    return { grants: '基金申请季', recruit: item.name, pool: item.title, venue: '选择投稿目标', notice: item.title, summary: `${item.data ? item.data.year : ''} 年度总结`, eval: '考核结果', ending: '人生的终章', jobmarket: item.stage === 'apply' ? '找教职' : '求职结果', offers: '跳槽机会', move: '带谁一起走' }[item.type] || '待决定的事';
   }
 
   function renderEvent(item) {
@@ -970,7 +1158,11 @@
     return modalShell(`${head(ev.portrait && ev.portrait.icon ? ev.portrait.icon : 'mail', ev.title)}
       <div class="mbody">${portraitHTML(ev.portrait, 'big')}<div class="mtext">${ev.text}</div></div>
       <div class="choices">${ev.choices.map((c, i) => `<button class="choice ${c.def ? 'def' : ''}" data-act="choose" data-arg="${i}" ${c.disabled ? 'disabled' : ''}><b>${esc(c.label)}</b><small>${esc(c.disabled || c.hint || '')}</small></button>`).join('')}</div>
-      ${def.minor ? '<div class="mnote">提示：可以在「方针 → 托管」里让这类小事自动处理。</div>' : ''}`, 'event');
+      ${(() => {
+        if (g.phd) return def.minor ? '<div class="mnote">提示：可以在「方针 → 托管」里让这类小事自动处理。</div>' : '';
+        const c = RS.Sim.AUTO_CATS.find(x => x.id === RS.Sim.itemCat(item));
+        return c && item.id !== 'welcome' ? `<div class="mnote">提示：这是托管里的「${esc(c.group)} · ${esc(c.name)}」，可以在「方针 → 托管」里设成自动处理。</div>` : '';
+      })()}`, 'event');
   }
 
   function renderGrants(item) {
@@ -1002,12 +1194,13 @@
   }
 
   function candStats(c, exact) {
-    const row = (k, n) => {
-      if (exact) return `<label>${n}</label>${mini(c.stats[k])}`;
-      const r = c.est[k];
-      return `<label>${n}</label><span class="mini range"><i style="left:${r.lo}%;width:${Math.max(2, r.hi - r.lo)}%"></i></span><b class="num">${r.lo}~${r.hi}</b>`;
+    if (exact) return statGrid(c.stats);
+    const row = s => {
+      const r = (c.est || {})[s.k];
+      if (!r) return `<span class="st"><label>${s.n}</label><span class="mini range"></span><b class="num">?</b></span>`;
+      return `<span class="st" data-tip="${esc(s.n)}：${esc(s.tip)}"><label>${s.n}</label><span class="mini range"><i style="left:${r.lo}%;width:${Math.max(2, r.hi - r.lo)}%"></i></span><b class="num">${r.lo}~${r.hi}</b></span>`;
     };
-    return `<div class="stats3">${row('idea', '想法')}${row('code', '编程')}${row('write', '写作')}</div>`;
+    return `<div class="statgrid wide">${S.STATS.map(row).join('')}</div>`;
   }
   function potStars(p) {
     const n = p >= 1.25 ? 3 : p >= 1.05 ? 2 : 1;
@@ -1018,7 +1211,7 @@
     const traits = exact ? c.traits : c.shown;
     const hidden = !exact && c.traits.length > c.shown.length;
     return `<div class="ccard ${selected ? 'sel' : ''}" data-key="${c.cid}">
-      <div class="row"><img class="portrait" src="${SP.portraitURL(c.avatar, c.role, 3)}" alt=""><div class="grow"><b>${esc(c.name)}</b><div class="row">${tag(S.ROLE_NAMES[c.role], 'role-' + c.role)}${c.own ? tag('本校', 'gold', `来自你所在的 ${g.school}`) : ''}${c.fellow ? tag('自带奖学金', 'gold', '前三年不用你发工资') : ''}</div><div class="small dim">${esc(c.school)}${c.bio ? ' · ' + esc(c.bio.major) : ''}${c.pubs ? ` · 已有 ${c.pubs} 篇论文` : ''}</div></div></div>
+      <div class="row"><img class="portrait" src="${SP.portraitURL(c.avatar, c.role, 3)}" alt=""><div class="grow"><b>${esc(c.name)}</b> ${exact ? ovrTag(c.stats) : (() => { const e = c.est || {}; if (!e.math) return ''; const lo = {}, hi = {}; S.STATS.forEach(s => { lo[s.k] = e[s.k].lo; hi[s.k] = e[s.k].hi; }); return `<span class="ovr" data-tip="${OVR_TIP}">总评 约 ${S.overall(lo)}~${S.overall(hi)}</span>`; })()}<div class="row">${tag(S.ROLE_NAMES[c.role], 'role-' + c.role)}${c.own ? tag('本校', 'gold', `来自你所在的 ${g.school}`) : ''}${c.fellow ? tag('自带奖学金', 'gold', '前三年不用你发工资') : ''}</div><div class="small dim">${esc(c.school)}${c.bio ? ' · ' + esc(c.bio.major) : ''}${c.pubs ? ` · 已有 ${c.pubs} 篇论文` : ''}</div></div></div>
       ${candStats(c, exact)}
       <div class="row small"><span>潜力 <b class="gold">${exact ? potStars(c.pot) : '？？？'}</b></span>${c.bio ? `<span>职业理想 <b>${exact ? esc(RS.GOALS[c.bio.goal]) : '？'}</b></span>` : ''}</div>
       ${c.bio && c.bio.interest ? `<div class="row small" data-tip="研究计划里写的方向。分到对应的小组、做这个子方向时更开心、效率更高"><span>想做 <b>${esc(dirName(c.bio.interest))}</b></span>${S.groupOfSub(g, c.bio.interest) ? groupTag(S.groupOfSub(g, c.bio.interest)) : '<span class="dim">（还没有这个子方向的小组）</span>'}</div>` : ''}
@@ -1156,6 +1349,85 @@
       <div class="venue-list">${rows}</div>
       <div class="choices"><button class="choice def" data-act="closeLocal"><b>完成</b></button></div>`, '');
   }
+  function renderSupPick(mid) {
+    const m = G.member(g, mid);
+    if (!m) return null;
+    const ml = S.mentorLoad(g);
+    const cur = S.supOf(g, m);
+    const row = (id, name, load, cap, note) => `<div class="venue-row" data-key="${id || 'pi'}"><div class="grow"><b>${esc(name)}</b><div class="small dim">负担 ${load.toFixed(1)} / ${cap.toFixed ? cap.toFixed(1) : cap}${note ? ' · ' + note : ''}</div></div>
+      <button class="${(cur ? cur.id : null) === id ? 'on' : ''}" data-act="setSup" data-arg="${id || ''}" data-k="${m.id}">${(cur ? cur.id : null) === id ? '✓ 现在的导师' : '由 TA 来带'}</button></div>`;
+    const rows = [row(null, `你（${g.pi.name}）`, ml.load, ml.cap, '你精力有限，学生太多时每个人得到的指导会变少')]
+      .concat(S.jpis(g).map(j => { const s = ml.sup[j.id]; return row(j.id, `${j.name}（青年教师）`, s.load, s.cap, `做「${S.subName(g, S.interestOf(j))}」· 带的学生成长 +12%`); }));
+    return modalShell(`${head('people', `谁来带 ${m.name}？`)}
+      <p class="small dim">青年教师带的学生不占你的指导负担，成长更快，论文上会署 TA 的名字；每位青年教师能精心带 ${S.JPI_CAP} 个学生（本科生、访问学生算半个），带得太多效率会打折。</p>
+      <div class="venue-list">${rows.join('')}</div>
+      <div class="choices"><button class="choice def" data-act="closeLocal"><b>完成</b></button></div>`, '');
+  }
+  function renderJpiStudents(jid) {
+    const j = G.member(g, jid);
+    if (!j || j.role !== 'jpi') return null;
+    const s = S.mentorLoad(g).sup[j.id];
+    const studs = g.members.filter(m => S.STUDENT_ROLES.includes(m.role) && !m.isPlayer)
+      .sort((a, b) => (b.sup === j.id) - (a.sup === j.id) || S.interestFit(j, S.interestOf(b)) - S.interestFit(j, S.interestOf(a)));
+    const rows = studs.map(m => {
+      const mine = m.sup === j.id, other = !mine && S.supOf(g, m);
+      return `<div class="venue-row" data-key="${m.id}">${memberRowHead(m)}<div class="small dim">想做「${esc(topicName(S.interestOf(m)))}」${other ? ` · 现在由 ${esc(other.name)} 带` : mine ? '' : ' · 现在由你带'}</div></div>
+        <button class="${mine ? 'on' : ''}" data-act="setSup" data-arg="${mine ? '' : j.id}" data-k="${m.id}">${mine ? '✓ TA 在带' : '交给 TA 带'}</button></div>`;
+    }).join('') || '<p class="dim">实验室里还没有学生。</p>';
+    return modalShell(`${head('people', `${j.name} 带哪些学生？`)}
+      <p class="small dim">${esc(j.name)} 做「${esc(S.dirName(g, S.interestOf(j)))}」。现在负担 ${s.load.toFixed(1)} / ${s.cap}：每位青年教师能精心带 ${S.JPI_CAP} 个学生（本科生、访问学生算半个）。取消勾选的学生改由你来带。</p>
+      <div class="venue-list">${rows}</div>
+      <div class="choices"><button class="choice def" data-act="closeLocal"><b>完成</b></button></div>`, '');
+  }
+  // ---------- 跳槽 ----------
+  function renderOffers(item) {
+    const R = G.region(g);
+    const canRetain = (g.cooldowns.retain || 0) <= g.day;
+    const others = g.members.filter(m => !m.isPlayer);
+    const cards = item.offers.map((o, i) => {
+      const T = R.tiers[o.tier];
+      const est = U.sum(others, m => S.followChance(g, m, o));
+      const room = RS.ROOMS[Math.max(g.room, o.room)];
+      const notes = [
+        o.tier < g.tier ? '档次更高：生源更好，考核要求也更高' : o.tier > g.tier ? '档次低一些：考核宽松，但生源差一点' : '和现在同一档次',
+        o.tenure && !g.pi.tenured ? '<b class="good">直接给长聘，不用再考核</b>' : !g.pi.tenured ? '考核按新学校的标准，时间照旧' : null,
+        o.title > g.pi.title ? `<b class="good">升为${esc(R.titles[o.title])}</b>` : null,
+        `实验室「${esc(room.name)}」（${room.desks} 个工位）${o.room > g.room ? ' <b class="good">更大</b>' : ''}`,
+        others.length ? `预计约 ${Math.round(est)} / ${others.length} 人愿意跟你走` : null,
+      ].filter(Boolean);
+      return `<div class="offer-card" data-key="o${i}"><div class="row"><b>${esc(o.school)}</b>${tag(T.name, o.tier < g.tier ? 'gold' : 't-mid')}${tag(R.titles[o.title], o.title > g.pi.title ? 'gold' : 'dim')}<span class="grow"></span><span>启动经费 <b class="good">${money(o.startup)}</b></span></div>
+        <div class="small dim">${notes.join(' · ')}</div>
+        <div class="actions"><button class="primary" data-act="offerAccept" data-arg="${i}">接受，去 ${esc(o.school)}</button></div></div>`;
+    }).join('');
+    const intro = item.src === 'headhunt' ? `<b>${esc(item.offers[0].school)}</b> 向你抛出了橄榄枝，开出了很有诚意的条件。` : `你悄悄投了几份简历，面试了几轮，拿到了 ${item.offers.length} 个 offer。`;
+    return modalShell(`${head('mail', '跳槽机会')}
+      <div class="mtext">${intro}<br><span class="dim">跳槽要搬家：一个多月里大家的效率都会打折扣；不是所有人都会跟你走——博士生、博士后多半愿意，硕士生、本科生大多留在原校。在研的基金跟着你走，服务器和设施也一起搬过去。</span></div>
+      ${cards}
+      <div class="choices">
+        <button class="choice ${canRetain ? 'def' : ''}" data-act="offerNegotiate" ${canRetain ? '' : 'disabled'}><b>拿 offer 和学院谈条件</b><small>${canRetain ? `学院追加留任经费 ${money(S.retainCost(g))} · 声望 +2` : '最近刚谈过，学院不会再加钱了'}</small></button>
+        <button class="choice ${canRetain ? '' : 'def'}" data-act="offerDecline"><b>婉拒，留在 ${esc(g.school)}</b><small>没有影响</small></button>
+      </div>`, 'event');
+  }
+  function renderMove(item) {
+    const o = item.offer;
+    const order = { jpi: 0, postdoc: 1, phd: 2, ms: 3, visit: 4, ug: 5 };
+    const list = g.members.filter(m => !m.isPlayer).sort((a, b) => (order[a.role] || 9) - (order[b.role] || 9) || a.startDay - b.startDay);
+    const rows = list.map(m => {
+      const will = item.will[m.id], p = item.chance[m.id] || 0, on = item.pick.includes(m.id);
+      const btn = will
+        ? `<button class="${on ? 'on' : ''}" data-act="moveToggle" data-arg="${m.id}">${on ? '✓ 一起走' : '让 TA 留下'}</button>`
+        : `<button data-act="movePersuade" data-arg="${m.id}" ${item.tried[m.id] || g.pi.energy < 4 ? 'disabled' : ''}>${item.tried[m.id] ? '劝过了' : `劝劝 TA（精力 -4，约 ${pct(S.persuadeChance(item, m.id))}）`}</button>`;
+      return `<div class="venue-row" data-key="${m.id}">${memberRowHead(m)}<div class="small">${will ? '<span class="good">愿意跟你走</span>' : `<span class="bad">想留在 ${esc(g.school)}</span>`}</div></div>${btn}</div>`;
+    }).join('');
+    const room = RS.ROOMS[Math.max(g.room, o.room)];
+    return modalShell(`${head('people', `去 ${o.school}：带谁一起走？`)}
+      <p class="small dim">没跟你走的人会留在 ${esc(g.school)}（算作离开实验室），手上的课题交给一起走的同门，没人接手就只能放弃。新实验室是「${esc(room.name)}」，有 ${room.desks} 个工位。</p>
+      <div class="venue-list">${rows || '<p class="dim">实验室里没有别人，你一个人轻装上阵。</p>'}</div>
+      <div class="choices">
+        <button class="choice def" data-act="moveGo"><b>出发！带 ${item.pick.length} 人去 ${esc(o.school)}</b><small>启动经费 ${money(o.startup)} · 搬家的一个多月效率 -30%</small></button>
+        <button class="choice" data-act="moveCancel"><b>再想想，还是不走了</b><small>放弃这个 offer</small></button>
+      </div>`, 'event');
+  }
   function renderGrad(mid) {
     const m = G.member(g, mid);
     if (!m) return null;
@@ -1284,7 +1556,7 @@
         return;
       }
       headMin = true;
-      html = { event: renderEvent, grants: renderGrants, recruit: renderRecruit, pool: renderPool, notice: renderNotice, summary: renderSummary, eval: renderEval, ending: renderEnding, jobmarket: renderJobMarket }[item.type];
+      html = { event: renderEvent, grants: renderGrants, recruit: renderRecruit, pool: renderPool, notice: renderNotice, summary: renderSummary, eval: renderEval, ending: renderEnding, jobmarket: renderJobMarket, offers: renderOffers, move: renderMove }[item.type];
       html = item.type === 'venue' ? renderVenue(item.pid, false) : html ? html(item) : null;
       headMin = false;
       if (html === null) {
@@ -1300,6 +1572,7 @@
         settings: renderSettings, help: renderHelp, reset: renderConfirmReset,
         venue: d => renderVenue(d, true), topic: renderTopic,
         groupNew: renderGroupNew, groupAdd: renderGroupAdd, groupLead: renderGroupLead, memberGroups: renderMemberGroups, grad: renderGrad,
+        supPick: renderSupPick, jpiStudents: renderJpiStudents,
       };
       html = LOCAL[t] ? LOCAL[t](modal.data) : '';
       if (!html) { modal = null; layer.innerHTML = ''; return; }
@@ -1393,13 +1666,17 @@
       if (!m) return null;
       const t = document.createElement('div');
       t.innerHTML = taskText(m);
-      return `${m.name}（${S.ROLE_NAMES[m.role]} · ${S.memberYearLabel(g, m)}）\n${t.textContent}\n心情 ${Math.round(m.mood)} · 想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)}`;
+      return `${m.name}（${S.ROLE_NAMES[m.role]} · ${S.memberYearLabel(g, m)}）\n${t.textContent}\n总评 ${S.overall(m.stats)} · 心情 ${Math.round(m.mood)}\n想法 ${Math.round(m.stats.idea)} / 编程 ${Math.round(m.stats.code)} / 写作 ${Math.round(m.stats.write)} / 数理 ${Math.round(S.st(m, 'math'))}`;
     }
     if (info.kind === 'pi') return `${g.pi.name}（${G.titleName(g)}）\n精力 ${Math.round(g.pi.energy)} · ${POLICIES[0].opts.find(o => o[0] === g.policies.focus)[1]}`;
     if (info.kind === 'gpu') { const c = S.dayContext(g); return `服务器机柜\n算力 ${c.units} / 需求 ${c.demand.toFixed(0)}`; }
     if (info.kind === 'honor') return `荣誉墙\nA 类论文 ${g.stats.pubs.A} 篇 · 最佳论文 ${g.stats.bestPapers} 篇（金框）`;
     if (info.kind === 'cat') return '实验室的猫\n全员心情 +，偶尔捣乱';
     if (info.kind === 'door') return `${g.labName} 的大门`;
+    if (info.kind === 'floor') {
+      const n = G.desks(g);
+      return info.f ? `二楼：工位 17–${n}${n < 32 ? '（剩下的还堆着纸箱）' : ''}、讨论区\n没有工位的人也挤在这一层` : '一楼：工位 1–16、你的办公桌、服务器和休息区';
+    }
     if (info.kind === 'fac') return (RS.FACILITIES.find(f => f.id === info.id) || {}).name || '';
     return null;
   }
@@ -1568,9 +1845,17 @@
       case 'settings': modal = { kind: 'local', type: 'settings' }; break;
       case 'help': modal = { kind: 'local', type: 'help' }; break;
       case 'closeLocal': closeModal(); return;
+      case 'autoCat': {
+        RS.Sim.toCustom(g);
+        g.policies.autoCats[arg] = !g.policies.autoCats[arg];
+        RS.Sim.autoResolve(g);
+        break;
+      }
       case 'policy':
+        if (k === 'auto' && v === 'custom') { RS.Sim.toCustom(g); RS.Sim.autoResolve(g); break; }
         g.policies[k] = v;
         if (k === 'auto') RS.Sim.autoResolve(g);
+        if (k === 'autoLead') S.autoLeaders(g);
         break;
       case 'core': g.policies.coreTopic = arg; break;
       // 博士阶段
@@ -1603,6 +1888,8 @@
       case 'talk': { const m = G.member(g, arg); if (m) fail(S.talk(g, m)); break; }
       case 'bonus': { const m = G.member(g, arg); if (m) fail(S.giveBonus(g, m)); break; }
       case 'fund': { const m = G.member(g, arg); if (m) fail(S.setFunding(g, m, m.funding === 'ta' ? 'ra' : 'ta')); break; }
+      case 'giveDesk': { const m = G.member(g, arg); if (m) fail(S.giveDesk(g, m)); break; }
+      case 'takeDesk': { const m = G.member(g, arg); if (m) fail(S.takeDesk(g, m)); break; }
       case 'dismiss': {
         const m = G.member(g, arg);
         if (!m) break;
@@ -1638,7 +1925,9 @@
       case 'groupKick': { const m = G.member(g, k); if (m) fail(S.setMemberGroup(g, m, arg, false)); break; }
       case 'groupLead': modal = { kind: 'local', type: 'groupLead', data: arg }; break;
       case 'leadPick': {
+        const old = S.group(g, arg) && G.member(g, S.group(g, arg).lead);
         const why = S.setGroupLead(g, arg, k || null);
+        if (!why && !k && old) old.leadCd = g.day + 180; // 你撤掉的组长，半年内不会被自动任命回去
         if (why) { fail(why); break; }
         closeModal();
         return;
@@ -1650,6 +1939,28 @@
         break;
       case 'alloc': fail(S.allocGpu(g, arg, k, +v)); break;
       case 'memberGroups': modal = { kind: 'local', type: 'memberGroups', data: arg }; break;
+      case 'supPick': modal = { kind: 'local', type: 'supPick', data: arg }; break;
+      case 'jobSearch': fail(S.jobSearch(g)); setTimeout(openNextQueue, 50); break;
+      case 'offerAccept': resolveCurrent({ accept: +arg }); return;
+      case 'offerNegotiate': resolveCurrent('negotiate'); return;
+      case 'offerDecline': resolveCurrent('decline'); return;
+      case 'moveGo': { const item = g.queue.find(q => modal && q.qid === modal.qid); resolveCurrent(item ? item.pick.slice() : []); return; }
+      case 'moveCancel': resolveCurrent('cancel'); return;
+      case 'moveToggle': {
+        const item = g.queue.find(q => modal && q.qid === modal.qid);
+        if (item && item.will[arg]) item.pick = item.pick.includes(arg) ? item.pick.filter(x => x !== arg) : item.pick.concat(arg);
+        break;
+      }
+      case 'movePersuade': {
+        const item = g.queue.find(q => modal && q.qid === modal.qid);
+        if (!item) break;
+        const r = S.persuadeFollow(g, item, arg);
+        if (r && r.ok) UI.toast(r.ok, 'good');
+        else fail(r);
+        break;
+      }
+      case 'jpiStudents': modal = { kind: 'local', type: 'jpiStudents', data: arg }; break;
+      case 'setSup': { const m = G.member(g, k); if (m) fail(S.setSup(g, m, arg || null)); break; }
       case 'grad': modal = { kind: 'local', type: 'grad', data: arg }; break;
       case 'gradDo':
       case 'gradEarly': {
@@ -1811,7 +2122,7 @@
       const r = cv.getBoundingClientRect();
       const info = RS.Scene.hitTest(((e.clientX - r.left) / r.width) * RS.Scene.W, ((e.clientY - r.top) / r.height) * RS.Scene.H);
       const t = sceneTip(info);
-      cv.style.cursor = info && (info.kind === 'member' || info.kind === 'pi') ? 'pointer' : 'default';
+      cv.style.cursor = info && (info.kind === 'member' || info.kind === 'pi' || info.kind === 'floor') ? 'pointer' : 'default';
       if (t) showTip(t, e.clientX, e.clientY);
       else hideTip();
     });
@@ -1829,7 +2140,8 @@
         UI.frame(true);
         const el = $('m-' + info.id);
         if (el) el.scrollIntoView({ block: 'center' });
-      } else if (info.kind === 'pi') { tab = 'lab'; dirty = true; }
+      } else if (info.kind === 'floor') RS.Scene.setFloor(info.f);
+      else if (info.kind === 'pi') { tab = 'lab'; dirty = true; }
       else if (info.kind === 'gpu') { tab = 'facility'; dirty = true; }
       else if (info.kind === 'honor') { tab = 'research'; paperFilter = 'A'; dirty = true; }
     });

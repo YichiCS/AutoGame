@@ -94,6 +94,12 @@ button.mini-btn { padding: 0 6px; }
 .chips-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip-btn { background: #34406e; }
 .chip-btn.on { background: var(--orange); }
+.autogrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; margin: 2px 0 4px; }
+.autocat { display: flex; align-items: center; gap: 6px; padding: 3px 7px; background: #2b3460; text-align: left; }
+.autocat span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.autocat b { font-weight: normal; color: var(--dim); }
+.autocat.on { background: #2f6b3f; }
+.autocat.on b { color: var(--good); }
 
 /* ---------- 标签与进度条 ---------- */
 .tag { display: inline-block; padding: 0 5px; background: #3a4370; color: #fff; clip-path: var(--notch); white-space: nowrap; }
@@ -108,6 +114,8 @@ button.mini-btn { padding: 0 6px; }
 .tag.role-ug { background: #b85e3f; }
 .tag.role-postdoc { background: #7b3a7b; }
 .tag.role-visit { background: var(--teal); }
+.tag.role-jpi { background: #9c3f2e; }
+.tag.t-warn { background: #7a5a1e; }
 .tier { display: inline-block; min-width: 22px; text-align: center; padding: 0 3px; color: #1a1c2c; clip-path: var(--notch); flex: 0 0 auto; }
 .tier.tA { background: #ffcd75; }
 .tier.tB { background: #73eff7; }
@@ -205,6 +213,20 @@ button.mini-btn { padding: 0 6px; }
 .mcard .portrait { cursor: pointer; }
 .stats3 { display: grid; grid-template-columns: auto auto auto auto auto auto; align-items: center; gap: 2px 4px; margin: 3px 0; color: var(--dim); width: max-content; max-width: 100%; }
 .stats3 .num { color: #fff; margin-right: 6px; }
+.statgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 2px 8px; margin: 3px 0; color: var(--dim); }
+.statgrid.wide { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+.statgrid .st { display: flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 0; }
+.statgrid .st label { flex: 0 0 auto; }
+.statgrid .mini { width: 34px; flex: 0 0 auto; }
+.statgrid .num { color: #fff; }
+.mini.soft > i { background: #b77fd6; }
+.ovr { display: inline-block; padding: 0 5px; background: #3a4370; color: #fff; clip-path: var(--notch); white-space: nowrap; }
+.ovr b { font-weight: normal; }
+.ovr.gS { background: #8c6420; color: #fff4d6; }
+.ovr.gA { background: #2f6b3f; }
+.ovr.gB { background: #2d5d8a; }
+.ovr.gC { background: #44507e; }
+.ovr.gD { background: #5a3a4a; color: #e0c8d0; }
 .traits { margin: 2px 0; }
 .task { color: #cfd6ea; margin: 2px 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
@@ -224,6 +246,33 @@ button.mini-btn { padding: 0 6px; }
 .spark { width: 100%; height: 50px; display: block; margin-top: 6px; background: var(--edge); }
 .spark polyline { fill: none; stroke: #a7f070; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .spark .zero { stroke: #b13e53; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+
+/* ---------- 统计 ---------- */
+.chart { position: relative; margin: 6px 0 2px; }
+.chart svg { width: 100%; height: 96px; display: block; background: var(--edge); }
+.chart.short svg { height: 56px; }
+.chart polyline { fill: none; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.chart .grid { stroke: rgba(255, 255, 255, 0.08); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.s1 { stroke: #a7f070; background: #a7f070; }
+.s2 { stroke: #ffcd75; background: #ffcd75; }
+.s3 { stroke: #41a6f6; background: #41a6f6; }
+.chart .ymax { position: absolute; left: 4px; top: 2px; color: var(--dim); text-shadow: 1px 1px 0 #000; pointer-events: none; }
+.xlab { display: flex; justify-content: space-between; color: var(--dim); }
+.legend { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--dim); margin-top: 2px; }
+.legend i { display: inline-block; width: 8px; height: 8px; margin-right: 4px; vertical-align: 0; }
+.ybars { display: flex; align-items: flex-end; gap: 2px; height: 90px; padding: 4px 4px 0; background: var(--edge); margin-top: 4px; }
+.ycol { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+.ycol:hover { background: rgba(255, 255, 255, 0.05); }
+.ystack { display: flex; flex-direction: column; }
+.ystack i { display: block; min-height: 1px; }
+.tA { background: var(--gold); }
+.tB { background: var(--sky); }
+.tC { background: #566c86; }
+.ylabels { display: flex; gap: 2px; padding: 0 4px; color: var(--dim); }
+.ylabels span { flex: 1; min-width: 0; text-align: center; white-space: nowrap; overflow: visible; font-size: 11px; }
+.vstat { display: grid; grid-template-columns: minmax(0, 1fr) 46px minmax(96px, 42%); align-items: center; gap: 6px; padding: 1px 0; }
+.vstat .vname { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.vstat .vn { text-align: right; white-space: nowrap; }
 .grant-row { margin: 4px 0 8px; }
 .shop-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px dashed #333b66; }
 .stepper { display: flex; align-items: center; gap: 6px; }
@@ -260,6 +309,20 @@ button.mini-btn { padding: 0 6px; }
 .mchip .portrait.mini { width: 16px; height: 16px; }
 .mchip button.x { padding: 0 4px; background: transparent; box-shadow: none; color: var(--dim); }
 .mchip button.x:hover { color: var(--bad); }
+
+/* ---------- 算力水管 ---------- */
+.pipes { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 2px; }
+.pipe-row { display: flex; align-items: center; gap: 6px; }
+.pipe-row .pname { flex: 0 0 40%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pipe-row .pname .gdot { margin: 0 4px 0 0; }
+.pipe-row > b { flex: 0 0 32px; text-align: right; }
+.pipe { position: relative; flex: 1; min-width: 60px; height: 12px; background: #151a2e; box-shadow: inset 0 0 0 1px #000, inset 0 2px 0 #2c3456, inset 0 -2px 0 #0d1020; }
+.pipe .water { position: absolute; left: 1px; top: 3px; bottom: 3px; max-width: calc(100% - 2px); background: repeating-linear-gradient(90deg, #41a6f6 0 6px, #73eff7 6px 9px); background-size: 18px 100%; animation: pipeflow 1s linear infinite; }
+.pipe .water.warn { background-image: repeating-linear-gradient(90deg, #3b5dc9 0 6px, #41a6f6 6px 9px); }
+.pipe .water.bad { background-image: repeating-linear-gradient(90deg, #29366f 0 6px, #3b5dc9 6px 9px); }
+.pipe .mark { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--gold); opacity: 0.7; }
+@keyframes pipeflow { from { background-position: 0 0; } to { background-position: 18px 0; } }
+@media (prefers-reduced-motion: reduce) { .pipe .water { animation: none; } }
 .kvline.item { padding: 1px 0; }
 .kvline.alum { border-bottom: 1px dashed #333b66; }
 .mdetail .kvline > span:first-child { white-space: nowrap; }
@@ -272,7 +335,7 @@ button.mini-btn { padding: 0 6px; }
 .mdetail .sub { color: var(--warn); margin: 6px 0 2px; border-bottom: 1px dashed #3d4677; }
 .story { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; }
 .story .dim { flex: 0 0 auto; }
-.growline { display: flex; gap: 10px; flex-wrap: wrap; font-weight: normal; }
+.growline { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 0 10px; font-weight: normal; }
 
 /* ---------- 经费明细 ---------- */
 .stack { display: flex; height: 12px; margin-top: 8px; background: var(--edge); box-shadow: inset 0 0 0 1px #000; overflow: hidden; }
@@ -325,6 +388,8 @@ button.mini-btn { padding: 0 6px; }
 .cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
 .ccard { background: var(--card); padding: 8px; clip-path: var(--notch); box-shadow: inset 0 0 0 2px #313a66; }
 .ccard.sel { box-shadow: inset 0 0 0 2px var(--good); background: #24392f; }
+.offer-card { background: var(--card); padding: 8px; margin: 6px 0; clip-path: var(--notch); box-shadow: inset 0 0 0 2px #4a5490; }
+.offer-card .row { flex-wrap: wrap; }
 .grant-pick { background: var(--card); padding: 8px; margin-bottom: 6px; clip-path: var(--notch); }
 .grant-pick.off { opacity: 0.6; }
 .venue-row.off { opacity: 0.55; }
