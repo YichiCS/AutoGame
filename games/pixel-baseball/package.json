@@ -1,0 +1,23 @@
+{
+  "name": "pixel-baseball",
+  "version": "0.1.0",
+  "private": true,
+  "description": "像素甲子园：监督之路 —— 像素风日本高中棒球经营 / 养成 / 指挥游戏",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/build.mjs --serve",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p .",
+    "sim": "node scripts/run-ts.mjs tests/balance.ts",
+    "season": "node scripts/run-ts.mjs tests/season.ts",
+    "career": "node scripts/run-ts.mjs tests/career.ts",
+    "fuzz": "node scripts/run-ts.mjs tests/fuzz.ts"
+  },
+  "dependencies": {
+    "preact": "^11.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
