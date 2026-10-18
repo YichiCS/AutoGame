@@ -150,10 +150,10 @@
       members: [], alumni: [], projects: [], papers: [],
       grants: [], proposals: [], grantLog: [],
       facilities: {}, room: 0, gpus: {}, cloud: 0, groups: [], gpuAlloc: {},
-      policies: {
+      policies: Object.assign({
         focus: 'mentor', intensity: 'normal', meeting: 'weekly', topic: 'core',
         coreTopic: o.coreTopic || A.topics[0].id, submit: 'balanced', rebuttal: 'auto', travel: 'student', auto: 'off', consult: 'ask', autoLead: 'auto', autoGroup: 'off',
-      },
+      }, G.newPolicies()),
       subs: {}, expertise: {},
       queue: [], schedule: [], cooldowns: {}, flags: {},
       stats: { cites: 0, h: 0, pubs: { A: 0, B: 0, C: 0, W: 0, P: 0 }, bestPapers: 0, submissions: 0, rejects: 0, grantsWon: 0, grantTotal: 0, phdGrads: 0, msGrads: 0, profGrads: 0, peak: 0 },
@@ -178,6 +178,14 @@
     return g;
   };
   G.freshYear = g => ({ papersA: 0, papers: 0, cites0: g.stats.cites, grants: 0, income: 0, expense: 0, rejects: 0, subs: 0, joined: 0, grads: 0 });
+  // v0.2.0 新加的方针，默认值就是以前的做法（旧存档读档时补上）：
+  //   desk 工位分配顺序；exit 出路与到期（按身份）；pick 招人名单弹出来以后怎么办（按身份）；hire 持续招本科生 / 博士后
+  G.newPolicies = () => ({
+    desk: 'keep',
+    exit: { ug: 'follow', ms: 'follow', phd: 'follow', postdoc: 'follow' },
+    pick: { grad: 'follow', ug: 'follow', postdoc: 'follow' },
+    hire: { ug: false, postdoc: false },
+  });
 
   // ---------- 存档 ----------
   G.save = g => {
@@ -215,6 +223,10 @@
       g.teaching.ug = Math.floor(g.teaching.count / 2);
       g.teaching.grad = g.teaching.count - g.teaching.ug;
     }
+    // v0.2.0 之前的存档没有这几项方针：补上默认值（和以前的行为一样），已经设过的保留
+    const P = G.newPolicies();
+    if (!g.policies.desk) g.policies.desk = P.desk;
+    ['exit', 'pick', 'hire'].forEach(k => { g.policies[k] = Object.assign(P[k], g.policies[k]); });
     G.migrateSubs(g);
     return g;
   };
