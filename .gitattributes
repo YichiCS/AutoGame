@@ -1,0 +1,12 @@
+# 统一使用 LF 换行（Windows 上 core.autocrlf=true 也会按 LF 检出），避免构建产物因换行符而“变化”
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# 游戏的构建产物：PR 里折叠显示，不展开差异
+games/*/dist/** -diff linguist-generated=true

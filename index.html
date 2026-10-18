@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a1c2c">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="AutoGame 像素游戏厅：挑一个像素小游戏，点一下就开始玩。存档统一管理，可以分游戏或一次性导出 / 导入。">
+  <title>AutoGame · 像素游戏厅</title>
+  <link rel="icon" href="hub/icon.svg" type="image/svg+xml">
+  <link rel="preload" href="hub/fonts/fusion-pixel-12px-proportional-zh_hans.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="hub/hub.css">
+  <script type="module" src="hub/js/main.js"></script>
+</head>
+<body>
+  <canvas id="bg" aria-hidden="true"></canvas>
+  <a class="skip" href="#games">跳到游戏列表</a>
+
+  <header class="hero">
+    <h1 class="logo" aria-label="AutoGame"><span>AUTO</span><span>GAME</span></h1>
+    <p class="tagline">像素小游戏合集 · 选一个，点一下就开始玩</p>
+    <nav class="nav" aria-label="页面导航">
+      <a class="btn" href="#games">游戏</a>
+      <a class="btn" href="#saves">存档中心</a>
+      <a class="btn" href="https://github.com/YichiCS/AutoGame" target="_blank" rel="noopener" data-repo>GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="games" class="section" aria-labelledby="games-title">
+      <h2 class="section-title" id="games-title">选择游戏 <span class="count" id="gameCount"></span></h2>
+      <div class="grid" id="gameGrid">
+        <p class="boot">正在加载游戏列表…<span class="slow">如果一直停在这里，请通过网页服务器打开本页：GitHub Pages，或在仓库根目录运行 node scripts/serve.mjs。</span></p>
+      </div>
+    </section>
+
+    <section id="saves" class="section" aria-labelledby="saves-title">
+      <h2 class="section-title" id="saves-title">存档中心</h2>
+      <div class="panel">
+        <p class="intro">所有存档都只保存在<b>这台设备的这个浏览器</b>里。换设备、换浏览器或清理浏览器数据之前，先「导出全部存档」留一份备份；到了新设备上，在这里「导入存档文件」就能接着玩。单个游戏的存档也可以在下面分别导出、导入。</p>
+        <div class="toolbar">
+          <button class="btn primary" type="button" data-act="export-all">导出全部存档</button>
+          <button class="btn" type="button" data-act="import">导入存档文件</button>
+        </div>
+        <dl class="facts">
+          <div><dt>上次全部导出</dt><dd id="lastExport">—</dd></div>
+          <div><dt>持久存储</dt><dd id="persist">—</dd></div>
+          <div><dt>本站已用空间</dt><dd id="usage">—</dd></div>
+        </dl>
+        <ul class="save-rows" id="saveRows"></ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>AutoGame 游戏厅 <span id="hubVersion"></span> · <a href="https://github.com/YichiCS/AutoGame" target="_blank" rel="noopener" data-repo>源代码</a> · 像素字体 <a href="https://github.com/TakWolf/fusion-pixel-font" target="_blank" rel="noopener">Fusion Pixel Font</a>（OFL 1.1）· 配色 Sweetie 16</p>
+  </footer>
+  <noscript><p class="noscript">需要启用 JavaScript 才能使用游戏厅。</p></noscript>
+</body>
+</html>
