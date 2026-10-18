@@ -10,6 +10,7 @@
 
 | 游戏 | 版本 | 简介 |
 | --- | --- | --- |
+| [科研模拟器](https://yichics.github.io/AutoGame/games/research-simulator/)（[目录](games/research-simulator)） | 0.1.0 | 从博士生做到 PI，经营计算机实验室的像素挂机游戏 |
 
 ## 存档
 
