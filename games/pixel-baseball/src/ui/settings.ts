@@ -3,8 +3,14 @@ export const SETTINGS_KEY = 'pixel-baseball:settings';
 
 export const settings = {
   sound: true,
-  /** 观战：全部比赛 / 只看重要比赛 / 不观战（直接出结果） */
-  watch: 'important' as 'all' | 'important' | 'off',
+  /** 旧版的观战设置（读旧设置时换算成 command） */
+  watch: undefined as 'all' | 'important' | 'off' | undefined,
+  /** 亲自指挥哪些比赛：全部 / 正式比赛 / 重要比赛（甲子园、神宫、选拔、县大会八强以后）/ 都不指挥 */
+  command: 'official' as 'all' | 'official' | 'big' | 'off',
+  /** 打席自动化 */
+  matchAuto: 'off' as 'off' | 'key' | 'bat' | 'pitch' | 'all',
+  /** 比赛演出速度 */
+  matchSpeed: 2,
   /** 关掉页面期间按 1 倍速继续（最多 120 天） */
   offline: true,
   speedIdx: 0,
@@ -17,6 +23,10 @@ export function loadSettings(): void {
   try {
     const s = localStorage.getItem(SETTINGS_KEY);
     if (s) Object.assign(settings, JSON.parse(s));
+    if (settings.watch) {
+      settings.command = settings.watch === 'off' ? 'off' : settings.watch === 'all' ? 'all' : 'official';
+      settings.watch = undefined;
+    }
   } catch {
     /* 隐私模式等情况下忽略 */
   }

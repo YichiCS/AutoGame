@@ -4,7 +4,7 @@ import { G, myPlayers, seniors } from '../../core/state';
 import { batterOffense, fieldAt, fullName, isPitcher, overall, pitcherOverall } from '../../core/attrs';
 import { PITCH_DEFS } from '../../data/pitches';
 import { strengthOf, strengthLetter } from '../../core/team';
-import { Cond, Empty, Fatigue, Grade, Letter, Portrait, SubTabs } from '../components/common';
+import { Cond, Empty, Fatigue, Gain, Grade, Num, Portrait, SubTabs, recentGain } from '../components/common';
 import { refresh, setSub, ui } from '../store';
 import { PlayerDetail } from './PlayerDetail';
 import { prospectBrief } from '../../core/recruit';
@@ -38,25 +38,28 @@ function PlayerRow(p: { pl: Player }) {
           {pit ? (
             <>
               <span class="kmh">{Math.round(pl.a.velocity)}km</span>
-              <span>控<Letter v={pl.a.control} /></span>
-              <span>耐<Letter v={pl.a.stamina} /></span>
-              <span>威<Letter v={pl.a.stuff} /></span>
+              <span>控<Num v={pl.a.control} /></span>
+              <span>耐<Num v={pl.a.stamina} /></span>
+              <span>威<Num v={pl.a.stuff} /></span>
               <span class="pits">{pl.pitches.map((x) => (x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].short) + x.lv).join(' ')}</span>
             </>
           ) : (
             <>
               <span>弹{pl.traj}</span>
-              <span>击<Letter v={pl.a.contact} /></span>
-              <span>力<Letter v={pl.a.power} /></span>
-              <span>速<Letter v={pl.a.speed} /></span>
-              <span>肩<Letter v={pl.a.arm} /></span>
-              <span>守<Letter v={pl.a.fielding} /></span>
+              <span>击<Num v={pl.a.contact} /></span>
+              <span>力<Num v={pl.a.power} /></span>
+              <span>速<Num v={pl.a.speed} /></span>
+              <span>肩<Num v={pl.a.arm} /></span>
+              <span>守<Num v={pl.a.fielding} /></span>
             </>
           )}
         </div>
       </div>
       <div class="pside">
-        <Grade v={overall(pl)} />
+        <span class="row gap4">
+          <Gain n={recentGain(pl)} />
+          <Grade v={overall(pl)} />
+        </span>
         <div class="row gap4">
           <Cond v={pl.cond} />
           <Fatigue v={pl.fatigue} w={30} />

@@ -118,6 +118,9 @@ export interface Player {
   notes: { d: number; t: string }[];
   /** 本赛季成长统计（年度总结用） */
   gains?: number;
+  /** 这一周 / 上一周各项能力涨了多少（显示「最近成长」用） */
+  gw?: Partial<Record<AttrKey | 'pitch', number>>;
+  gwp?: Partial<Record<AttrKey | 'pitch', number>>;
   draft?: { team: string; round: number };
 }
 
@@ -192,6 +195,43 @@ export interface PendingMatch {
   home: boolean;
   seed: number;
   label: string;
+  /** 亲自指挥中的比赛：开赛时的阵容与玩家（或教练）的每一个指令，读档时按记录重演 */
+  live?: LiveRecord;
+}
+
+/** 亲自指挥时玩家的一个操作 */
+export type LiveAct =
+  | { k: 'bat'; c: import('../sim/types').BatCmd }
+  | { k: 'pitch'; c: import('../sim/types').PitchPlan }
+  | { k: 'ph'; slot: number; pid: number }
+  | { k: 'pr'; base: number; pid: number }
+  | { k: 'pc'; pid: number }
+  | { k: 'ds'; pos: Pos; pid: number }
+  | { k: 'po' };
+
+export interface LiveRecord {
+  order: number[];
+  defense: Partial<Record<Pos, number>>;
+  players: number[];
+  /** n：第几个打席步（每打完一个打席加一）；a：这一步里的操作 */
+  log: { n: number; a: LiveAct }[];
+  /** 已经打完的打席步数 */
+  played: number;
+}
+
+/** 打线里的一棒（不用 DH 时，守位是 P 的那一棒由当天的先发投手打） */
+export interface Slot {
+  pid: number;
+  pos: Pos | 'DH';
+}
+
+/** 自定义阵容 */
+export interface LineupPlan {
+  bat: Slot[];
+  /** 先发顺位：排在前面、状态可以的投手先发 */
+  rotation: number[];
+  /** 练习赛也用这套阵容（否则练习赛按起用方针自动排，给替补和新人机会） */
+  practice: boolean;
 }
 
 // ============ 记录 ============
@@ -367,4 +407,8 @@ export interface GameState {
   lastBlockDay: number;
   /** 本学年的选拔出场与名额判定所需 */
   senbatsuPick: number[];
+  /** 自定义阵容（null = 每场自动排） */
+  lineup: LineupPlan | null;
+  /** 下一场指定的先发投手 */
+  nextStarter: number | null;
 }

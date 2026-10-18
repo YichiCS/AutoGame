@@ -17,6 +17,86 @@ export type OffTactic =
 export type PitchApproach = 'normal' | 'max' | 'contact' | 'careful';
 export type Alignment = 'normal' | 'infieldIn' | 'dp' | 'noDoubles' | 'buntShift';
 
+// ---------- 打席指令（一个打席有效） ----------
+/** 打法 */
+export type BatApproach = 'normal' | 'power' | 'contact' | 'aggressive' | 'wait' | 'bunt' | 'buntHit' | 'squeeze';
+/** 狙球种：直球系 / 变化球 */
+export type SitPitch = 'none' | 'FB' | 'BR';
+/** 球路区域（相对打者：内角 / 外角，高 / 低） */
+export type Zone = 'in' | 'out' | 'high' | 'low';
+export type RunPlay = 'none' | 'steal' | 'hitRun' | 'doubleSteal';
+
+/** 进攻方的打席指令 */
+export interface BatCmd {
+  app: BatApproach;
+  sit: SitPitch;
+  zone: Zone | 'none';
+  run: RunPlay;
+  /** 跑垒积极度：-1 稳健（小离垒、不冒险）/ 0 普通 / 1 积极（大离垒、多抢一个垒） */
+  agg: -1 | 0 | 1;
+}
+
+/** 守方的配球计划 */
+export interface PitchPlan {
+  /** 配球比重：交给捕手 / 直球为主 / 变化球为主 */
+  mix: 'auto' | 'FB' | 'BR';
+  /** 决胜球：两好球后优先使用 */
+  finisher: PitchType | 'FB' | null;
+  /** 主攻区域 */
+  focus: Zone | 'auto';
+  approach: PitchApproach;
+  align: Alignment;
+  /** 申告敬远 */
+  ibb: boolean;
+  /** 注意跑者：快速投球，盗垒更难，但球质略降 */
+  hold: boolean;
+  /** 第一球投外角吊球（识破盗垒、抢分） */
+  pitchout: boolean;
+}
+
+/** 一个打席的结果分类 */
+export type PAResult = 'K' | 'BB' | 'IBB' | 'HBP' | '1B' | '2B' | '3B' | 'HR' | 'OUT' | 'DP' | 'SAC' | 'SF' | 'E' | 'FC';
+
+/** 一球的位置分类（相对打者） */
+export interface PitchSpot {
+  hz: 'in' | 'mid' | 'out';
+  vz: 'high' | 'mid' | 'low';
+}
+
+/** 比赛中的打席记录：双方 AI 都会参考「上一个打席」调整策略 */
+export interface PAMemo {
+  no: number;
+  side: 0 | 1; // 进攻方
+  bat: number;
+  pit: number;
+  inning: number;
+  res: PAResult;
+  np: number;
+  /** 决定结果的那一球 */
+  last: { t: PitchType | 'FB'; fam: 'FB' | 'BR'; spot: PitchSpot; res: PitchResult } | null;
+  cmd: BatCmd | null;
+  plan: PitchPlan | null;
+}
+
+/** 某个投手在这场比赛里的用球统计（对手打者据此调整） */
+export interface PitchUse {
+  n: number;
+  fb: number;
+  br: number;
+  in: number;
+  out: number;
+  high: number;
+  low: number;
+  /** 两好球时用的球种 */
+  two: Record<string, number>;
+  twoN: number;
+}
+
+/** AI（或教练）对这个打席的打算，以及理由（给玩家的情报） */
+export interface Intent {
+  why: string[];
+}
+
 export interface DefTactic {
   approach: PitchApproach;
   align: Alignment;

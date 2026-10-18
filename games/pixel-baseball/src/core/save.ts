@@ -37,6 +37,10 @@ function migrate(g: GameState): GameState {
   g.timeline ??= [];
   g.achievements ??= {};
   g.senbatsuPick ??= [];
+  g.lineup ??= null;
+  g.nextStarter ??= null;
+  if (g.lineup) g.lineup.practice ??= false;
+  g.v = SAVE_VERSION;
   g.policies.autoCats ??= {};
   for (const p of Object.values(g.players)) {
     p.pw ??= [0, 0, 0, 0, 0, 0, 0];

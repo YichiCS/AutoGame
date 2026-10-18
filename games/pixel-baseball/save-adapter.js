@@ -1,5 +1,5 @@
 // 像素甲子园 · 存档适配器：只给 AutoGame 游戏厅用，游戏本身不加载。接口说明见仓库根目录 docs/architecture.md。
-// v1 起（挂机版）：localStorage 'pixel-baseball:save' 是整局的 JSON，设置在 'pixel-baseball:settings'。
+// v1 起：localStorage 'pixel-baseball:save' 是整局的 JSON，设置在 'pixel-baseball:settings'。
 // v0.x（经营版，已不能在新版里继续）：IndexedDB「pixel-koshien」的 saves 表，以及退回用的 localStorage 'pixel-koshien:*'。
 const SAVE_KEY = 'pixel-baseball:save';
 const LEGACY_DB = 'pixel-koshien';
@@ -29,8 +29,9 @@ export function describe(data) {
   if (g && typeof g === 'object') {
     const s = g.schools && g.schools[g.schoolId];
     const t = (g.mgr && g.mgr.totals) || {};
-    const parts = [s ? `${s.name}（${g.mgr ? g.mgr.name : ''} 监督）` : '', Number.isFinite(g.day) ? dateStr(g.day, g.startYear || 2026) : '', `通算 ${t.w || 0} 胜 ${t.l || 0} 负`];
-    slots.push({ label: '挂机版存档', detail: parts.filter(Boolean).join(' · '), savedAt: g.savedAt });
+    const live = g.pending && g.pending.live ? `比赛中：${g.pending.label}` : '';
+    const parts = [s ? `${s.name}（${g.mgr ? g.mgr.name : ''} 监督）` : '', Number.isFinite(g.day) ? dateStr(g.day, g.startYear || 2026) : '', `通算 ${t.w || 0} 胜 ${t.l || 0} 负`, live];
+    slots.push({ label: '存档', detail: parts.filter(Boolean).join(' · '), savedAt: g.savedAt });
   } else if (g === null) return null;
   // 旧版（经营版）的栏位
   const metas = new Map();

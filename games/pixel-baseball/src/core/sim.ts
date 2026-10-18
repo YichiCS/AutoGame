@@ -1,5 +1,5 @@
 // 模拟主循环：每天一个 tick
-import type { Player, TourKind, YearRecord } from './types';
+import type { PendingMatch, Player, TourKind, YearRecord } from './types';
 import { G, addRep, log, milestone, mySchool, myPlayers, seniors } from './state';
 import { chance, randInt } from './rng';
 import { clamp, sortBy } from './util';
@@ -64,15 +64,18 @@ export function finishPending(res: SimResult): void {
 }
 
 /** 离线进度：按 1 倍速补上，遇到需要决定的事就停（比赛直接出结果） */
-export function catchUp(days: number): number {
+/** 离线进度：按 1 倍速补上，遇到需要决定的事就停。manual：要亲自指挥的比赛（遇到就停下，等玩家来打） */
+export function catchUp(days: number, manual: (pm: PendingMatch) => boolean = () => false): number {
   let n = 0;
+  const stop = () => !!G.pending && (!!G.pending.live || manual(G.pending));
   while (n < days) {
+    if (stop()) break;
     if (G.pending) resolvePendingNow();
     if (blocked()) break;
     tick();
     n++;
   }
-  if (G.pending) resolvePendingNow();
+  if (G.pending && !stop()) resolvePendingNow();
   return n;
 }
 

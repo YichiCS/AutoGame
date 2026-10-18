@@ -9,7 +9,7 @@ import { learnNeed, maxPitchCount, maxPitchLv } from '../../core/growth';
 import { PITCH_DEFS, type PitchDir } from '../../data/pitches';
 import { TRAIT_BY_ID } from '../../data/traits';
 import { dateStr } from '../../core/calendar';
-import { Bar, Btn, Cond, Fatigue, Grade, Letter, Morale, Panel, Portrait, Stars } from '../components/common';
+import { Bar, Btn, Cond, Fatigue, Gain, Grade, Morale, Num, Panel, Portrait, Stars, recentGain } from '../components/common';
 import { refresh, ui } from '../store';
 
 /** 慧眼够高（或有影像分析室）才看得到潜力和能力上限 */
@@ -31,10 +31,12 @@ function AttrRow(p: { pl: Player; k: AttrKey }) {
       <div class="arow" title={ATTR_DESC[k]}>
         <span class="an">{ATTR_NAME[k]}</span>
         <span class="av">
-          <Letter v={vs} /> <b>{Math.round(v)}</b>
+          <Num v={vs} />
         </span>
         <Bar v={vs} mark={showCap ? velScore(cap) : undefined} color="var(--accent2)" />
-        <small class="dim">{showCap ? `km/h · 上限 ${Math.round(cap)}` : 'km/h'}</small>
+        <small class="dim">
+          {Math.round(v)}km/h{showCap ? ` · 上限 ${Math.round(cap)}` : ''} <Gain n={recentGain(pl, k)} />
+        </small>
       </div>
     );
   }
@@ -45,7 +47,9 @@ function AttrRow(p: { pl: Player; k: AttrKey }) {
         <Grade v={v} />
       </span>
       <Bar v={v} mark={showCap ? cap : undefined} />
-      {showCap && <small class="dim">{Math.round(cap)}</small>}
+      <small class="dim">
+        {showCap ? `上限 ${Math.round(cap)}` : ''} <Gain n={recentGain(pl, k)} />
+      </small>
     </div>
   );
 }

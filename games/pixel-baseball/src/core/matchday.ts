@@ -1,5 +1,5 @@
 // 本校的比赛：组队、模拟（按存下来的种子，可以重演）、把结果写回球员和记录
-import type { GameRecord, PendingMatch, Player, Pos, SchoolLite, Tour, TourKind } from './types';
+import type { GameRecord, LiveRecord, PendingMatch, Player, Pos, SchoolLite, Tour, TourKind } from './types';
 import { POS_ABBR } from './types';
 import type { MatchRules, MatchSummary, PlayEvent, TeamSetup } from '../sim/types';
 import { Match } from '../sim/match';
@@ -7,7 +7,8 @@ import { G, addRep, log, milestone, mySchool, myPlayers, note } from './state';
 import { chance, withSeed } from './rng';
 import { clamp } from './util';
 import { addBat, addPit, emptyBat, emptyPit, fullName, has, isPitcher, overall } from './attrs';
-import { autoBench, autoLineup, pickStarter } from './team';
+import { autoBench, autoLineup } from './team';
+import { benchFor, todayLineup, todayStarter } from './lineup';
 import { available } from './player';
 import { opponentRoster, schoolById } from './world';
 import { addExp } from './growth';
@@ -49,25 +50,53 @@ function lineupBias(official: boolean): (p: Player) => number {
 }
 
 export function mySetup(rules: MatchRules): TeamSetup {
+  return mySetupFull(rules).setup;
+}
+
+/**
+ * 本校的出场阵容：按自定义阵容（练习赛默认按起用方针自动排），缺人自动补位。
+ * human：亲自指挥；forced：指定的先发投手；rec：读档重演时用开赛时记下的阵容
+ */
+export function mySetupFull(rules: MatchRules, o: { human?: boolean; forced?: number | null; rec?: LiveRecord } = {}): { setup: TeamSetup; notes: string[] } {
   const s = mySchool();
-  const avail = myPlayers().filter(available);
   const pol = G.policies;
-  let players = avail.length > 20 ? autoBench(avail, 20, rules.dh).map((id) => G.players[id]) : avail;
-  // 人数实在不够时，让带伤以外的停赛者也不能上——只能借人（不写入存档）
-  if (players.length < 9) players = fillBorrowed(players);
-  const freshW = pol.pitcherUse === 'ace' ? 0.35 : pol.pitcherUse === 'rotation' ? 2.2 : 1.1;
-  const starter = pickStarter(players, [], rules.pitchLimit, freshW);
-  const lu = autoLineup(players, rules.dh, starter, lineupBias(rules.official));
+  let avail = myPlayers().filter(available);
+  // 人数实在不够时只能借人（不写入存档）
+  if (avail.length < 9) avail = fillBorrowed(avail);
+  let players: Player[];
+  let order: number[];
+  let defense: Partial<Record<Pos, number>>;
+  let notes: string[] = [];
+  if (o.rec) {
+    const pool = new Map(avail.map((p) => [p.id, p]));
+    players = o.rec.players.map((id) => pool.get(id) ?? G.players[id]).filter(Boolean);
+    order = o.rec.order.slice();
+    defense = { ...o.rec.defense };
+  } else {
+    const plan = G.lineup && (rules.official || G.lineup.practice) ? G.lineup : null;
+    const starter = todayStarter(avail, rules.pitchLimit, o.forced ?? G.nextStarter);
+    const must = plan ? plan.bat.filter((x) => x.pos !== 'P').map((x) => x.pid) : [];
+    if (starter) must.push(starter.id);
+    players = plan ? benchFor(avail, must, rules.dh) : avail.length > 20 ? autoBench(avail, 20, rules.dh).map((id) => avail.find((p) => p.id === id)!) : avail;
+    if (starter && !players.includes(starter)) players = [...players, starter];
+    const lu = plan ? todayLineup(players, rules.dh, starter, plan, lineupBias(rules.official)) : (() => {
+      const a = autoLineup(players, rules.dh, starter, lineupBias(rules.official));
+      return { order: a.order, defense: a.defense, notes: [] as string[] };
+    })();
+    order = lu.order;
+    defense = lu.defense;
+    notes = lu.notes;
+  }
   const crowd = rules.koshien ? clamp(G.club.fans / 30000 + s.prestige / 200, 0, 1) : rules.bigGame ? 0.3 : 0;
-  return {
+  const setup: TeamSetup = {
     schoolId: s.id,
     name: s.name,
     short: s.short,
     colors: s.colors,
     players,
-    order: lu.order,
-    defense: lu.defense,
-    human: false,
+    order,
+    defense,
+    human: !!o.human,
     style: pol.style,
     mgrTactics: clamp(G.mgr.skills.tactics + G.facilities.analysis * 3, 0, 100),
     teamTactics: G.club.tactics,
@@ -75,6 +104,7 @@ export function mySetup(rules: MatchRules): TeamSetup {
     crowd,
     hook: pol.pitcherUse === 'ace' ? 0.78 : pol.pitcherUse === 'bullpen' ? 1.35 : 1,
   };
+  return { setup, notes };
 }
 
 function fillBorrowed(players: Player[]): Player[] {
@@ -149,6 +179,7 @@ const posLabel = (m: Match, side: 0 | 1, pid: number): string => {
 /** 把比赛结果写回：球员成绩、疲劳、干劲、经验；大会；比赛记录；名声 */
 export function applyResult(res: SimResult): GameRecord {
   const { pm, summary: sum, match: m, mySide, rules } = res;
+  G.nextStarter = null;
   const t = tourOf(pm);
   const opp = schoolById(pm.oppId)!;
   const win = sum.winner === mySide;

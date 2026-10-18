@@ -43,12 +43,38 @@ export function Panel(p: { title?: ComponentChildren; right?: ComponentChildren;
   );
 }
 
+/** 总评 / 能力：0-100 的数字，按档位上色（档位字母放在提示里） */
 export function Grade(p: { v: number; showV?: boolean }) {
   const letter = gradeLetter(p.v);
   return (
-    <span class="gv">
-      <span class="grade" style={{ color: GRADE_COLOR[letter] }}>{letter}</span>
-      {p.showV !== false && <span class="v">{Math.round(p.v)}</span>}
+    <span class="gv" title={`${letter} 级`}>
+      <span class="v" style={{ color: GRADE_COLOR[letter] }}>{Math.max(0, Math.min(100, Math.round(p.v)))}</span>
+    </span>
+  );
+}
+
+/** 最近两周涨了多少 */
+export function recentGain(pl: Player, k?: string): number {
+  const a = pl.gw ?? {};
+  const b = pl.gwp ?? {};
+  if (k) return ((a as Record<string, number>)[k] ?? 0) + ((b as Record<string, number>)[k] ?? 0);
+  let s = 0;
+  for (const v of Object.values(a)) s += v ?? 0;
+  for (const v of Object.values(b)) s += v ?? 0;
+  return s;
+}
+
+export function Gain(p: { n: number }) {
+  if (!p.n) return null;
+  return <span class="gain" title="最近两周的成长">+{p.n}</span>;
+}
+
+/** 0-100 的能力数值，按档位上色 */
+export function Num(p: { v: number }) {
+  const v = Math.max(0, Math.min(100, Math.round(p.v)));
+  return (
+    <span class="num" style={{ color: GRADE_COLOR[gradeLetter(v)] }}>
+      {v}
     </span>
   );
 }
