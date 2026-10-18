@@ -1,169 +1,90 @@
-// 存档：IndexedDB（不可用时退回 localStorage）
+// 存档：localStorage 'pixel-baseball:save'（整局一个 JSON）。旧的经营版存档在 IndexedDB 'pixel-koshien'，不再读取
 import type { GameState } from './types';
 import { G, setG } from './state';
 import { getRngState, setRngState } from './rng';
-import { dateLabel } from './calendar';
-import { resetNameRegistry, clearStrengthCache } from './world';
+import { clearWorldCache } from './world';
 import { SAVE_VERSION } from './newgame';
 
-export interface SaveMeta {
-  slot: string;
-  name: string;
-  school: string;
-  date: string;
-  savedAt: number;
-  rep: number;
-}
-
-const DB = 'pixel-koshien';
-const STORE = 'saves';
-
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function idbPut(key: string, value: unknown): Promise<void> {
-  const db = await openDB();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put(value, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
-}
-
-async function idbGet<T>(key: string): Promise<T | undefined> {
-  const db = await openDB();
-  const v = await new Promise<T | undefined>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readonly');
-    const r = tx.objectStore(STORE).get(key);
-    r.onsuccess = () => resolve(r.result as T | undefined);
-    r.onerror = () => reject(r.error);
-  });
-  db.close();
-  return v;
-}
-
-async function idbDel(key: string): Promise<void> {
-  const db = await openDB();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).delete(key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
-}
-
-const hasIDB = (): boolean => {
-  try {
-    return typeof indexedDB !== 'undefined';
-  } catch {
-    return false;
-  }
-};
-
-async function put(key: string, value: unknown): Promise<void> {
-  if (hasIDB()) {
-    try {
-      await idbPut(key, value);
-      return;
-    } catch {
-      /* 退回 localStorage */
-    }
-  }
-  localStorage.setItem(`${DB}:${key}`, JSON.stringify(value));
-}
-
-async function get<T>(key: string): Promise<T | undefined> {
-  if (hasIDB()) {
-    try {
-      const v = await idbGet<T>(key);
-      if (v !== undefined) return v;
-    } catch {
-      /* 退回 localStorage */
-    }
-  }
-  try {
-    const s = localStorage.getItem(`${DB}:${key}`);
-    return s ? (JSON.parse(s) as T) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function del(key: string): Promise<void> {
-  if (hasIDB()) {
-    try {
-      await idbDel(key);
-    } catch {
-      /* ignore */
-    }
-  }
-  try {
-    localStorage.removeItem(`${DB}:${key}`);
-  } catch {
-    /* ignore */
-  }
-}
-
-export const SLOTS = ['auto', 'slot1', 'slot2', 'slot3'] as const;
+export const SAVE_KEY = 'pixel-baseball:save';
 
 export function snapshot(): string {
   G.rng = getRngState();
+  G.savedAt = Date.now();
   return JSON.stringify(G);
 }
 
-export async function saveGame(slot: string): Promise<void> {
-  const json = snapshot();
-  const s = G.schools[G.club.schoolId];
-  const meta: SaveMeta = { slot, name: G.manager.name, school: s?.name ?? '', date: dateLabel(G.year, G.week), savedAt: Date.now(), rep: Math.round(G.manager.reputation) };
-  await put(`data:${slot}`, json);
-  await put(`meta:${slot}`, meta);
+export function saveGame(): boolean {
+  if (!G) return false;
+  try {
+    localStorage.setItem(SAVE_KEY, snapshot());
+    return true;
+  } catch (e) {
+    console.error('存档失败', e);
+    return false;
+  }
 }
 
-export async function listSaves(): Promise<(SaveMeta | null)[]> {
-  const out: (SaveMeta | null)[] = [];
-  for (const s of SLOTS) out.push((await get<SaveMeta>(`meta:${s}`)) ?? null);
-  return out;
+function valid(s: unknown): s is GameState {
+  const g = s as GameState;
+  return !!g && typeof g === 'object' && g.game === 'pixel-baseball' && typeof g.v === 'number' && !!g.players && !!g.schools && Array.isArray(g.roster);
 }
 
-export function loadState(st: GameState): void {
-  if (!st || typeof st !== 'object' || !st.schools || !st.club) throw new Error('存档格式不正确');
-  if ((st.version ?? 0) > SAVE_VERSION) throw new Error('存档来自更新版本的游戏');
-  migrate(st);
-  setG(st);
-  setRngState(st.rng);
-  resetNameRegistry();
-  clearStrengthCache();
+/** 旧存档缺少的字段在这里补上 */
+function migrate(g: GameState): GameState {
+  g.flags ??= {};
+  g.cooldowns ??= {};
+  g.schedule ??= [];
+  g.timeline ??= [];
+  g.achievements ??= {};
+  g.senbatsuPick ??= [];
+  g.policies.autoCats ??= {};
+  for (const p of Object.values(g.players)) {
+    p.pw ??= [0, 0, 0, 0, 0, 0, 0];
+    p.notes ??= [];
+    p.retired ??= false;
+    p.benched ??= 0;
+  }
+  return g;
 }
 
-function migrate(st: GameState): void {
-  st.notices ??= [];
-  st.choice ??= null;
-  st.regionRank ??= {};
-  st.draftLog ??= [];
-  st.reports ??= [];
+export function loadState(s: unknown): GameState {
+  if (!valid(s)) throw new Error('这不是像素甲子园（挂机版）的存档');
+  if (s.v > SAVE_VERSION) throw new Error('存档来自更新版本的游戏，请刷新页面');
+  const g = migrate(s);
+  setG(g);
+  if (Array.isArray(g.rng) && g.rng.length >= 4) setRngState(g.rng);
+  clearWorldCache();
+  return g;
 }
 
-export async function loadGame(slot: string): Promise<boolean> {
-  const json = await get<string>(`data:${slot}`);
-  if (!json) return false;
-  loadState(JSON.parse(json) as GameState);
-  return true;
+export function peekSave(): GameState | null {
+  try {
+    const s = localStorage.getItem(SAVE_KEY);
+    if (!s) return null;
+    const g = JSON.parse(s);
+    return valid(g) ? g : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function deleteSave(slot: string): Promise<void> {
-  await del(`data:${slot}`);
-  await del(`meta:${slot}`);
+export function loadGame(): GameState | null {
+  const g = peekSave();
+  if (!g) return null;
+  try {
+    return loadState(g);
+  } catch (e) {
+    console.error('读档失败', e);
+    return null;
+  }
+}
+
+export function clearSave(): void {
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function exportFile(): void {
@@ -171,16 +92,38 @@ export function exportFile(): void {
   const blob = new Blob([json], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  const s = G.schools[G.club.schoolId];
-  a.download = `像素甲子园_${s?.short ?? 'save'}_${G.year}_${G.week}.json`;
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  a.download = `像素甲子园_${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
   document.body.appendChild(a);
   a.click();
   setTimeout(() => {
     URL.revokeObjectURL(a.href);
     a.remove();
-  }, 500);
+  }, 800);
 }
 
-export function importFile(file: File): Promise<void> {
-  return file.text().then((t) => loadState(JSON.parse(t) as GameState));
+export async function importFile(file: File): Promise<GameState> {
+  const g = loadState(JSON.parse(await file.text()));
+  g.savedAt = Date.now(); // 导入不算离线时间
+  saveGame();
+  return g;
+}
+
+/** 浏览器里有没有旧版（经营版 v0.x）的存档 */
+export async function hasLegacySave(): Promise<boolean> {
+  try {
+    for (let i = 0; i < localStorage.length; i++) if (localStorage.key(i)?.startsWith('pixel-koshien:data:')) return true;
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
+      const list = await indexedDB.databases();
+      return list.some((d) => d.name === 'pixel-koshien');
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
 }

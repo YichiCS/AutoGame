@@ -358,7 +358,8 @@ export class FieldRenderer {
   }
 
   private tick = (now: number): void => {
-    const dt = Math.min(0.05, (now - this.last) / 1000) * this.speed;
+    // rAF 的时间戳是这一帧的开始时间，可能比启动时记下的 performance.now() 还早：增量不能为负
+    const dt = Math.max(0, Math.min(0.05, (now - this.last) / 1000)) * this.speed;
     this.last = now;
     this.frame++;
     for (const a of this.anims) {
@@ -519,7 +520,7 @@ export class FieldRenderer {
       step: (k) => {
         if (path.length < 2) return;
         const pos = k * segs;
-        const i = Math.min(segs - 1, Math.floor(pos));
+        const i = Math.max(0, Math.min(segs - 1, Math.floor(pos)));
         const lt = pos - i;
         const a = path[i];
         const b = path[i + 1];

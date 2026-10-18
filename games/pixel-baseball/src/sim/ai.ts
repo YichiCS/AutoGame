@@ -57,7 +57,7 @@ function shouldReplace(m: Match, t: TeamState): boolean {
   const p = t.get(t.pitcher);
   const f = t.fatigueRatio(p.id);
   const box = t.pbox(p.id);
-  const hook = style(t).hook * (0.9 + t.s.mgrTactics / 500);
+  const hook = style(t).hook * (t.s.hook ?? 1) * (0.9 + t.s.mgrTactics / 500);
   const diff = m.scoreDiffFor(t.side);
   if (m.weeklyPitches(t, p.id) >= m.rules.pitchLimit - 5) return true;
   const relId = pickReliever(m, t);

@@ -1,4 +1,4 @@
-import type { ExpPool, Player, PitchType } from '../core/types';
+import type { ExpPool, Player } from '../core/types';
 
 export interface TraitDef {
   id: string;
@@ -54,6 +54,10 @@ export const TRAITS: readonly TraitDef[] = [
   { id: 'pickoff', name: '牵制○', desc: '牵制球犀利，跑者难以起跑', kind: 'pit', good: true, cost: { agi: 30, men: 20 }, pitcherOnly: true, req: isP },
   { id: 'quick', name: '快速投球○', desc: '固定式投球快，盗垒难以成功', kind: 'pit', good: true, cost: { agi: 40 }, pitcherOnly: true, req: isP },
   { id: 'lowBall', name: '低球○', desc: '擅长投低球，被本垒打减少', kind: 'pit', good: true, cost: { tech: 40, brk: 20 }, pitcherOnly: true, req: isP },
+  { id: 'kire', name: '变化球锋利', desc: '所有变化球的威力提升', kind: 'pit', good: true, cost: { brk: 70, tech: 20 }, pitcherOnly: true, req: (p) => isP(p) && p.pitches.some((x) => x.lv >= 4) },
+  { id: 'mix', name: '投球组合○', desc: '球种丰富，打者难以锁定，所有球种威力小幅提升（需要 4 种以上变化球）', kind: 'pit', good: true, cost: { brk: 50, men: 30 }, pitcherOnly: true, req: (p) => isP(p) && p.pitches.length >= 4 },
+  { id: 'powerPitcher', name: '速球派', desc: '直球的威力提升，配球更多依赖直球', kind: 'pit', good: true, cost: { str: 70 }, pitcherOnly: true, req: (p) => isP(p) && p.a.velocity >= 140 },
+  { id: 'stamina2', name: '铁腕', desc: '投球数多了也不容易掉球威，连投恢复更快', kind: 'pit', good: true, cost: { str: 50, men: 40 }, pitcherOnly: true, req: (p) => isP(p) && p.a.stamina >= 60 },
   { id: 'composed', name: '稳如泰山', desc: '不容易因失分而动摇', kind: 'pit', good: true, cost: { men: 70 }, pitcherOnly: true, req: isP },
   { id: 'slowStart', name: '慢热', desc: '比赛开始的1、2局表现较差', kind: 'pit', good: false, pitcherOnly: true },
   { id: 'wild', name: '四球多', desc: '控球忽好忽坏，四坏球较多', kind: 'pit', good: false, pitcherOnly: true },
@@ -66,6 +70,8 @@ export const TRAITS: readonly TraitDef[] = [
   { id: 'recovery', name: '恢复快', desc: '疲劳恢复速度更快', kind: 'gen', good: true, cost: { str: 40, men: 30 } },
   { id: 'captain', name: '领袖气质', desc: '担任主将时全队干劲与凝聚力提升', kind: 'gen', good: true, cost: { men: 90 } },
   { id: 'mood', name: '气氛制造者', desc: '在队中时全队的干劲不容易下降', kind: 'gen', good: true, cost: { men: 50 } },
+  { id: 'student', name: '文武双全', desc: '学业与棒球兼顾，不会因考试不及格而停赛，练习效率小幅提升', kind: 'gen', good: true, cost: { men: 60, tech: 20 } },
+  { id: 'hustle', name: '全力疾走', desc: '内野滚地球也拼命冲刺，对方容易慌张失误', kind: 'bat', good: true, cost: { agi: 40, men: 30 } },
   { id: 'monster', name: '怪物', desc: '百年一遇的天才，成长速度惊人', kind: 'gen', good: true, rare: true },
 ];
 
@@ -74,24 +80,3 @@ export const TRAIT_BY_ID: Record<string, TraitDef> = Object.fromEntries(TRAITS.m
 export function traitName(id: string): string {
   return TRAIT_BY_ID[id]?.name ?? id;
 }
-
-export interface PitchDef {
-  name: string;
-  short: string;
-  speed: number; // 相对直球速度
-  whiff: number; // 挥空倾向
-  gb: number; // 滚地倾向
-  ctrl: number; // 控球难度
-  wp: number; // 暴投风险
-  same: boolean; // 对同侧打者更有效
-}
-
-export const PITCH_DEFS: Record<PitchType, PitchDef> = {
-  SL: { name: '滑球', short: '滑', speed: 0.86, whiff: 1.0, gb: 0.02, ctrl: 0.03, wp: 1.0, same: true },
-  CB: { name: '曲球', short: '曲', speed: 0.78, whiff: 0.9, gb: 0.04, ctrl: 0.05, wp: 1.3, same: true },
-  FK: { name: '指叉球', short: '叉', speed: 0.85, whiff: 1.2, gb: 0.1, ctrl: 0.07, wp: 2.2, same: false },
-  CH: { name: '变速球', short: '变', speed: 0.82, whiff: 0.95, gb: 0.06, ctrl: 0.04, wp: 1.0, same: false },
-  CT: { name: '卡特球', short: '卡', speed: 0.93, whiff: 0.7, gb: 0.05, ctrl: 0.02, wp: 0.6, same: true },
-  SH: { name: '伸卡球', short: '伸', speed: 0.92, whiff: 0.6, gb: 0.1, ctrl: 0.03, wp: 0.8, same: true },
-  SK: { name: '下沉球', short: '沉', speed: 0.85, whiff: 0.85, gb: 0.12, ctrl: 0.05, wp: 1.4, same: false },
-};

@@ -41,6 +41,17 @@ export function setRngState(s: number[]): void {
   spare = s.length > 4 ? s[4] : null;
 }
 
+/** 用指定种子跑一段逻辑，结束后恢复全局随机状态（用于按需生成对手名单、重演比赛） */
+export function withSeed<T>(seed: number, fn: () => T): T {
+  const saved = getRngState();
+  seedRng(seed >>> 0);
+  try {
+    return fn();
+  } finally {
+    setRngState(saved);
+  }
+}
+
 /** 闭区间 [min, max] 的整数 */
 export function randInt(min: number, max: number): number {
   return min + Math.floor(rand() * (max - min + 1));

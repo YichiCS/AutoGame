@@ -1,12 +1,13 @@
 // 球员生成
 import type { AttrKey, BatSide, Delivery, Hand, Personality, PitchSkill, PitchType, Player, Pos } from './types';
 import { ALL_ATTRS } from './types';
-import { chance, gauss, pick, randInt, weightedPick, rand } from './rng';
+import { chance, gauss, pick, randInt, weightedPick } from './rng';
 import { clamp } from './util';
 import { emptyBlock, isPitcher } from './attrs';
 import { aiGrow, emptyExp, MAX_VEL } from './growth';
 import { FAMILY_NAMES, GIVEN_NAMES } from '../data/names';
 import { TRAITS } from '../data/traits';
+import { PITCH_DEFS, PITCH_LIST, pitchAffinity } from '../data/pitches';
 import { nextId } from './state';
 
 const POS_WEIGHT: [Pos, number][] = [
@@ -36,31 +37,36 @@ const SIMILAR: Record<Pos, Partial<Record<Pos, number>>> = {
   RF: { LF: 75, CF: 55, '1B': 40 },
 };
 
-const PITCH_W: [PitchType, number][] = [['SL', 30], ['CB', 25], ['CH', 12], ['FK', 10], ['CT', 8], ['SH', 8], ['SK', 7]];
-
 const PERS_W: [Personality, number][] = [
   ['hot', 14], ['calm', 14], ['diligent', 14], ['genius', 8], ['lazy', 10], ['proud', 12], ['shy', 10], ['leader', 6], ['cheerful', 12],
 ];
 
 export interface GenOpts {
-  quality: number; // 入学（1年4月）时的平均能力
-  grade?: number; // 0..3，>1 时会补上成长
+  quality: number; // 入学（1 年级 4 月）时的平均能力
+  grade?: number; // 0..3；>1 时会补上成长
   pos?: Pos;
-  schoolId?: number;
   enrollYear: number;
   monster?: boolean;
   potBias?: number;
-  weeksGrown?: number; // 额外成长周数（入学后）
+  /** 额外补的训练周数（不给就按年级算） */
+  weeksGrown?: number;
   growFactor?: number;
+  id?: number;
 }
 
 export function randomName(): { fam: string; given: string } {
   return { fam: pick(FAMILY_NAMES), given: pick(GIVEN_NAMES) };
 }
 
-function g(sd: number) {
-  return gauss(0, sd);
+const g = (sd: number) => gauss(0, sd);
+
+/** 按投球姿势和已有球种挑一个新球种 */
+export function pickNewPitch(owned: PitchType[], delivery: Delivery, maxRarity = 3): PitchType | null {
+  const cands = PITCH_LIST.map((t) => [t, pitchAffinity(owned, delivery, t)] as [PitchType, number]).filter(([t, w]) => w > 0 && PITCH_DEFS[t].rarity <= maxRarity);
+  if (!cands.length) return null;
+  return weightedPick(cands, (x) => x[1])[0];
 }
+
 
 export function generatePlayer(o: GenOpts): Player {
   const q = o.quality;
@@ -103,21 +109,18 @@ export function generatePlayer(o: GenOpts): Player {
     if (pitcher) a.velocity = clamp(a.velocity + 6, 100, 152);
   }
 
-  // 变化球
+  let delivery: Delivery = 'over';
+  if (pitcher) delivery = weightedPick<[Delivery, number]>([['over', 42], ['three', 36], ['side', 16], ['under', 6]], (x) => x[1])[0];
+
+  // 变化球：数量看素质，球种看投球姿势和亲缘
   const pitches: PitchSkill[] = [];
   if (pitcher) {
-    const n = q < 30 ? 1 : q < 50 ? randInt(1, 2) : q < 65 ? randInt(2, 3) : 3;
-    const pool = PITCH_W.slice();
+    const n = q < 28 ? 1 : q < 45 ? randInt(1, 2) : q < 60 ? randInt(2, 3) : randInt(3, 4);
     for (let i = 0; i < n; i++) {
-      const t = weightedPick(pool, (x) => x[1]);
-      pool.splice(pool.indexOf(t), 1);
-      pitches.push({ type: t[0], lv: clamp(Math.round((q - 18) / 16 + g(0.7)), 1, 4) });
+      const t = pickNewPitch(pitches.map((x) => x.type), delivery, q >= 55 ? 3 : 2);
+      if (!t) break;
+      pitches.push({ type: t, lv: clamp(Math.round((q - 18) / 16 + g(0.7)), 1, 4) });
     }
-  }
-  let delivery: Delivery = 'over';
-  if (pitcher) delivery = weightedPick<[Delivery, number]>([['over', 45], ['three', 35], ['side', 15], ['under', 5]], (x) => x[1])[0];
-  if (pitcher && (delivery === 'side' || delivery === 'under') && !pitches.some((x) => x.type === 'SK' || x.type === 'SH')) {
-    if (pitches.length) pitches[pitches.length - 1].type = chance(0.5) ? 'SK' : 'SH';
   }
 
   // 守备适性
@@ -142,31 +145,14 @@ export function generatePlayer(o: GenOpts): Player {
     caps.stuff = Math.min(caps.stuff, 45);
   }
 
-  // 特性
-  const traits: string[] = [];
-  const pool = TRAITS.filter((t) => !t.rare && (pitcher ? t.kind !== 'bat' || chance(0.3) : t.kind !== 'pit' && !t.pitcherOnly) && (!t.catcherOnly || pos === 'C'));
-  const goods = pool.filter((t) => t.good);
-  const bads = pool.filter((t) => !t.good);
-  const nGood = (chance(0.08 + q * 0.006) ? 1 : 0) + (chance(q * 0.003) ? 1 : 0);
-  for (let i = 0; i < nGood; i++) {
-    const t = pick(goods);
-    if (!traits.includes(t.id) && !traits.includes(t.opp ?? '') && (!t.req || t.req({ a, apt, pos } as Player))) traits.push(t.id);
-  }
-  if (chance(0.28 - q * 0.002)) {
-    const t = pick(bads);
-    if (!traits.includes(t.id) && !traits.includes(t.opp ?? '')) traits.push(t.id);
-  }
-  if (o.monster) traits.push('monster');
-
   const pers = weightedPick(PERS_W, (x) => x[1])[0];
   const ethicBase = pers === 'diligent' ? 75 : pers === 'lazy' ? 32 : 55;
   const { fam, given } = randomName();
 
   const p: Player = {
-    id: nextId(),
+    id: o.id ?? nextId(),
     fam,
     given,
-    schoolId: o.schoolId ?? -1,
     grade: o.grade ?? 1,
     enrollYear: o.enrollYear,
     throws,
@@ -178,7 +164,7 @@ export function generatePlayer(o: GenOpts): Player {
     traj: a.power < 35 ? 1 : a.power < 55 ? 2 : a.power < 72 ? 3 : 4,
     pitches,
     delivery,
-    traits,
+    traits: [],
     pot,
     growth: weightedPick<[Player['growth'], number]>([['early', 25], ['normal', 50], ['late', 25]], (x) => x[1])[0],
     pers,
@@ -193,24 +179,38 @@ export function generatePlayer(o: GenOpts): Player {
     pop: clamp(q - 40 + g(8), 0, 100),
     exp: emptyExp(),
     plan: 'auto',
-    focus: null,
     learning: null,
     wish: 'univ',
+    pw: [0, 0, 0, 0, 0, 0, 0],
     pitchesWeek: 0,
+    benched: 0,
     retired: false,
-    ineligibleUntil: 0,
     face: randInt(1, 2 ** 30),
-    joined: 'gen',
-    scholarship: false,
-    supplementary: 0,
+    joined: 'regular',
     stats: { season: emptyBlock(), career: emptyBlock(), koshien: emptyBlock() },
     notes: [],
   };
+
+  // 特殊能力
+  const pool = TRAITS.filter((t) => !t.rare && (pitcher ? t.kind !== 'bat' || chance(0.3) : t.kind !== 'pit' && !t.pitcherOnly) && (!t.catcherOnly || pos === 'C'));
+  const goods = pool.filter((t) => t.good);
+  const bads = pool.filter((t) => !t.good);
+  const nGood = (chance(0.08 + q * 0.006) ? 1 : 0) + (chance(q * 0.003) ? 1 : 0);
+  for (let i = 0; i < nGood; i++) {
+    const t = pick(goods);
+    if (!p.traits.includes(t.id) && !p.traits.includes(t.opp ?? '') && (!t.req || t.req(p))) p.traits.push(t.id);
+  }
+  if (chance(0.28 - q * 0.002)) {
+    const t = pick(bads);
+    if (!p.traits.includes(t.id) && !p.traits.includes(t.opp ?? '')) p.traits.push(t.id);
+  }
+  if (o.monster) p.traits.push('monster');
+
   p.wish = q > 50 && chance(0.6) ? 'pro' : weightedPick<[Player['wish'], number]>([['univ', 45], ['corp', 20], ['job', 25], ['pro', 10]], (x) => x[1])[0];
   if (o.monster) p.pop = 70 + randInt(0, 20);
 
   // 已入学者补成长
-  const weeks = o.weeksGrown ?? (Math.max(0, (o.grade ?? 1) - 1) * 44);
+  const weeks = o.weeksGrown ?? Math.max(0, (o.grade ?? 1) - 1) * 44;
   if (weeks > 0) growPlayerOver(p, weeks, o.growFactor ?? 1);
   return p;
 }
@@ -230,20 +230,11 @@ export function growPlayerOver(p: Player, weeks: number, factor: number): void {
   p.grade = finalGrade;
 }
 
-/** 某球员是否可以出场（无伤、未引退、非禁赛） */
-export function available(p: Player, absWeek: number): boolean {
-  return !p.injury && !p.retired && p.grade >= 1 && p.grade <= 3 && p.ineligibleUntil <= absWeek && p.supplementary <= 0;
+/** 可以出场（无伤、不在停赛/补习中、在籍） */
+export function available(p: Player): boolean {
+  return !p.injury && !p.retired && p.benched <= 0 && p.grade >= 1 && p.grade <= 3;
 }
 
-export function pitcherFresh(p: Player): number {
-  // 0..1，越大越适合登板
-  return clamp(1 - p.fatigue / 100, 0, 1) * clamp((500 - p.pitchesWeek) / 150, 0, 1);
-}
-
-export function isPitcherP(p: Player): boolean {
-  return isPitcher(p);
-}
-
-export function randomBetween(lo: number, hi: number): number {
-  return lo + rand() * (hi - lo);
+export function canPitch(p: Player): boolean {
+  return isPitcher(p) || (p.apt.P ?? 0) >= 50;
 }

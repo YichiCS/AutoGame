@@ -2,9 +2,9 @@
   "id": "pixel-baseball",
   "name": "像素甲子园",
   "subtitle": "监督之路",
-  "version": "0.1.0",
-  "description": "以日本高中棒球为题材的像素风经营模拟：以监督的身份招募新生、制定训练、亲自指挥逐球模拟的比赛、经营球队，目标是站上甲子园。",
-  "tags": ["经营模拟", "体育", "养成"],
+  "version": "1.0.0",
+  "description": "以日本高中棒球为题材的像素风挂机经营：球队按你的方针自动训练、自动比赛，你只需定方针、修设施、在关键时刻拿主意。15 项能力、21 种变化球、魔球与 90 多种事件，目标是站上甲子园。",
+  "tags": ["挂机", "经营模拟", "体育"],
   "entry": "dist/index.html",
   "cover": "docs/screenshot.png",
   "color": "#38b764",
@@ -14,16 +14,13 @@
     "outputs": ["dist/index.html"]
   },
   "saves": {
-    "localStorage": ["pixel-koshien:*"],
+    "localStorage": ["pixel-baseball:*", "pixel-koshien:*"],
     "indexedDB": ["pixel-koshien"],
     "adapter": "save-adapter.js",
     "inGameExport": {
-      "match": ["schools", "club", "manager"],
-      "hint": "游戏内「系统 → 导入存档文件」"
+      "match": ["game", "mgr", "roster", "tours"],
+      "hint": "游戏右上角「⚙ 设置 → 导入存档」"
     }
   },
-  "dock": {
-    "y": 0.82,
-    "leaveConfirm": "像素甲子园在每周结束时自动存档，本周还没存下的进度离开后会丢失（需要的话先在「系统」里手动存档）。"
-  }
+  "dock": { "y": 0.42 }
 }

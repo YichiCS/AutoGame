@@ -8,7 +8,7 @@ import type {
 import { chance, gauss, rand, weightedPick } from '../core/rng';
 import { clamp, z } from '../core/util';
 import { aptOf, breakingScore, has, velScore } from '../core/attrs';
-import { PITCH_DEFS } from '../data/traits';
+import { PITCH_DEFS } from '../data/pitches';
 import * as AI from './ai';
 
 type Loc = 'heart' | 'corner' | 'shadow' | 'waste';
@@ -91,7 +91,7 @@ export class TeamState {
   ensurePool(pid: number): void {
     if (this.pool.has(pid)) return;
     const p = this.get(pid);
-    const pool = (55 + 1.25 * p.a.stamina) * (1 - p.fatigue / 160) * (has(p, 'recovery') ? 1.04 : 1);
+    const pool = (55 + 1.25 * p.a.stamina) * (1 - p.fatigue / 160) * (has(p, 'recovery') ? 1.04 : 1) * (has(p, 'stamina2') ? 1.08 : 1);
     this.pool.set(pid, pool);
     this.energy.set(pid, pool);
   }
@@ -751,16 +751,16 @@ export class Match {
   }
 
   // ======================= 投球 =======================
-  private choosePitch(p: Player): { type: PitchType | 'FB'; lv: number } {
+  private choosePitch(p: Player): { type: PitchType | 'FB'; lv: number; sig?: string } {
     if (!p.pitches.length) return { type: 'FB', lv: 0 };
-    let fb = 0.6 - 0.035 * p.pitches.length;
+    let fb = 0.6 - 0.035 * p.pitches.length + (has(p, 'powerPitcher') ? 0.08 : 0);
     if (this.balls >= 2 && this.balls > this.strikes) fb += 0.15;
     if (this.strikes === 2 && this.balls <= 1) fb -= 0.15;
     if (this.dfn.def.approach === 'max') fb += 0.08;
     if (velScore(p.a.velocity) > 75) fb += 0.06;
     if (chance(clamp(fb, 0.25, 0.85))) return { type: 'FB', lv: 0 };
-    const s = weightedPick(p.pitches, (x) => x.lv ** 1.5 + 0.5);
-    return { type: s.type, lv: s.lv };
+    const s = weightedPick(p.pitches, (x) => x.lv ** 1.5 + 0.5 + (x.sig ? 2 : 0));
+    return { type: s.type, lv: s.lv, sig: s.sig };
   }
 
   private chooseIntent(): 'zone' | 'edge' | 'chase' {
@@ -835,12 +835,12 @@ export class Match {
     if (call?.type === 'FB') pk = { type: 'FB', lv: 0 };
     else if (call?.type) {
       const owned = p.pitches.find((x) => x.type === call.type);
-      if (owned) pk = { type: owned.type, lv: owned.lv };
+      if (owned) pk = { type: owned.type, lv: owned.lv, sig: owned.sig };
     }
     const isFB = pk.type === 'FB';
     const def = isFB ? null : PITCH_DEFS[pk.type as PitchType];
     const kmh = Math.round(pe.vel * (isFB ? 1 : def!.speed) + gauss(0, 1.2));
-    const tname = isFB ? '直球' : def!.name;
+    const tname = isFB ? '直球' : pk.sig ?? def!.name;
     // 狙球：猜中球种时打击能力上升，猜错则下降
     let guessHit = 0;
     if (off.guess) {
@@ -893,17 +893,23 @@ export class Match {
     if (isFB) {
       const bs = breakingScore(p.pitches);
       const rep = p.pitches.length === 0 ? -8 : Math.min(6, (bs - 30) / 8);
-      nasty = 0.62 * velScore(pe.vel) + 0.38 * pe.stuff + (has(p, 'nobi') ? 6 : 0) + rep;
+      nasty = 0.62 * velScore(pe.vel) + 0.38 * pe.stuff + (has(p, 'nobi') ? 6 : 0) + (has(p, 'powerPitcher') ? 4 : 0) + rep;
     } else {
-      nasty = 0.68 * (22 + pk.lv * 10) + 0.18 * velScore(pe.vel) + 0.14 * pe.stuff;
+      // 直球系变化球更依赖球速，慢速变化球全靠变化本身
+      const vw = def!.velW;
+      nasty = (0.68 - 0.45 * vw) * (22 + pk.lv * 10) + (0.18 + 0.45 * vw) * velScore(pe.vel) + 0.14 * pe.stuff;
+      if (pk.sig) nasty += 8;
+      if (has(p, 'kire')) nasty += 5;
+      if (def!.dir === 'X') nasty += gauss(0, 10); // 蝴蝶球：连投手自己都不知道会怎么飘
       if (def!.same && be.side === p.throws) nasty += 5;
       if (!def!.same && be.side !== p.throws) nasty += 4;
     }
     if (p.delivery === 'side' || p.delivery === 'under') nasty += be.side === p.throws ? 4 : -2;
+    if (has(p, 'mix') && p.pitches.length >= 4) nasty += 3;
     const whiffNasty = nasty + (this.strikes === 2 && has(p, 'kArtist') ? 7 : 0) + (def ? (def.whiff - 1) * 12 : 0);
 
     const xy = locToXY(loc);
-    const info: PitchInfo = { type: pk.type, kmh, x: xy[0], y: xy[1], res: 'ball' };
+    const info: PitchInfo = { type: pk.type, sig: pk.sig, kmh, x: xy[0], y: xy[1], res: 'ball' };
     this.lastPitch = info;
     this.chargePitch(p, (isFB ? 1 : 1.12) * (dfn.def.approach === 'max' ? 1.45 : dfn.def.approach === 'contact' ? 0.85 : 1) + (this.risp() ? 0.18 : 0));
 
