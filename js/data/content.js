@@ -160,6 +160,14 @@
     { id: 'printer3d', name: '3D 打印机', cost: 4000, maint: 30, desc: '机器人 / 人机交互 / 图形学实验效率 +10%', area: { robo: 0.1, hci: 0.1, graphics: 0.08 } },
     { id: 'robotarm', name: '机械臂平台', cost: 60000, maint: 300, desc: '机器人方向实验效率 +30%（其他方向 +3%）', area: { robo: 0.3 }, areaDefault: 0.03 },
     { id: 'vr', name: 'VR 设备', cost: 5000, maint: 20, desc: '人机交互 / 图形学 / 视觉实验效率 +10%', area: { hci: 0.12, graphics: 0.1, cv: 0.05 } },
+    // 装饰：大多放在二楼（只有一层时摆在一楼前排）
+    { id: 'posters', name: '装饰画', cost: 300, maint: 0, desc: '心情 +', mood: 0.002 },
+    { id: 'lamps', name: '暖光落地灯', cost: 600, maint: 10, desc: '心情 +，熬夜不伤眼（效率 +1%）', mood: 0.002, prod: 0.01 },
+    { id: 'aquarium', name: '鱼缸', cost: 1500, maint: 30, desc: '心情 +，看鱼放松', mood: 0.004 },
+    { id: 'beanbags', name: '懒人沙发', cost: 900, maint: 0, desc: '心情 +，午休更舒服', mood: 0.004 },
+    { id: 'fridge', name: '冰箱和饮水机', cost: 1200, maint: 40, desc: '心情 +，加班也有吃的', mood: 0.004 },
+    { id: 'pingpong', name: '乒乓球桌', cost: 2500, maint: 0, desc: '心情 ++，大家打着球就熟了（协作慢慢提高）', mood: 0.006 },
+    { id: 'treadmill', name: '跑步机', cost: 3000, maint: 10, desc: '你的精力恢复 +0.05/天，心情 +', energy: 0.05, mood: 0.002 },
   ];
   RS.ROOMS = [
     { name: '小实验室', desks: 4, cost: 0, rep: 0 },

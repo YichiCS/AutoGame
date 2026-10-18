@@ -117,6 +117,7 @@
     d += ctx.fac.mood + Math.min(0.02, ctx.teamMood) + (G.perk(g).moodBonus || 0);
     d += S.tAdd(m, 'mood');
     if (m.traits.includes('gamer') && g.facilities.console) d += 0.02;
+    if (g.facilities.pingpong) S.bumpStat(m, 'team', 0.002); // 打着球就熟了
     if (m.funding === 'ta') d -= 0.015;
     if (g.funds < 0) d -= 0.04;
     if (g.pi.energy < 20) d -= 0.03;
@@ -350,7 +351,7 @@
   };
 
   // ---------- 招生 ----------
-  const ROLE_Q = { phd: 0, ms: -8, ug: -14, postdoc: 12, visit: -4 };
+  const ROLE_Q = { phd: 0, ms: -8, ug: -23, postdoc: 12, visit: -4 };
   function noisyRange(v) {
     return { lo: U.clamp(Math.round(v - U.int(4, 12)), 1, 99), hi: U.clamp(Math.round(v + U.int(4, 12)), 1, 99) };
   }
@@ -389,16 +390,28 @@
 
   S.recruitQuota = (g, cyc) => ({ phd: cyc.quota.phd[g.pi.title] || 0, ms: cyc.quota.ms[g.pi.title] || 0 });
 
+  S.useQuota = (g, role) => { const q = g.flags.quotaUsed || (g.flags.quotaUsed = { phd: 0, ms: 0 }); q[role] = (q[role] || 0) + 1; };
   S.openRecruit = function (g, cyc) {
     const quota = S.recruitQuota(g, cyc);
-    if (quota.phd + quota.ms <= 0) return;
+    const used = g.flags.quotaUsed;
+    let own = 0;
+    if (used) {
+      own = Math.min(quota.phd, used.phd || 0) + Math.min(quota.ms, used.ms || 0);
+      quota.phd = Math.max(0, quota.phd - (used.phd || 0));
+      quota.ms = Math.max(0, quota.ms - (used.ms || 0));
+      g.flags.quotaUsed = null;
+    }
+    if (quota.phd + quota.ms <= 0) {
+      if (own) G.log(g, `${cyc.name}：今年的名额都给了组里留下读研的学生`, 'info');
+      return;
+    }
     const n = U.clamp(4 + Math.floor(g.rep / 45) + (2 - g.tier), 4, 10);
     const cands = [];
     for (let i = 0; i < n; i++) {
       const role = quota.phd > 0 && (quota.ms === 0 || U.chance(0.55)) ? 'phd' : 'ms';
       cands.push(S.genCandidate(g, role));
     }
-    G.queue(g, { type: 'recruit', cycle: cyc.id, name: cyc.name, text: cyc.text, quota, cands, offers: [] });
+    G.queue(g, { type: 'recruit', cycle: cyc.id, name: cyc.name, text: cyc.text, quota, cands, offers: [], own });
   };
 
   S.interview = function (g, item, cid) {
@@ -571,11 +584,11 @@
         if (ready) G.queue(g, { type: 'event', id: 'phd_grad', ctx: { mid: m.id } });
       } else if (m.role === 'ms' && yrs >= 1.7) {
         const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
-        if (avg >= 55 && m.pubs >= 1 && G.region(g).recruit.length) G.queue(g, { type: 'event', id: 'ms_to_phd', ctx: { mid: m.id } });
+        if (avg >= S.LEVEL_PHD && m.pubs >= 1 && G.region(g).recruit.length) G.queue(g, { type: 'event', id: 'ms_to_phd', ctx: { mid: m.id } });
         else S.graduate(g, m);
       } else if (m.role === 'ug' && g.day >= m.endDay - 40) {
         const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
-        if (avg >= 50) G.queue(g, { type: 'event', id: 'ug_to_phd', ctx: { mid: m.id } });
+        if (avg >= S.LEVEL_MS) G.queue(g, { type: 'event', id: 'ug_to_phd', ctx: { mid: m.id } });
         else S.graduate(g, m);
       }
     }

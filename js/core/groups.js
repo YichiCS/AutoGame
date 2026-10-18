@@ -268,28 +268,28 @@
     });
   };
   // ---------- 算力像水 ----------
-  // 每个在做实验的课题是一根水管，「需求」是让它按正常速度跑要流过的水。实验速度 = 流进来的水 / 需求：
-  // 水多流得快，但一根管子最多只能快到 PIPE_MAX 倍（再多的卡也得有人改代码、看结果）；一滴水都没有，也能用自己的电脑和学校的公共算力平台以 PIPE_MIN 倍慢慢跑。
-  S.PIPE_MAX = 1.5;
-  S.PIPE_MIN = 0.35;
+  // 每个在做实验的课题是一根水管，「需求」是让它按正常速度跑要流过的水。实验速度 = 流进来的水 / 需求，没有上下限：
+  // 水多就快，水少就慢。每个人自己的电脑也是一点水（进共享池）：没有服务器也不至于完全跑不动，但会很慢
+  S.PERSONAL_UNITS = 0.7;
+  S.personalUnits = g => S.PERSONAL_UNITS * S.demandGrowth(g) * g.members.filter(m => m.status === 'active').length;
   // 专用服务器的好处：环境、数据都为这个组配好了，不用排队抢卡——同样一台，给专门的小组用能顶 1.25 台。
   // 代价是闲着的时候也不外借，所以要分给实验一直排得满的组
   S.DEDICATED_BONUS = 1.25;
-  S.computeSpeed = r => U.clamp(r, S.PIPE_MIN, S.PIPE_MAX);
+  S.computeSpeed = r => Math.max(0, r || 0);
   // 注水：水先流向水位最低的水管，填平以后再一起往上涨。tanks: [{ dem, lv }]，返回最终水位
   function fillLevel(tanks, water) {
-    const t = tanks.filter(x => x.dem > 0 && x.lv < S.PIPE_MAX).sort((a, b) => a.lv - b.lv);
-    if (!t.length) return S.PIPE_MAX;
+    const t = tanks.filter(x => x.dem > 0).sort((a, b) => a.lv - b.lv);
+    if (!t.length) return 0;
     let width = 0, level = t[0].lv, left = water;
     for (let i = 0; i < t.length; i++) {
       width += t[i].dem;
-      const next = i + 1 < t.length ? t[i + 1].lv : S.PIPE_MAX;
+      const next = i + 1 < t.length ? t[i + 1].lv : Infinity;
       const room = width * (next - level);
       if (left <= room) return level + left / width;
       left -= room;
       level = next;
     }
-    return S.PIPE_MAX;
+    return level;
   }
   // 每个小组的水位：专用服务器只往本组的水管里流（多出来的闲着，不外借）；
   // 没分配的服务器和云算力是共享水箱，先流向最缺水的组，再一起往上涨
@@ -307,46 +307,48 @@
       const gr = S.groupOfSub(g, p.sub);
       dem[gr ? gr.id : '_pool'] += S.projectDemand(g, p);
     }
-    const pool = Math.max(0, G.computeUnits(g) * cut - raw) + temp;
+    const personal = S.personalUnits(g);
+    const pool = Math.max(0, G.computeUnits(g) * cut - raw) + temp + personal;
     const dedicated = raw * S.DEDICATED_BONUS;
     const total = pool + dedicated;
     const keys = Object.keys(dem).filter(k => dem[k] > 0);
     const lv = {};
-    keys.forEach(k => { lv[k] = k === '_pool' ? 0 : Math.min(S.PIPE_MAX, own[k] / dem[k]); });
-    const ownUsed = U.sum(keys, k => (k === '_pool' ? 0 : lv[k] * dem[k]));
+    keys.forEach(k => { lv[k] = k === '_pool' ? 0 : own[k] / dem[k]; });
+    const ownUsed = U.sum(keys, k => (k === '_pool' ? 0 : own[k]));
     const base = Object.assign({}, lv);
     let water = pool;
-    // DDL 前你指定优先保证的小组：共享水箱先灌满它的水管，剩下的再分给别人
+    // DDL 前你指定优先保证的小组：共享水箱先拿一半给它，剩下的再按谁缺先给谁分
     if (f.prioUntil > g.day && dem[f.prio] > 0) {
-      const add = Math.min(water, dem[f.prio] * (S.PIPE_MAX - lv[f.prio]));
+      const add = water * 0.5;
       lv[f.prio] += add / dem[f.prio];
       water -= add;
     }
     const level = fillLevel(keys.map(k => ({ dem: dem[k], lv: lv[k] })), water);
-    keys.forEach(k => { lv[k] = Math.max(lv[k], Math.min(S.PIPE_MAX, level)); });
+    keys.forEach(k => { lv[k] = Math.max(lv[k], level); });
     const got = {}, ratio = {};
     Object.keys(dem).forEach(k => {
-      ratio[k] = dem[k] > 0 ? lv[k] : 9;
+      ratio[k] = dem[k] > 0 ? lv[k] : null;
       got[k] = dem[k] > 0 ? lv[k] * dem[k] : 0;
     });
     const poolUsed = U.sum(keys, k => (lv[k] - base[k]) * dem[k]);
     return {
-      total, pool, dedicated, own, dem, got, ratio, level,
-      idle: Math.max(0, dedicated - ownUsed), // 专用但闲着的
-      spare: Math.max(0, pool - poolUsed), // 共享水箱里没流出去的
+      total, pool, dedicated, personal, own, dem, got, ratio, level,
+      idle: Math.max(0, dedicated - ownUsed), // 专用但闲着的（这个组现在没有实验）
+      spare: Math.max(0, pool - poolUsed), // 共享水箱里没流出去的（现在没有实验）
     };
   };
   // 全实验室的平均实验速度（按需求加权）
-  S.avgSpeed = al => {
-    const keys = Object.keys(al.dem).filter(k => al.dem[k] > 0);
-    const d = U.sum(keys, k => al.dem[k]);
-    return d > 0 ? U.sum(keys, k => al.dem[k] * S.computeSpeed(al.ratio[k])) / d : 1;
+  S.avgSpeed = (g, al) => {
+    al = al || S.computeAlloc(g);
+    const ps = g.projects.filter(p => p.phase === 'exp' && S.computeShare(g, p.sub) >= 0.05);
+    const d = U.sum(ps, p => S.projectDemand(g, p));
+    return d > 0 ? U.sum(ps, p => { const gr = S.groupOfSub(g, p.sub); return S.projectDemand(g, p) * S.speedOf(g, p.sub, al.ratio[gr ? gr.id : '_pool']); }) / d : 1;
   };
   S.projRatio = (g, p, ctx) => {
-    if (!ctx.alloc) return ctx.ratio;
+    const al = ctx.alloc || S.computeAlloc(g);
     const gr = S.groupOfSub(g, p.sub);
-    const r = ctx.alloc.ratio[gr ? gr.id : '_pool'];
-    return r == null ? ctx.ratio : r;
+    const r = al.ratio[gr ? gr.id : '_pool'];
+    return r == null ? 0 : r;
   };
 
   // ---------- 选题 ----------
@@ -467,8 +469,72 @@
     const near = g.groups.filter(gr => S.interestFit(m, gr.sub) > 0);
     return argmax(near.length ? near : g.groups, gr => -S.groupMembers(g, gr).length).id;
   };
+  // ---------- 自动分组 ----------
+  // 兴趣优先：为想做同一个子方向的学生成立小组，学生分到最对口的组（完全不对口的就让 TA 单干，做自己想做的）；
+  // 热度优先：在最热门的子方向成立小组，学生分进去（感兴趣的组优先）。
+  // 只动没有小组的人；不在名单里、又只剩一两个人的小组会被合并掉
+  const gw = m => (m.role === 'ug' || m.role === 'visit' ? 0.5 : 1);
+  S.autoGroupTargets = function (g) {
+    const mode = g.policies.autoGroup || 'off';
+    const want = {};
+    g.members.forEach(m => { if (m.isPlayer) return; const it = S.interestOf(m); if (it) want[it] = (want[it] || 0) + gw(m); });
+    const score = s => (mode === 'heat'
+      ? S.heat(g, s.id) * (1 + 0.5 * (want[s.id] || 0)) * (s.topic === g.policies.coreTopic ? 1.2 : 1)
+      : (want[s.id] || 0) + S.heat(g, s.id) * 0.01 + (S.groupOfSub(g, s.id) ? 0.3 : 0));
+    const out = [];
+    for (const s of G.area(g).subs.slice().sort((a, b) => score(b) - score(a))) {
+      if (out.length >= S.maxGroups(g)) break;
+      if (mode === 'interest' && (want[s.id] || 0) < 1.5 && !S.groupOfSub(g, s.id)) continue; // 想做的人太少，不单独开组
+      out.push(s.id);
+    }
+    return out;
+  };
+  S.autoGroups = function (g) {
+    const mode = g.policies.autoGroup || 'off';
+    if (g.phd || mode === 'off') return;
+    const target = S.autoGroupTargets(g);
+    g.groups.slice().forEach(gr => { if (!target.includes(gr.sub) && S.groupMembers(g, gr).length < 2) S.deleteGroup(g, gr.id); });
+    for (const sid of target) if (!S.groupOfSub(g, sid) && !S.canCreateGroup(g, sid)) S.createGroup(g, sid);
+    const people = g.members.filter(m => !m.isPlayer);
+    const fit = (m, gr) => S.interestFit(m, gr.sub);
+    const size = gr => S.groupMembers(g, gr).length;
+    let moved = 0;
+    const moveTo = (m, gr) => { (m.groups || []).slice().forEach(id => S.setMemberGroup(g, m, id, false)); S.setMemberGroup(g, m, gr.id, true); moved++; };
+    // 有更对口的组就调过去（组长不动）
+    people.forEach(m => {
+      if (S.leadsGroup(g, m) || !(m.groups || []).length) return;
+      const cur = Math.max(...S.memberGroups(g, m).map(gr => fit(m, gr)));
+      const best = g.groups.slice().sort((a, b) => fit(m, b) - fit(m, a) || size(a) - size(b))[0];
+      if (best && fit(m, best) > cur) moveTo(m, best);
+    });
+    // 热度优先：新开的热门组人太少，就从人最多的组里调人过去（对这个方向有点兴趣的优先）
+    if (mode === 'heat') {
+      g.groups.forEach(gr => {
+        for (let k = 0; k < 3 && size(gr) < 2; k++) {
+          const big = g.groups.filter(x => x !== gr && size(x) > 4).sort((a, b) => size(b) - size(a))[0];
+          const c = big && S.groupMembers(g, big).filter(m => !m.isPlayer && !S.leadsGroup(g, m)).sort((a, b) => fit(b, gr) - fit(a, gr))[0];
+          if (!c) break;
+          moveTo(c, gr);
+        }
+      });
+    }
+    people.forEach(m => { if (!(m.groups || []).length && S.autoAssign(g, m)) moved++; });
+    if (moved) G.log(g, `自动分组：调整了 ${moved} 人，现在有 ${g.groups.length} 个小组`, 'info');
+  };
+  S.autoAssign = function (g, m) {
+    if (!g.groups.length) return null;
+    const heat = g.policies.autoGroup === 'heat';
+    const fit = gr => S.interestFit(m, gr.sub);
+    const size = gr => S.groupMembers(g, gr).length;
+    const best = g.groups.slice().sort((a, b) => fit(b) - fit(a) || (heat ? S.heat(g, b.sub) - S.heat(g, a.sub) : 0) || size(a) - size(b))[0];
+    if (!best || (!heat && !fit(best) && S.CONSULT_ROLES.includes(m.role))) return null; // 兴趣优先：完全不对口的研究生就让 TA 单干
+    S.setMemberGroup(g, m, best.id, true);
+    return best;
+  };
+
   S.onJoin = function (g, m) {
     if (!g.groups.length) return;
+    if (!g.phd && (g.policies.autoGroup || 'off') !== 'off') { S.autoAssign(g, m); return; }
     const it = S.interestOf(m);
     const canNew = it && !S.groupOfSub(g, it) && !S.canCreateGroup(g, it);
     // 只有一个小组、TA 也愿意做这个方向，就直接进组；否则问你（进组 / 单干 / 新开一组）

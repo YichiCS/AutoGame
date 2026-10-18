@@ -184,13 +184,14 @@
         if (!m) return null;
         const R = G().region(g);
         const avg = (m.stats.idea + m.stats.code + m.stats.write) / 3;
+        const lv = avg >= S().LEVEL_PHD ? '已经达到博士生的招生水平' : '达到了硕士生的招生水平，还不到博士';
         return {
           title: '本科生想读研', portrait: { member: m.id },
-          text: `${U.esc(m.name)} 马上本科毕业了，在组里做了不少事情，想继续读你的研究生。`,
+          text: `${U.esc(m.name)} 马上本科毕业了，在组里做了不少事情，想继续读你的研究生。<br><span class="dim">${lv}。</span>`,
           choices: [
-            { label: '收为博士生', hint: `每月开销 ${money(g, R.costs.phd)} · 能力已经知根知底`, def: avg >= 56,
+            { label: '收为博士生', hint: `每月开销 ${money(g, R.costs.phd)} · 能力已经知根知底`, def: avg >= S().LEVEL_PHD,
               apply: g => { m.role = 'phd'; m.startDay = g.day; m.endDay = 0; m.funding = 'ra'; S().addMood(m, 15); S().addTrust(m, 5); S().story(g, m, '本科毕业，留下来读博'); G().log(g, `${m.name} 留下来读博了`, 'good'); } },
-            { label: '收为硕士生', hint: R.costs.ms ? `每月开销 ${money(g, R.costs.ms)}` : '硕士自费，不用你发钱', def: avg < 56,
+            { label: '收为硕士生', hint: R.costs.ms ? `每月开销 ${money(g, R.costs.ms)}` : '硕士自费，不用你发钱', def: avg < S().LEVEL_PHD,
               apply: g => { m.role = 'ms'; m.startDay = g.day; m.endDay = g.day + 720; m.funding = S().defaultFunding(g, 'ms'); S().addMood(m, 10); S().addTrust(m, 3); S().story(g, m, '本科毕业，留下来读硕士'); G().log(g, `${m.name} 留下来读硕士了`, 'good'); } },
             { label: '祝前程似锦', hint: '学生毕业离开', apply: g => { S().graduate(g, m); } },
           ],
@@ -302,7 +303,7 @@
           if (sid === last) tags.push('接着做');
           if (fit === 1) tags.push('TA 想做');
           const r = gr ? alloc.ratio[gr.id] : 9;
-          const comp = gr ? (alloc.dem[gr.id] > 0 ? `${S().groupName(g, gr)}${r >= 1 ? '算力充足' : '算力紧张'}（实验 ×${S().computeSpeed(r).toFixed(1)}）` : `${S().groupName(g, gr)}算力空闲`) : '用共享算力';
+          const comp = gr ? (alloc.dem[gr.id] > 0 ? `${S().groupName(g, gr)}${r >= 1 ? '算力充足' : '算力紧张'}（实验 ×${S().speedOf(g, sid, r).toFixed(1)}）` : `${S().groupName(g, gr)}算力空闲`) : '用共享算力';
           const hint = [
             `${t.name}${s.topic === g.policies.coreTopic ? '（核心方向）' : ''} · 积累 ${(g.expertise[s.topic] || 0).toFixed(1)} · ${heatWord(S().heat(g, sid))} · ${comp}`,
             S().teamPreview(g, m, sid),
@@ -1342,8 +1343,8 @@
           title: 'DDL 前的算力争夺', portrait: { icon: 'gpu' },
           text: `截稿日越来越近，「${U.esc(S().groupName(g, A))}」和「${U.esc(S().groupName(g, B))}」的实验都在排队，服务器根本不够分。两边的人都来找你要卡。`,
           choices: [
-            { label: `优先保证「${S().groupName(g, A)}」`, hint: '一个月内共享算力先灌满这个组的实验，剩下的再给别人 · 这组心情 +3，那组 -4', apply: prio(A, B) },
-            { label: `优先保证「${S().groupName(g, B)}」`, hint: '一个月内共享算力先灌满这个组的实验，剩下的再给别人 · 这组心情 +3，那组 -4', apply: prio(B, A) },
+            { label: `优先保证「${S().groupName(g, A)}」`, hint: '一个月内共享算力先拿一半给这个组，剩下的再分 · 这组心情 +3，那组 -4', apply: prio(A, B) },
+            { label: `优先保证「${S().groupName(g, B)}」`, hint: '一个月内共享算力先拿一半给这个组，剩下的再分 · 这组心情 +3，那组 -4', apply: prio(B, A) },
             { label: `临时租 ${n} 份${R.cloud.name}`, hint: `经费 -${money(g, cost)} · 一个月内共享算力 +${R.cloud.units * n}`, def: rich, disabled: g.funds < cost ? '经费不足' : null,
               apply: g => { S().spend(g, cost, 'compute'); g.flags.tempUnits = R.cloud.units * n; g.flags.tempUntil = g.day + 30; } },
             { label: '一视同仁，谁缺先给谁', hint: '两组心情 -1', def: !rich, apply: () => { mood(A, -1); mood(B, -1); } },

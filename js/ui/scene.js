@@ -647,7 +647,9 @@
     const label = 'HALL OF FAME', tw = SP.textWidth(label);
     R(x0 + 42 - tw / 2 - 3, y0 + 60, tw + 6, 8, P.dark);
     SP.text(ctx, label, Math.round(x0 + 42 - tw / 2), y0 + 61, P.yellow);
-    const list = g.papers.filter(p => p.tier === 'A' && !p.retracted).slice().reverse();
+    // 时间检验奖、最佳论文排在最前面，其余按引用从高到低
+    const list = g.papers.filter(p => p.tier === 'A' && !p.retracted).slice()
+      .sort((a, b) => (b.tot ? 1 : 0) - (a.tot ? 1 : 0) || (b.best ? 1 : 0) - (a.best ? 1 : 0) || b.cites - a.cites);
     const n = Math.min(cap, list.length);
     for (let i = 0; i < cap; i++) {
       const cx = x0 + (i % cols) * 11, cy = y0 + Math.floor(i / cols) * 11;
@@ -1160,6 +1162,7 @@
       if (a.state === 'walk' || a.state === 'stand') drawWalker(a, list);
     });
     ghosts.forEach(a => { if (here(a)) drawWalker(a, list); });
+    drawDecor(list, up);
     if (up) {
       drawMeetingCorner(list);
     } else {
@@ -1238,6 +1241,90 @@
         }
       }
     }
+  }
+  // ---------- 装饰 ----------
+  // 墙上的画和落地灯两层都有；鱼缸、懒人沙发、冰箱、乒乓球桌、跑步机放在二楼，只有一层的时候摆在一楼前排。
+  // 二楼本身也有饮水机、长椅和一棵大盆栽
+  function drawDecor(list, up) {
+    const f = g.facilities;
+    const two = twoFloors();
+    const show = up || !two; // 二楼的东西：有二楼就放二楼，没有就放一楼
+    if (f.posters) list.push({ z: 60, fn: () => { poster(61, 22, 0); if (up) poster(248, 52, 1); } });
+    if (f.lamps) {
+      list.push({ z: 186, fn: () => lamp(66, 150) });
+      list.push({ z: 226, fn: () => lamp(398, 190) });
+    }
+    // 摆放位置：二楼左边和右下角；一楼没有二楼时摆在前排
+    const P2 = { fridge: [28, 106], aquarium: [2, 160], beanbags: [4, 200], pingpong: [404, 196], treadmill: [408, 100] };
+    const P1 = { fridge: [300, 192], aquarium: [74, 192], beanbags: [150, 196], pingpong: [216, 192], treadmill: [330, 186] };
+    const at = id => (up ? P2[id] : P1[id]);
+    if (show && f.aquarium) { const [x, y] = at('aquarium'); list.push({ z: y + 26, fn: () => aquarium(x, y) }); }
+    if (show && f.beanbags) { const [x, y] = at('beanbags'); list.push({ z: y + 22, fn: () => beanbags(x, y) }); }
+    if (show && f.pingpong) { const [x, y] = at('pingpong'); list.push({ z: y + 26, fn: () => pingpong(x, y) }); }
+    if (show && f.treadmill) { const [x, y] = at('treadmill'); list.push({ z: y + 32, fn: () => treadmill(x, y) }); }
+    if (show && f.fridge) { const [x, y] = at('fridge'); list.push({ z: y + (up ? 40 : 26), fn: () => fridge(x, y, up ? 40 : 26) }); }
+    if (!up) return;
+    // 二楼自带的：饮水机、长椅（买了懒人沙发就换掉）、大盆栽、讨论区的地毯
+    list.push({ z: 140, fn: () => R(396, 136, 84, 58, '#0000001a') });
+    list.push({ z: 146, fn: () => { R(6, 118, 12, 28, '#d8dee8'); R(8, 106, 8, 12, '#9be7ff'); R(9, 104, 6, 2, '#73c4dd'); R(10, 128, 4, 2, P.blue); R(6, 146, 12, 1, '#00000040'); } });
+    if (!f.beanbags) list.push({ z: 222, fn: () => { R(6, 208, 48, 4, P.woodL); R(6, 212, 48, 3, P.wood); R(8, 215, 2, 7, P.woodD); R(50, 215, 2, 7, P.woodD); } });
+    list.push({ z: 182, fn: () => { R(395, 170, 10, 12, '#b06a3b'); R(394, 168, 12, 3, '#c47c48'); R(393, 146, 5, 22, P.green); R(398, 140, 6, 28, P.green); R(396, 134, 5, 14, P.lime); R(401, 150, 4, 10, '#2c8a4e'); } });
+  }
+  function poster(x, y, k) {
+    R(x, y, 12, 16, P.woodD);
+    R(x + 1, y + 1, 10, 14, k ? '#fff1b0' : '#cfe8ff');
+    if (k) { R(x + 3, y + 4, 6, 6, P.orange); R(x + 2, y + 11, 8, 2, P.red); }
+    else { R(x + 2, y + 9, 8, 5, P.green); R(x + 6, y + 3, 3, 3, P.yellow); R(x + 2, y + 7, 4, 2, '#73a6f6'); }
+  }
+  function lamp(x, y) {
+    R(x - 4, y, 10, 6, P.yellow);
+    R(x - 3, y + 1, 8, 1, '#fff1b0');
+    R(x, y + 6, 2, 28, P.dark);
+    R(x - 3, y + 34, 8, 2, P.dark);
+  }
+  function aquarium(x, y) {
+    R(x, y + 18, 56, 8, P.woodD);
+    R(x + 2, y, 52, 18, P.black);
+    R(x + 3, y + 1, 50, 16, '#1e4c7a');
+    R(x + 3, y + 1, 50, 3, '#41a6f6');
+    R(x + 3, y + 14, 50, 3, '#e6c890');
+    R(x + 9, y + 6, 2, 8, P.green);
+    R(x + 44, y + 8, 2, 6, P.lime);
+    for (let i = 0; i < 3; i++) {
+      const fx = x + 5 + ((T * (8 + i * 3) + i * 17) % 44), fy = y + 5 + i * 3;
+      R(fx, fy, 3, 2, [P.orange, P.yellow, P.red][i]);
+    }
+  }
+  function beanbags(x, y) {
+    R(x, y + 8, 22, 12, P.red);
+    R(x + 2, y + 4, 18, 6, '#d65a6e');
+    R(x + 28, y + 8, 22, 12, '#3b5dc9');
+    R(x + 30, y + 4, 18, 6, '#41a6f6');
+  }
+  function pingpong(x, y) {
+    R(x, y + 6, 64, 3, '#2f6b3f');
+    R(x, y + 9, 64, 9, '#24533a');
+    R(x + 31, y, 2, 9, P.white);
+    R(x + 3, y + 18, 2, 7, P.dark);
+    R(x + 59, y + 18, 2, 7, P.dark);
+    const t = (T * 1.6) % 2, bx = x + 6 + Math.abs(1 - t) * 50;
+    R(Math.round(bx), y + 2 - Math.round(Math.sin(t * Math.PI) * 3), 2, 2, P.white);
+  }
+  function treadmill(x, y) {
+    R(x, y + 26, 40, 6, P.dark);
+    R(x + 2, y + 24, 34, 3, P.black);
+    R(x + 33, y + 6, 3, 20, P.gray);
+    R(x + 29, y + 2, 11, 6, P.dark);
+    R(x + 30, y + 3, 9, 3, Math.floor(T * 2) % 2 ? P.lime : '#38b764');
+  }
+  function fridge(x, y, h) {
+    R(x, y, 20, h, '#e8ecf2');
+    R(x, y + Math.round(h * 0.35), 20, 1, '#b8c0cc');
+    R(x + 16, y + 4, 2, 6, P.gray);
+    R(x + 16, y + Math.round(h * 0.35) + 4, 2, 8, P.gray);
+    R(x + 4, y + 4, 3, 3, P.red);
+    R(x + 8, y + 6, 3, 3, P.yellow);
+    R(x, y + h, 20, 1, '#00000040');
   }
   function drawMeetingCorner(list) {
     list.push({ z: 176, fn: () => {

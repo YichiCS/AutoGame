@@ -152,7 +152,7 @@
       facilities: {}, room: 0, gpus: {}, cloud: 0, groups: [], gpuAlloc: {},
       policies: {
         focus: 'mentor', intensity: 'normal', meeting: 'weekly', topic: 'core',
-        coreTopic: o.coreTopic || A.topics[0].id, submit: 'balanced', rebuttal: 'auto', travel: 'student', auto: 'off', consult: 'ask', autoLead: 'auto',
+        coreTopic: o.coreTopic || A.topics[0].id, submit: 'balanced', rebuttal: 'auto', travel: 'student', auto: 'off', consult: 'ask', autoLead: 'auto', autoGroup: 'off',
       },
       subs: {}, expertise: {},
       queue: [], schedule: [], cooldowns: {}, flags: {},

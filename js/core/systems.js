@@ -7,7 +7,7 @@
 
   S.ROLE_NAMES = { phd: '博士生', ms: '硕士生', ug: '本科生', postdoc: '博士后', visit: '访问学生', jpi: '青年教师' };
   // 青年教师（小导师）：带着自己的学生挂靠在你的大组里，工资学校发；自己也做课题，但要上课、带学生，花在科研上的时间少一些
-  const ROLE_OFFSET = { phd: 0, ms: -8, ug: -16, postdoc: 14, visit: -4, jpi: 22 };
+  const ROLE_OFFSET = { phd: 0, ms: -8, ug: -25, postdoc: 14, visit: -4, jpi: 22 };
   const ROLE_WORK = { phd: 1, ms: 0.9, ug: 0.6, postdoc: 1.1, visit: 0.85, jpi: 0.75 };
   const ROLE_YEARS = { ms: 2, ug: 1.5, postdoc: 2, visit: 1 };
   S.PHASE_NAMES = { idea: '构思', exp: '实验', write: '写作', revise: '修改', ready: '待投稿', review: '审稿中' };
@@ -81,7 +81,14 @@
   const OVR_W = { idea: 0.24, code: 0.22, write: 0.2, math: 0.12, team: 0.08, talk: 0.07, grit: 0.07 };
   S.st = (m, k) => (m && m.stats && m.stats[k] != null ? m.stats[k] : 50);
   S.overall = st => Math.round(U.sum(Object.keys(OVR_W), k => (st[k] == null ? 50 : st[k]) * OVR_W[k]));
-  S.ovrGrade = v => (v >= 80 ? 'S' : v >= 70 ? 'A' : v >= 60 ? 'B' : v >= 50 ? 'C' : 'D');
+  // 显示用的分数：内部数值照旧（平衡不变），显示时换算到更直观的刻度——
+  // 博士生招生的候选人大约 60~82，硕士生大约 47~75，刚进组的本科生大约 50
+  S.disp = v => Math.round(100 * (1 - Math.pow(Math.max(0, 1 - U.clamp(v || 0, 0, 100) / 100), 1.7)));
+  S.dispOvr = st => S.disp(S.overall(st));
+  S.ovrGrade = v => (v >= 85 ? 'S' : v >= 75 ? 'A' : v >= 65 ? 'B' : v >= 55 ? 'C' : 'D'); // 按显示的分数
+  // 「博士水平」「硕士水平」：招生时一般的博士生、硕士生（内部数值）
+  S.LEVEL_PHD = 53;
+  S.LEVEL_MS = 42;
   // 新属性：数理跟着整体水平走；软实力和学业水平关系不大，更多看性格
   const TRAIT_STATS = { mathy: { math: 12 }, social: { team: 12, talk: 6 }, loner: { team: -12 }, influencer: { talk: 10 }, writer: { talk: 4 }, optimist: { grit: 10 }, fragile: { grit: -15 }, grinder: { grit: 6 }, slacker: { grit: -4 } };
   S.fillStats = function (st, q, traits) {
@@ -473,18 +480,30 @@
 
   // 难度随“你的职业生涯开始以后”的年份增长（读完博士再当 PI 的存档，起点是入职那一年）
   S.epoch = g => g.epoch || G.BASE_YEAR;
-  S.projectDemand = (g, p) => 6 * G.area(g).compute * G.sub(g, p.sub).compute * Math.pow(1.15, Math.max(0, G.calYear(g) - S.epoch(g)));
+  // 模型越来越大：需求每年涨 15%（自己的电脑也跟着升级）
+  S.demandGrowth = g => Math.pow(1.15, Math.max(0, G.calYear(g) - S.epoch(g)));
+  S.projectDemand = (g, p) => 6 * G.area(g).compute * G.sub(g, p.sub).compute * S.demandGrowth(g);
   S.computeDemand = g => U.sum(g.projects, p => (p.phase === 'exp' ? S.projectDemand(g, p) : 0));
   // 课题用所在小组的算力（没有对应小组的课题用共享池）：实验速度 = 分到的算力 / 需求（见 S.computeAlloc）
-  S.computeFactor = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : S.computeSpeed(S.projRatio(g, p, ctx)));
+  // 算力只加速实验里「跑计算」的那部分：机器学习、视觉、NLP 几乎全是算力，速度就是 流进来的算力 / 需求，没有上下限；
+  // 系统、网络这些方向的实验主要靠人搭环境、调系统，算力再多也只能加速其中跑计算的那一截
+  S.computeShare = (g, sid) => U.clamp(G.area(g).compute * G.sub(g, sid).compute, 0, 1);
+  S.speedOf = (g, sid, r) => {
+    const c = S.computeShare(g, sid);
+    if (c < 0.05) return 1;
+    return 1 / (1 - c + c / Math.max(1e-3, r || 0));
+  };
+  S.computeFactor = (g, p, ctx) => S.speedOf(g, p.sub, S.projRatio(g, p, ctx));
   // 算力对结果扎不扎实的影响：不够时少跑几组对比实验；够用就行，再多帮助不大
   S.computeQual = (g, p, ctx) => (S.projectDemand(g, p) < 0.3 ? 1 : U.clamp(Math.pow(S.projRatio(g, p, ctx), 0.6), 0.25, 1.15));
 
+  // 本科生底子薄、学得快：跟着师兄师姐打下手，成长比研究生快得多（不然一年半下来还远远够不上读研的水平）
+  S.ROLE_GROW = { ug: 1.5, ms: 0.6, visit: 1.2 };
   S.grow = function (g, m, ph, w) {
     const key = STAT_OF[ph];
     const s = m.stats[key];
     const mentor = (g.policies.focus === 'mentor' ? 1.3 : 1) * ({ weekly: 1.1, biweekly: 1, monthly: 0.9 }[g.policies.meeting] || 1) * S.groupGrowth(g, m) * (S.supOf(g, m) ? 1.12 : 1) *
-      (m.isPlayer && g.phd ? S.PACE[g.phd.pace].grow : 1);
+      (m.isPlayer && g.phd ? S.PACE[g.phd.pace].grow : 1) * (S.ROLE_GROW[m.role] || 1);
     const k = GROW[ph] * w * m.pot * tMul(m, 'growth') * mentor;
     m.stats[key] = Math.min(100, s + k * S.soft(s));
     // 副属性：构思和实验练数理，写作和改稿练表达
@@ -1301,6 +1320,7 @@
       G.queue(g, { type: 'event', id: 'deficit', ctx: {} });
     }
     if (!g.phd && RS.Sim.catAuto(g, 'compute')) S.autoCompute(g);
+    S.autoGroups(g);
     S.autoLeaders(g);
     if (!g.phd) S.interestDrift(g);
   };
