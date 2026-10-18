@@ -245,6 +245,8 @@ export function drawFigureOutlined(c: Ctx, x: number, y: number, h: number, pose
   let cv = scratch.get(size);
   if (!cv) {
     cv = makeCanvas(size, size);
+    // 每帧都要读回像素描轮廓
+    cv.getContext('2d', { willReadFrequently: true });
     scratch.set(size, cv);
   }
   const cc = cv.getContext('2d')!;
