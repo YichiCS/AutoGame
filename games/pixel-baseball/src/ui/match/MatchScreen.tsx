@@ -20,6 +20,7 @@ import { Btn, Emblem, Num, Portrait } from '../components/common';
 import { refresh, ui, useStore } from '../store';
 import { sfx } from '../sound';
 import { AUTO_NAME, type AlignKey, type AutoMode, type MatchSession, type MuView } from './session';
+import type { HumanTac } from '../../sim/types';
 import { LineupEditor } from '../tabs/Lineup';
 import { SHAPE_GLYPH, SW, SH, pitchShape } from '../../render/stage';
 import { useIsPhone } from '../layout';
@@ -232,8 +233,6 @@ function MatchView(p: { S: MatchSession }) {
       <Scorebar S={S} onMenu={() => setMenu(true)} />
       <div class="mgrid">
         <div class="mleft">
-          <div class="mrow">
-          {phone && <SideCol S={S} side="left" ph={S.state === 'over' || ph === 'over' ? null : ph} setDlg={setDlg} />}
           <div class="mcanvas">
             <canvas ref={stageRef} class={`stage ${S.view === 'stage' ? '' : 'hide'} ${S.state === 'ready' && !S.coaching ? 'tappable' : ''}`} onPointerDown={onTap} />
             <canvas ref={fieldRef} class={`field ${S.view === 'field' ? '' : 'hide'}`} />
@@ -243,8 +242,8 @@ function MatchView(p: { S: MatchSession }) {
               </button>
             )}
             {S.lastRes && S.state !== 'playing' && <div class="msit">上一打席：{S.lastRes}</div>}
-          </div>
-          {phone && <SideCol S={S} side="right" ph={S.state === 'over' || ph === 'over' ? null : ph} setDlg={setDlg} />}
+            {phone && S.state === 'ready' && ph !== 'over' && ph && <SideCol S={S} side="left" ph={ph} setDlg={setDlg} />}
+            {phone && S.state === 'ready' && ph !== 'over' && ph && <SideCol S={S} side="right" ph={ph} setDlg={setDlg} />}
           </div>
           <div class="mlog">
             {S.lines
@@ -386,6 +385,8 @@ function Matchup(p: { S: MatchSession }) {
   const st = Math.round(v.stamina * 100);
   const stCls = st < 15 ? 'bad' : st < 40 ? 'orange' : 'good';
   const [mood, moodCls] = moodOf(v.mood);
+  // 心态 0..100：50 是平稳，越高越有信心，越低越动摇
+  const md = Math.round((v.mood + 1) * 50);
   return (
     <section class="mu2">
       <div class="mu2-row">
@@ -407,14 +408,18 @@ function Matchup(p: { S: MatchSession }) {
         <span class="mu2-r" />
       </div>
       {/* 投手的体力和心态：累了、动摇了，球种质量下降、落点变散；连续三振越投越有信心 */}
-      <div class="mu2-st" title="体力用得越多、心态越差（被连续打、保送），球种质量越低、落点越散；连续三振会越投越有信心">
-        <span class="dim">投手体力</span>
+      <div class="mu2-st" title="投手的体力和心态：体力用得越多、心态越差（被连续打、保送），球种质量越低、落点越散；连续三振、牵制会让心态回来（心态 50 是平稳）">
+        <span class="dim">体力</span>
         <span class={`stbar ${stCls}`}>
           <i style={{ width: `${st}%` }} />
         </span>
         <b class={stCls}>{st}%</b>
         <span class="dim">心态</span>
-        <b class={moodCls}>{mood}</b>
+        <span class={`stbar ${moodCls}`}>
+          <i style={{ width: `${md}%` }} />
+        </span>
+        <b class={moodCls}>{md}</b>
+        <span class={moodCls}>{mood}</span>
         <span class="grow" />
         <span class="dim">{v.np} 球</span>
       </div>
@@ -458,9 +463,17 @@ function IbbButton(p: { S: MatchSession; ready: boolean; narrow?: boolean }) {
 
 const BASE_S = ['一垒', '二垒', '三垒'];
 
+const TACS: [HumanTac, string, string][] = [
+  ['steal', '盗垒', '前面的跑者盗下一个垒，打者这一球不挥'],
+  ['doubleSteal', '双盗', '一二垒：两人一起盗；一三垒：一垒跑者盗二垒，捕手一传二垒三垒跑者就冲本垒'],
+  ['bunt', '触击', '牺牲触击，送跑者往前一个垒（两好球后不能）'],
+  ['squeeze', '抢分', '强迫取分：打者触击，三垒跑者同时冲本垒（触击落空跑者多半出局）'],
+  ['hitRun', '打带跑', '一垒跑者起跑，打者一定挥（定了挥棒点就朝着它挥）'],
+];
+
 /**
- * 手机：画面两侧的窄栏（按钮的位置固定，画面大小不跟着变）。
- * 左：一二三垒的跑者（防守时牵制，⚠ 是离垒很大；进攻时提前跑）；右：防守时守备阵型和敬远，进攻时代打、代跑。
+ * 手机：小而半透明的按钮叠在画面两侧（不占地方，画面大小固定）。
+ * 防守时左边是各垒跑者的牵制（⚠ 是离垒很大），右边是守备阵型和敬远；进攻时左边是战术（这一球就发动），右边是代打、代跑。
  */
 function SideCol(p: { S: MatchSession; side: 'left' | 'right'; ph: 'bat' | 'pitch' | null; setDlg: (d: Dlg) => void }) {
   const S = p.S;
@@ -468,26 +481,25 @@ function SideCol(p: { S: MatchSession; side: 'left' | 'right'; ph: 'bat' | 'pitc
   const ready = S.state === 'ready' && !S.coaching;
   if (!v || !p.ph) return <div class={`mcol ${p.side}`} />;
   if (p.side === 'left') {
-    const occupied = v.runners.map(Boolean);
-    const canRun = (i: number) => occupied[i] && (i === 2 || !occupied[i + 1] || S.run[i + 1]);
+    if (p.ph === 'bat')
+      return (
+        <div class="mcol left">
+          {TACS.filter(([k]) => S.tacReady(k)).map(([k, t, tip]) => (
+            <button type="button" key={k} class="sbtn" disabled={!ready} title={tip} onClick={() => S.tactic(k)}>
+              <b>{t}</b>
+            </button>
+          ))}
+        </div>
+      );
     return (
       <div class="mcol left">
         {v.runners.map((r, i) =>
-          !r ? (
-            <div key={i} class="sbtn empty">
-              <b>{BASE_S[i]}</b>
-            </div>
-          ) : p.ph === 'pitch' ? (
+          r ? (
             <button type="button" key={i} class={`sbtn ${r.lead === 'big' ? 'warn' : ''}`} disabled={!ready || v.pickLeft <= 0} onClick={() => S.act({ k: 'po', base: i })} title={`${r.name}${r.lead === 'big' ? '：离垒很大' : ''}`}>
               <b>{BASE_S[i]}</b>
               <span>{r.lead === 'big' ? '⚠牵制' : '牵制'}</span>
             </button>
-          ) : (
-            <button type="button" key={i} class={`sbtn ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)} title={`${r.name} 跑速 ${Math.round(r.speed)}`}>
-              <b>{BASE_S[i]}</b>
-              <span>{S.run[i] ? '跑 ✓' : '提前跑'}</span>
-            </button>
-          ),
+          ) : null,
         )}
       </div>
     );
@@ -548,6 +560,12 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
       <div class="ctl-h">
         <span>球种</span>
         <span class="dim small">质量 0-100</span>
+        {S.intent() && (
+          <span class="small" title="橙色：打者这一球在等、会出棒的地方（内角投多了会往内角靠、两好球了更会出棒）。捕手能力越好看得越准">
+            打者出棒 <b class="orange">{Math.round(S.intent()!.swing * 100)}%</b>
+            <span class="dim">（捕手{readText(S.intent()!.acc)}）</span>
+          </span>
+        )}
         {!phone && (
           <>
             <span class="grow" />
@@ -646,6 +664,11 @@ function tendText(t: MuView['tend']): { text: string; single: boolean } {
   return { text: parts.join(' · '), single };
 }
 
+/** 捕手读打者准不准 */
+function readText(a: number): string {
+  return a >= 0.7 ? '读得很准' : a >= 0.4 ? '读得出个大概' : '读不太准';
+}
+
 /** 打者读投手准不准（选球眼） */
 function eyeText(a: number): string {
   return a >= 0.7 ? '看得很准' : a >= 0.4 ? '看得出个大概' : '不太看得清';
@@ -695,38 +718,14 @@ function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
           )}
         </span>
       </div>
-      {!phone && occupied.some(Boolean) && (
-        <div class="runners">
-          {phone ? (
-            <div class="rcells">
-              {runners.map((r, i) =>
-                r ? (
-                  <button type="button" key={i} class={`rcell ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)}>
-                    <span class="rc-t">
-                      {BASE[i]} 跑速 <Num v={r.speed} />
-                    </span>
-                    <span>{S.run[i] ? '提前跑 ✓' : '提前跑'}</span>
-                  </button>
-                ) : null,
-              )}
-            </div>
-          ) : (
-            runners.map((r, i) =>
-              r ? (
-                <div key={i} class="runner">
-                  <span class="rb">{BASE[i]}</span>
-                  <span class="rn">{r.name}</span>
-                  <span class="rl">
-                    跑速 <Num v={r.speed} />
-                  </span>
-                  <button type="button" class={`chip ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)}>
-                    {S.run[i] ? '提前跑 ✓' : '提前跑'}
-                  </button>
-                </div>
-              ) : null,
-            )
-          )}
-          <div class="dim small">提前跑：没打中就盗垒，打中多跑一个垒；可能被牵制。</div>
+      {!phone && TACS.some(([k]) => S.tacReady(k)) && (
+        <div class="tacs">
+          <span class="dim small">战术（这一球就发动）</span>
+          {TACS.filter(([k]) => S.tacReady(k)).map(([k, t, tip]) => (
+            <button type="button" key={k} class="chip" disabled={!ready} title={tip} onClick={() => S.tactic(k)}>
+              {t}
+            </button>
+          ))}
         </div>
       )}
       {S.coaching ? (

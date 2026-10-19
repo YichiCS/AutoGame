@@ -71,7 +71,8 @@ for (let k = 0; k < N; k++) {
       const u = r();
       if (g.phase() === 'bat') {
         // 一定挥（挥棒范围的中心格 1..7）、不挥棒、教练式的「狙一格」
-        if (u < 0.5) g.act({ k: 'swing', z: Math.floor(r() * 9), run, commit: true, c: [1 + Math.floor(r() * 7), 1 + Math.floor(r() * 7)] });
+        if (u < 0.12) g.act({ k: 'swing', z: -1, run: [false, false, false], tac: pick(['steal', 'doubleSteal', 'bunt', 'squeeze', 'hitRun'] as const) });
+        else if (u < 0.5) g.act({ k: 'swing', z: Math.floor(r() * 9), run, commit: true, c: [Math.floor(r() * 11) - 1, Math.floor(r() * 11) - 1] });
         else if (u < 0.7) g.act({ k: 'swing', z: -1, run });
         else g.act({ k: 'swing', z: Math.floor(r() * 9), run });
       } else if (g.phase() === 'pitch') {

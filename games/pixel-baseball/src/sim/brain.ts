@@ -7,7 +7,7 @@ import { PITCH_DEFS } from '../data/pitches';
 import { clamp, z } from '../core/util';
 import { has } from '../core/attrs';
 import { hash32 } from '../core/rng';
-import { arsenal, batSide, density, hotAt, hotZones, inZone, makeRng, nearZone, spreadOf, zoneCenter, type PitchOpt, type PitcherNow, type Rng, type Spread } from './pitching';
+import { GRID, arsenal, batSide, cellCenter, density, hotAt, hotZones, inZone, makeRng, nearZone, spreadOf, zoneCenter, type PitchOpt, type PitcherNow, type Rng, type Spread } from './pitching';
 
 /** 投手这一球的一个打算 */
 export interface MindOpt {
@@ -185,15 +185,31 @@ export function mindSpreads(mind: Mind, p: Player, now: PitcherNow, fatigue: num
   const ars = arsenal(p, now);
   return mind.opts.map((o) => {
     const q = ars.find((a) => a.type === o.type)?.q ?? 40;
-    return spreadOf(o.type, p.throws, now.ctl, q, fatigue);
+    // 和实际投出去一样的散布（「暴投癖」再放大），热区图就是球最后落点的分布
+    const sp = spreadOf(o.type, p.throws, now.ctl, q, fatigue);
+    if (has(p, 'wild')) sp.s *= 1.15;
+    return sp;
   });
 }
 
 /**
  * 打者这一球狙哪一格（-1 = 不挥棒）。看得到投手打算的时候（mind），挑球最可能来、自己又打得好的那一格；
- * 看不到（对手是玩家）就按球数和这个投手今天的配球猜。选球眼越好挑得越准；两好球后不会不挥棒。
+ * 看不到（对手是玩家）就按球数和这个投手今天的配球、自己打席里学到的猜。选球眼越好挑得越准；两好球后不会不挥棒。
  */
 export function batterHunt(m: Match, t: TeamState, mind: Mind | null, spreads: Spread[] | null, r: Rng): number {
+  void t;
+  const it = batterIntent(m, mind, spreads);
+  if (m.strikes < 2 && r.rand() < it.pTake) return -1;
+  let x = r.rand() * it.w.reduce((a, c) => a + c, 0);
+  for (let zn = 0; zn < 9; zn++) {
+    x -= it.w[zn];
+    if (x < 0) return zn;
+  }
+  return 4;
+}
+
+/** 打者这一球的打算（不抽随机数）：先等一球的机会 pTake、狙九宫格每一格的分量 w */
+export function batterIntent(m: Match, mind: Mind | null, spreads: Spread[] | null): { pTake: number; w: number[] } {
   const b = m.batter();
   const p = m.pitcher();
   const side = batSide(b, p.throws);
@@ -239,26 +255,58 @@ export function batterHunt(m: Match, t: TeamState, mind: Mind | null, spreads: S
     const tot = arrive.reduce((a, c) => a + c, 0) || 1;
     for (let zn = 0; zn < 9; zn++) arrive[zn] = (1 - lz.L) * (arrive[zn] / tot) + lz.L * lz.z[zn];
   }
-  // 打者有利的球数、投手又不太进好球带：等
+  // 打者有利的球数、投手又不太进好球带：等（两好球后不会不挥棒）
+  let pTake = 0;
   if (strikes < 2) {
-    let pTake = 0;
     if (balls === 3 && strikes === 0) pTake = 0.75;
     else if (balls >= 2 && balls > strikes) pTake = pStrike < 0.5 ? 0.42 : 0.16;
     else if (balls === 0 && strikes === 0) pTake = 0.08 - (has(b, 'firstPitch') ? 0.08 : 0);
     pTake += 0.12 * z(eye) * (pStrike < 0.5 ? 1 : -0.5);
-    if (r.rand() < clamp(pTake, 0, 0.9)) return -1;
+    pTake = clamp(pTake, 0, 0.9);
   }
   const score = arrive.map((a, zn) => a * (strikes === 2 ? 1 : 0.55 + 3 * (hot[zn] - 0.2)));
   // 选球眼越好越会挑：好的打者几乎按分数选，差的打者常常乱猜
   const temp = 0.06 + 0.28 * (1 - clamp(eye, 0, 100) / 100);
   const top = Math.max(...score);
   const w = score.map((s) => Math.exp((s - top) / Math.max(0.02, temp * top)));
-  let x = r.rand() * w.reduce((a, c) => a + c, 0);
-  for (let zn = 0; zn < 9; zn++) {
-    x -= w[zn];
-    if (x < 0) return zn;
-  }
-  return 4;
+  return { pTake, w };
+}
+
+/** 捕手读打者的准确度 0..1：看捕球（配球、观察）和精神，「领袖」型的捕手更会读 */
+export function catcherRead(c: Player): number {
+  return clamp((0.6 * c.a.catching + 0.4 * c.a.mental - 15) / 75 + (has(c, 'leader') ? 0.1 : 0), 0, 1);
+}
+
+/**
+ * 投球时（玩家亲手投）看到的打者打算：网格 121 格，越浓越是他在等、会出棒的地方（狙的那一格附近都会出棒）；
+ * swing 是这一球出棒的倾向。打者的打算会跟着配球的来龙去脉变（内角投多了往内角靠、两好球了更会出棒）。
+ * 捕手能力越好越准；差的捕手看到的热点会偏、会糊。按比赛种子和第几球固定。
+ */
+export function batterIntentView(m: Match, seed: number, step: number): { heat: number[]; swing: number; acc: number } | null {
+  if (!m.readMind) return null;
+  const it = batterIntent(m, m.readMind, m.readSp);
+  const b = m.batter();
+  const acc = catcherRead(m.dfn.fielder('C'));
+  const r = makeRng(hash32(seed, step, 11));
+  const reach = (0.6 + (0.12 * clamp(b.a.eye, 0, 100)) / 100 + (m.strikes === 2 ? 0.16 : 0)) * (1 + 0.35 * (1 - acc));
+  const tot = it.w.reduce((a, c) => a + c, 0) || 1;
+  const err = 0.04 + 0.3 * (1 - acc);
+  const zs = it.w.map((w, zn) => {
+    const [cx, cy] = zoneCenter(zn);
+    return { x: cx + r.gauss(0, err), y: cy + r.gauss(0, err), w: (w / tot) * Math.exp(r.gauss(0, 0.9 * (1 - acc))) };
+  });
+  const heat: number[] = [];
+  let mx = 0;
+  for (let j = 0; j < GRID; j++)
+    for (let i = 0; i < GRID; i++) {
+      const [x, y] = cellCenter(i, j);
+      let v = 0;
+      for (const zz of zs) v += zz.w * Math.exp(-((Math.hypot(x - zz.x, y - zz.y) / reach) ** 2));
+      heat.push(v);
+      mx = Math.max(mx, v);
+    }
+  const swing = clamp(1 - it.pTake + r.gauss(0, 0.12 * (1 - acc)), 0.05, 1);
+  return { heat: heat.map((v) => (mx > 0 ? (v / mx) * swing : 0)), swing, acc };
 }
 
 /** 教练替玩家决定跑者：脚快、捕手肩弱、球数有利才跑；二垒有人时一垒不单独跑 */

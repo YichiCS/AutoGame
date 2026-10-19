@@ -688,7 +688,7 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
 .mu2-r { text-align: right; white-space: nowrap; color: var(--muted); font-size: 12px; }
 /* 投手的体力（带数字的条）和心态 */
 .mu2-st { display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
-.stbar { flex: 0 0 84px; height: 8px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--shadow); }
+.stbar { flex: 0 1 72px; min-width: 36px; height: 8px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--shadow); }
 .stbar i { display: block; height: 100%; background: currentColor; }
 .mu2-st .hot { color: var(--accent); }
 
@@ -727,6 +727,8 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
 .rcell:disabled { opacity: 0.45; cursor: not-allowed; }
 .chip:disabled { opacity: 0.35; cursor: not-allowed; }
 .huntrow { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.tacs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tacs .chip { min-height: 34px; padding: 2px 12px; }
 .tend { line-height: 1.4; }
 .pshape { display: inline-block; width: 1.1em; font-size: 11px; opacity: 0.85; }
 .hunt { flex: 1; color: var(--muted); }
@@ -795,11 +797,12 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
 .rot { display: flex; align-items: center; gap: 6px; padding: 2px 0; border-bottom: 1px solid var(--panel2); flex-wrap: wrap; }
 .lineup select { background: var(--panel2); color: var(--text); border: 0; font: inherit; padding: 1px 4px; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.3); }
 
-/* 手机：画面两侧的窄栏（跑者 / 战术按钮），位置固定 */
-.mrow { display: flex; justify-content: center; flex: none; }
-.mcol { flex: none; width: 46px; display: flex; flex-direction: column; gap: 4px; padding: 3px; background: var(--bg2); }
-.sbtn { flex: 1; min-height: 36px; max-height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 2px 1px; background: var(--panel2); border: 2px solid var(--shadow); color: var(--text); font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.3); }
-.sbtn b { font-weight: normal; }
+/* 手机：小而半透明的按钮叠在画面两侧（不占地方，画面大小固定；网格在中间，不会被挡住） */
+.mcol { position: absolute; top: 26px; z-index: 2; width: 42px; display: flex; flex-direction: column; gap: 5px; }
+.mcol.left { left: 4px; }
+.mcol.right { right: 4px; }
+.sbtn { min-height: 34px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; padding: 2px 1px; background: rgba(26, 28, 44, 0.62); border: 1px solid rgba(148, 176, 194, 0.55); color: var(--text); font: inherit; font-size: 12px; line-height: 1.15; cursor: pointer; }
+.sbtn b { font-weight: normal; font-size: 13px; letter-spacing: -0.5px; white-space: nowrap; }
 .sbtn span { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .sbtn.empty { background: transparent; border-style: dashed; border-color: var(--panel2); box-shadow: none; color: var(--dim); cursor: default; }
 .sbtn.warn { border-color: var(--orange); }
@@ -816,14 +819,13 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
   /* 画面大小只看屏幕：操作区固定高度贴在底下（球种预留两排、配球预留两行），画面用剩下的高度，两侧各留一条按钮栏；
      有没有跑者、配球文字多少，画面都不缩放 */
   .mleft { flex: 1 1 0; min-height: 160px; padding: 0; gap: 0; overflow: hidden; container-type: size; }
-  .mcanvas { width: min(calc(100cqw - 92px), 100cqh); max-width: none; border-width: 0 0 3px; box-shadow: none; }
-  .mside { height: 330px; flex: none !important; }
-  .ptypes { min-height: 84px; align-content: start; }
+  .mcanvas { width: min(100cqw, 100cqh); max-width: none; border-width: 0 0 3px; box-shadow: none; }
+  .mside { height: 272px; flex: none !important; }
+  .ptypes { grid-auto-flow: column; grid-auto-columns: minmax(104px, 1fr); grid-template-columns: none; overflow-x: auto; scrollbar-width: none; }
   .tend { min-height: 2.8em; }
   .mleft > .mlog { padding: 4px 8px 0; }
   .mside { flex: 0 1 auto; min-height: 0; width: 100%; border-left: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); overflow-y: auto; }
   .ctl { padding: 6px 8px; gap: 6px; }
-  .ptypes { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
   /* 手机上按钮多，提示文字让位（按钮上已经写清楚了） */
   .gobar .hint { display: none; }
   .mu2-row { grid-template-columns: 24px 2.4em max-content minmax(0, 1fr); }

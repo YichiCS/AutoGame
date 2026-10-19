@@ -3,14 +3,15 @@
 // 也可以交给教练（整场、本局、或者只在关键时刻问我），逐事件演出。
 import type { LiveAct, PendingMatch, PitchType, Player, Pos } from '../../core/types';
 import { PITCH_DEFS } from '../../data/pitches';
-import type { Alignment, BipInfo, PitchInfo, PitchResult, PlayEvent, Snap } from '../../sim/types';
+import type { Alignment, BipInfo, HumanTac, PitchInfo, PitchResult, PlayEvent, Snap } from '../../sim/types';
+import { tacOk } from '../../sim/match';
 import { LiveGame } from '../../core/live';
 import { G } from '../../core/state';
 import { finishPending } from '../../core/sim';
 import { simulatePending } from '../../core/matchday';
 import { RES_NAME } from '../../sim/labels';
 import { CELL, arsenal, batSide, clampRange, coverMap, density, hotZones, nearZone, pickoffSkill, rangeCenter, spreadOf, type PitchOpt } from '../../sim/pitching';
-import { batterView, eyeAccuracy } from '../../sim/brain';
+import { batterIntentView, batterView, eyeAccuracy } from '../../sim/brain';
 import { fullName } from '../../core/attrs';
 import { hash32 } from '../../core/rng';
 import { HEAT_BAT, MatchStage, type Hud, type StageScene, type Swing } from '../../render/stage';
@@ -69,6 +70,9 @@ export interface MuView {
   runners: ({ pid: number; name: string; speed: number; lead: 'big' | 'normal' | null } | null)[];
   pickLeft: number;
   align: Alignment;
+  /** 这一球之前的出局数、好球数（战术能不能发动） */
+  outsNow: number;
+  strikesNow: number;
   /** 投手今天的配球：球数、各球种比例（多的在前）、偏内外角（+ 外角多）、偏高低（+ 高球多） */
   tend: { n: number; types: [string, number][]; side: number; height: number };
 }
@@ -136,6 +140,7 @@ export class MatchSession {
   private nums = new Map<number, number>();
   private paKey = '';
   private heatCache: { key: string; heat: number[] } | null = null;
+  private intentCache: { key: string; v: { heat: number[]; swing: number; acc: number } | null } | null = null;
 
   constructor(pm: PendingMatch) {
     this.pm = pm;
@@ -376,6 +381,8 @@ export class MatchSession {
       }),
       pickLeft: m.pickoffsLeft(),
       align: m.T[dfn].def.align,
+      outsNow: m.outs,
+      strikesNow: m.strikes,
       tend: m.tendency(pt.id, side),
     };
   }
@@ -419,6 +426,17 @@ export class MatchSession {
     return heat;
   }
 
+  /** 投球时（亲手投）：打者这一球的打算（捕手越好越准；按比赛种子和第几球固定） */
+  intent(): { heat: number[]; swing: number; acc: number } | null {
+    const L = this.live;
+    if (!L || L.phase() !== 'pitch') return null;
+    const key = `i${L.step}-${L.m.batter().id}-${L.m.balls}-${L.m.strikes}`;
+    if (this.intentCache?.key === key) return this.intentCache.v;
+    const v = batterIntentView(L.m, this.pm.seed, L.step);
+    this.intentCache = { key, v };
+    return v;
+  }
+
   /** 投球时：瞄准点的散布预览 */
   preview(): number[] | null {
     const L = this.live;
@@ -439,10 +457,10 @@ export class MatchSession {
     const active = this.state === 'ready' && !this.coaching && ph !== 'over';
     const hud: Hud =
       ph === 'bat'
-        ? { heat: this.heat(), heatCol: HEAT_BAT, hot: mu?.hot ?? null, aim: null, hunt: this.huntXY(), cover: this.cover(), take: this.taking, active }
+        ? { heat: this.heat(), heatCol: HEAT_BAT, hot: mu?.hot ?? null, aim: null, hunt: this.huntXY(), cover: this.cover(), intent: null, take: this.taking, active }
         : ph === 'pitch'
-          ? { heat: this.preview(), heatCol: PAL.cyan, hot: mu?.hot ?? null, aim: this.aim, hunt: null, cover: null, take: false, active }
-          : { heat: null, heatCol: HEAT_BAT, hot: null, aim: null, hunt: null, cover: null, take: false, active: false };
+          ? { heat: this.preview(), heatCol: PAL.cyan, hot: mu?.hot ?? null, aim: this.aim, hunt: null, cover: null, intent: this.intent()?.heat ?? null, take: false, active }
+          : { heat: null, heatCol: HEAT_BAT, hot: null, aim: null, hunt: null, cover: null, intent: null, take: false, active: false };
     this.stage.setHud(hud);
   }
 
@@ -518,6 +536,25 @@ export class MatchSession {
     window.clearTimeout(this.autoTimer);
     this.taking = true;
     L.act({ k: 'swing', z: -1, run: [...this.run] as [boolean, boolean, boolean] });
+    void this.runPitch();
+  }
+
+  /** 这个战术这一球能不能发动 */
+  tacReady(t: HumanTac): boolean {
+    const v = this.muView();
+    return !!v && v.phase === 'bat' && tacOk(t, v.runners, v.outsNow, v.strikesNow);
+  }
+
+  /** 进攻战术：这一球就发动（盗垒、双盗时打者不挥；打带跑一定挥——定了挥棒点就朝着它挥；触击、抢分是触击） */
+  tactic(t: HumanTac): void {
+    const L = this.live;
+    if (!L || this.state !== 'ready' || this.coaching || L.phase() !== 'bat' || !this.tacReady(t)) return;
+    window.clearTimeout(this.autoTimer);
+    const commit = t === 'hitRun' && !!this.hunt;
+    this.taking = t === 'steal' || t === 'doubleSteal';
+    const c = commit && this.hunt ? ([this.hunt[0], this.hunt[1]] as [number, number]) : undefined;
+    const [hx, hy] = c ? rangeCenter(c) : [0, 0];
+    L.act({ k: 'swing', z: c ? nearZone(hx, hy) : -1, run: [false, false, false], commit, c, tac: t });
     void this.runPitch();
   }
 

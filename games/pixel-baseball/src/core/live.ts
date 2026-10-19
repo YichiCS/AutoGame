@@ -14,7 +14,7 @@ import { schoolById } from './world';
 export type Phase = 'bat' | 'pitch' | 'over';
 
 /** 比赛引擎的版本：改了比赛规则、随机数用法就加一（旧的记录没法原样重演，那场比赛从头开始） */
-export const LIVE_ENGINE = 3;
+export const LIVE_ENGINE = 4;
 
 const ALIGN = { close: 'close', normal: 'normal', deep: 'noDoubles' } as const;
 
@@ -140,7 +140,8 @@ export class LiveGame {
         if (!mine || a.z < -1 || a.z > 8) return null;
         // 一定挥：挥棒范围（3×3）的中心格在网格里（-1..9，外面一圈坏球区也行）
         const c = a.commit && a.z >= 0 && a.c && a.c.every((v) => Number.isInteger(v) && v >= -1 && v <= 9) ? ([a.c[0], a.c[1]] as [number, number]) : undefined;
-        t.swingNext = { z: a.z, run: [!!a.run[0], !!a.run[1], !!a.run[2]], commit: !!a.commit && a.z >= 0, c };
+        const tac = a.tac && ['steal', 'doubleSteal', 'bunt', 'squeeze', 'hitRun'].includes(a.tac) ? a.tac : undefined;
+        t.swingNext = { z: a.z, run: [!!a.run[0], !!a.run[1], !!a.run[2]], commit: !!a.commit && a.z >= 0, c, tac };
         return [];
       }
       case 'ph': {

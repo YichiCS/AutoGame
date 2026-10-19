@@ -205,7 +205,7 @@ export type LiveAct =
   // coach：教练替玩家投的这一球（AI 打者读得到教练的打算）
   | { k: 'throw'; t: PitchType | 'FB'; x: number; y: number; coach?: boolean }
   // commit：玩家按了「挥棒」，不管球来到哪里都挥（教练的指令没有这个标记：看到球来到狙的位置附近才挥）
-  | { k: 'swing'; z: number; run: [boolean, boolean, boolean]; commit?: boolean; c?: [number, number] }
+  | { k: 'swing'; z: number; run: [boolean, boolean, boolean]; commit?: boolean; c?: [number, number]; tac?: 'steal' | 'doubleSteal' | 'bunt' | 'squeeze' | 'hitRun' }
   | { k: 'ph'; slot: number; pid: number }
   | { k: 'pr'; base: number; pid: number }
   | { k: 'pc'; pid: number }

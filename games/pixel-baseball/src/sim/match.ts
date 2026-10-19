@@ -2,7 +2,7 @@
 import type { Player, Pos, PitchType } from '../core/types';
 import { POS_NAME } from '../core/types';
 import type {
-  BipInfo, BipKind, BoxBat, BoxPit, DefTactic, EventKind, MatchRules, MatchSummary, OffTactic, PAMemo, PAResult,
+  HumanTac, BipInfo, BipKind, BoxBat, BoxPit, DefTactic, EventKind, MatchRules, MatchSummary, OffTactic, PAMemo, PAResult,
   PitchInfo, PitchResult, PitchSpot, PitchUse, PlayEvent, RunnerMove, RunnerSlot, SeenPitches, Snap, TeamSetup, Zone,
 } from './types';
 import { chance, gauss, rand, weightedPick } from '../core/rng';
@@ -20,9 +20,37 @@ const RNG: Rng = { rand, gauss };
 export interface SwingCall {
   z: number;
   run: [boolean, boolean, boolean];
-  /** 玩家按了「挥棒」：一定挥，朝着挥棒范围（3×3，c 是中心格的列、行：好球带 9×9 的格，-1 和 9 是外面一圈） */
+  /** 玩家按了「挥棒」：一定挥，挥棒热区对着挥棒点（c 是中心格的列、行：好球带 9×9 的格，-1 和 9 是外面一圈） */
   commit?: boolean;
   c?: [number, number];
+  /** 这一球发动的战术 */
+  tac?: HumanTac;
+}
+
+/** 这个战术现在能不能发动（看垒上、出局数、好球数） */
+export function tacOk(tac: HumanTac, bases: readonly unknown[], outs: number, strikes: number): boolean {
+  const [b1, b2, b3] = bases.map(Boolean);
+  switch (tac) {
+    case 'steal':
+      return (b1 && !b2) || (b2 && !b3);
+    case 'doubleSteal':
+      return (b1 && b2 && !b3) || (b1 && b3 && !b2);
+    case 'bunt':
+      return (b1 || b2) && outs < 2 && strikes < 2;
+    case 'squeeze':
+      return b3 && outs < 2;
+    case 'hitRun':
+      return b1 && !b2;
+  }
+}
+
+/** 战术里哪些跑者起跑（一、二、三垒） */
+function tacGo(tac: HumanTac, bases: readonly unknown[]): [boolean, boolean, boolean] {
+  const [b1, b2, b3] = bases.map(Boolean);
+  if (tac === 'steal') return b1 && !b2 ? [true, false, false] : [false, true, false];
+  if (tac === 'doubleSteal') return b1 && b2 && !b3 ? [true, true, false] : [true, false, false];
+  if (tac === 'hitRun') return [true, false, false];
+  return [false, false, false];
 }
 
 /** 玩家（或教练）这一球的投球指令：球种与瞄准点（好球带坐标） */
@@ -199,6 +227,8 @@ export class Match {
   needPA = true;
   needHalf = true;
   stealers: number[] = [];
+  /** 一三垒双盗：一垒跑者盗二垒时，三垒跑者趁传球冲本垒 */
+  homeSteal = false;
   private leadPenalty = 0;
   private leader: -1 | 0 | 1 = -1;
   private candW: [number | null, number | null] = [null, null];
@@ -1145,7 +1175,9 @@ export class Match {
       }
     }
 
-    let tac = off.tactic;
+    // 玩家这一球的战术（发动不了就当没有）
+    const htac = human?.tac && tacOk(human.tac, this.bases, this.outs, this.strikes) ? human.tac : null;
+    let tac = htac ?? off.tactic;
     if (tac === 'auto') tac = 'swing';
     // 两好球后不再牺牲触击（触击界外就是三振），改为轻打
     if (tac === 'bunt' && this.strikes === 2) {
@@ -1154,7 +1186,8 @@ export class Match {
     }
     // 跑者启动：玩家按自己的指示，AI 按这一球之前定下的打算
     this.stealers = [];
-    const go = human ? human.run : this.goAI;
+    const go = human ? (htac ? tacGo(htac, this.bases) : human.run) : this.goAI;
+    this.homeSteal = htac === 'doubleSteal' && !!this.bases[0] && !!this.bases[2] && !this.bases[1];
     if (go[1] && this.bases[1] && !this.bases[2]) this.stealers.push(1);
     if (go[0] && this.bases[0] && (!this.bases[1] || this.stealers.includes(1))) this.stealers.push(0);
     // 三垒跑者提前跑：打出去就冲本垒
@@ -1483,6 +1516,14 @@ export class Match {
     const moves: RunnerMove[] = [];
     let anyOut = false;
     const texts: string[] = [];
+    // 一三垒双盗：捕手看穿了就不传二垒、守住三垒跑者（一垒跑者白拿二垒）；上当传二垒，三垒跑者冲本垒
+    let homeTry: RunnerSlot | null = null;
+    let thrown2 = true;
+    if (this.homeSteal && this.bases[2] && order.length === 1 && order[0] === 0) {
+      homeTry = this.bases[2];
+      thrown2 = !chance(clamp(0.3 + (cat.a.catching - 50) * 0.006 + (pitchout ? 0.3 : 0), 0.1, 0.8));
+    }
+    this.homeSteal = false;
     order.forEach((idx, n) => {
       const r = this.bases[idx];
       if (!r || this.outs >= 3) return;
@@ -1500,6 +1541,7 @@ export class Match {
       if (pitchout) ps -= 0.35;
       if (idx === 1) ps -= 0.1;
       if (n > 0) ps = 0.97; // 捕手只传领先跑者
+      if (homeTry && !thrown2) ps = 0.97; // 捕手不传二垒
       this.bases[idx] = null;
       if (chance(clamp(ps, 0.05, 0.98))) {
         this.bases[idx + 1] = r;
@@ -1517,7 +1559,28 @@ export class Match {
       }
     });
     this.stealers = [];
+    if (homeTry && this.bases[2] === homeTry) {
+      const rp3 = off.get(homeTry.pid);
+      if (!thrown2) texts.push(`${nm(cat)}没有上当，守住了三垒跑者${nm(rp3)}。`);
+      else if (this.outs < 3) {
+        this.bases[2] = null;
+        const ph = clamp(0.55 + 0.25 * z(rp3.a.speed) + 0.1 * z(rp3.a.baserun) - 0.1 * z(cat.a.arm), 0.15, 0.9);
+        if (chance(ph)) {
+          moves.push({ pid: homeTry.pid, from: 3, to: 4, out: false });
+          this.scoreRun(homeTry, null);
+          texts.push(`三垒跑者${nm(rp3)}趁传球冲回本垒！`);
+          anyOut = true;
+        } else {
+          this.outs++;
+          dfn.pbox(dfn.pitcher).outs++;
+          moves.push({ pid: homeTry.pid, from: 3, to: 4, out: true });
+          texts.push(`三垒跑者${nm(rp3)}冲本垒，被传回本垒触杀！`);
+          anyOut = true;
+        }
+      }
+    }
     if (texts.length) this.emit('steal', texts.join(' '), { moves, big: anyOut });
+    if (homeTry) this.checkWalkoff();
   }
 
   // ======================= 触击 =======================
