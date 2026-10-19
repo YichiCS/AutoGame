@@ -21,7 +21,7 @@
 
 ## 开发
 
-- **更新规则（必读）**：不直接修改 main。每次更新某个游戏，从 main 拉一个 `<游戏id>-v<版本号>` 分支（如 `pixel-baseball-v0.2.0`），在分支上改完再合并回 main；改游戏厅本身用 `hub-v<版本号>`。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- **更新规则（必读）**：不直接修改 main。每次更新某个游戏，从 main 拉一个 `<游戏id>-v<版本号>` 分支（如 `pixel-baseball-v2.2.0`），在分支上改完再合并回 main；改游戏厅本身用 `hub-v<版本号>`。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - **框架说明**：目录结构、`game.json` 字段、存档包格式、悬浮标签——见 [docs/architecture.md](docs/architecture.md)。
 - **本地预览**（需要 Node.js 20+）：`node scripts/serve.mjs`，打开 <http://localhost:8080/AutoGame/>。
 - **检查**：`node scripts/check.mjs`。

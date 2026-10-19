@@ -1,7 +1,7 @@
 // 游戏厅首页：游戏列表 + 存档中心（分游戏 / 全部 导出、导入、清除）
 import { loadRegistry, describeData, prepareImport } from './registry.js';
 import { readGameData, writeGameData, clearGameData, isEmpty, dataBytes } from './storage.js';
-import { makeBundle, parseBundle, bundleFileName, compareVersions, parseVersion, detectInGameExport } from './bundle.js';
+import { makeBundle, parseBundle, bundleFileName, compareVersions, parseVersion, renumberVersion, detectInGameExport } from './bundle.js';
 import { whoIsRunning } from './presence.js';
 import { $, esc, openDialog, toast, download, pickFile, formatDate, timeAgo, formatBytes } from './ui.js';
 import { startStarfield } from './starfield.js';
@@ -429,17 +429,19 @@ async function previewImport(fileName, bundle, ids) {
     }
     const info = await describeData(g, entry.data);
     const notes = [];
-    if (entry.version && compareVersions(entry.version, g.version) > 0) {
-      notes.push(`存档来自更新的版本 v${esc(entry.version)}，当前游戏是 v${esc(g.version)}，可能读不出来。`);
-    } else if (entry.version && parseVersion(entry.version)[0] < parseVersion(g.version)[0]) {
-      notes.push(`存档来自较早的大版本 v${esc(entry.version)}，当前游戏是 v${esc(g.version)}，可能不兼容。`);
+    const saved = entry.version && renumberVersion(entry.version, g.legacyVersions);
+    const savedLabel = !saved ? '?' : saved === entry.version ? saved : `${saved}（原 v${entry.version}）`;
+    if (saved && compareVersions(saved, g.version) > 0) {
+      notes.push(`存档来自更新的版本 v${esc(savedLabel)}，当前游戏是 v${esc(g.version)}，可能读不出来。`);
+    } else if (saved && parseVersion(saved)[0] < parseVersion(g.version)[0]) {
+      notes.push(`存档来自较早的大版本 v${esc(savedLabel)}，当前游戏是 v${esc(g.version)}，可能不兼容。`);
     }
     if (hasData(id)) {
       anyExisting = true;
       const latest = latestOf(state.saves.get(id).info);
       notes.push(`会覆盖本机现有的存档${latest ? `（最近保存 ${esc(timeAgo(latest))}）` : ''}。`);
     }
-    items.push(`<li class="pick"><label><input type="checkbox" name="game" value="${esc(id)}" checked> <b>${esc(g.name)}</b><span class="muted">存档 v${esc(entry.version || '?')} · 当前 v${esc(g.version)}</span></label>
+    items.push(`<li class="pick"><label><input type="checkbox" name="game" value="${esc(id)}" checked> <b>${esc(g.name)}</b><span class="muted">存档 v${esc(savedLabel)} · 当前 v${esc(g.version)}</span></label>
       ${info && info.slots && info.slots.length ? `<ul class="slots">${slotsHTML(info)}</ul>` : ''}
       ${notes.map((n) => `<p class="warn">${n}</p>`).join('')}</li>`);
   }

@@ -41,7 +41,7 @@ CHANGELOG.md             游戏厅的更新日志
 {
   "name": "AutoGame",
   "title": "AutoGame 像素游戏厅",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "repository": "https://github.com/YichiCS/AutoGame",
   "games": ["research-simulator", "pixel-baseball"]
 }
@@ -61,7 +61,8 @@ CHANGELOG.md             游戏厅的更新日志
   "id": "pixel-baseball",
   "name": "像素甲子园",
   "subtitle": "监督之路",
-  "version": "1.0.0",
+  "version": "2.1.0",
+  "legacyVersions": { "0.1.0": "1.0.0", "1.0.0": "2.0.0", "2.0.0": "2.1.0" },
   "description": "以日本高中棒球为题材的像素风挂机经营……",
   "tags": ["挂机", "经营模拟", "体育"],
   "entry": "dist/index.html",
@@ -84,7 +85,8 @@ CHANGELOG.md             游戏厅的更新日志
 | `id` | ✓ | 和目录名一致；小写字母、数字、连字符。用于分支名、存档包、悬浮标签，定下来就不再改 |
 | `name` | ✓ | 显示名 |
 | `subtitle` | | 副标题 / 英文名 |
-| `version` | ✓ | `x.y.z`，每个 `<id>-v<版本号>` 分支都要升；有 `package.json` 的要保持一致 |
+| `version` | ✓ | `x.y.z`，每个 `<id>-v<版本号>` 分支都要升，规则见 [CONTRIBUTING.md](../CONTRIBUTING.md#版本号怎么升)；有 `package.json` 的要保持一致 |
+| `legacyVersions` | | 旧版本号 → 新版本号的对照表，只有重新编号过的游戏才有。旧存档包里记的是旧版本号，游戏厅导入时先按这张表换算再和 `version` 比较。表里的旧版本号必须比 `version` 小（以后的版本号不会再和它们重复），新版本号不能比 `version` 大 |
 | `description` | ✓ | 一两句话的简介，显示在游戏卡片上 |
 | `tags` | | 标签 |
 | `entry` | ✓ | 入口 HTML（相对游戏目录）。必须引入 `hub/dock.js` |
@@ -105,7 +107,7 @@ CHANGELOG.md             游戏厅的更新日志
   - `localStorage`：键名列表。`"abc"` 只匹配键 `abc`；`"abc:*"` 匹配所有以 `abc:` 开头的键。
   - `indexedDB`：数据库名列表（整个库都算这个游戏的）。
 - 游戏厅只读写声明过的部分；检查脚本保证不同游戏的声明不重叠，且不使用游戏厅保留的 `autogame` 前缀。
-- 新游戏请用 `<id>:` 作为 localStorage 前缀、`<id>` 作为数据库名。早于游戏厅的两个游戏沿用了原来的名字（`research-sim-*`、`pixel-koshien`），这样它们在原地址（`yichics.github.io/Research-Simulator/` 等）积累的存档，在游戏厅里打开时直接就在。像素甲子园 v1.0.0 改版为挂机游戏后，新存档改用 `pixel-baseball:save`；旧版的 `pixel-koshien:*` 和 IndexedDB `pixel-koshien` 仍然声明，这样旧存档还能在存档中心里导出备份或清除。
+- 新游戏请用 `<id>:` 作为 localStorage 前缀、`<id>` 作为数据库名。早于游戏厅的两个游戏沿用了原来的名字（`research-sim-*`、`pixel-koshien`），这样它们在原地址（`yichics.github.io/Research-Simulator/` 等）积累的存档，在游戏厅里打开时直接就在。像素甲子园 v2.0.0（原 v1.0.0）改版为挂机游戏后，新存档改用 `pixel-baseball:save`；旧版的 `pixel-koshien:*` 和 IndexedDB `pixel-koshien` 仍然声明，这样旧存档还能在存档中心里导出备份或清除。
 
 游戏厅自己的数据：`autogame:hub`（上次全部导出的时间）、`autogame:dock`（悬浮标签在每个游戏里的位置）。
 
@@ -139,10 +141,10 @@ IndexedDB 里的键和值要能用 JSON 表示（字符串、数字、布尔、n
   "format": "autogame-saves",
   "formatVersion": 1,
   "exportedAt": "2026-10-18T06:30:00.000Z",
-  "hub": { "version": "1.0.0" },
+  "hub": { "version": "1.1.0" },
   "games": {
-    "research-simulator": { "name": "科研模拟器", "version": "0.1.0", "data": { "localStorage": { … }, "indexedDB": [] } },
-    "pixel-baseball":     { "name": "像素甲子园", "version": "1.0.0", "data": { … } }
+    "research-simulator": { "name": "科研模拟器", "version": "1.3.2", "data": { "localStorage": { … }, "indexedDB": [] } },
+    "pixel-baseball":     { "name": "像素甲子园", "version": "2.1.0", "data": { … } }
   }
 }
 ```
@@ -154,7 +156,7 @@ IndexedDB 里的键和值要能用 JSON 表示（字符串、数字、布尔、n
 - **导出**：读出声明的数据，打包下载。「导出全部存档」会记下时间，超过 7 天没备份时存档中心会提醒。
 - **导入**：
   1. 解析文件。如果是某个游戏在游戏内导出的单局存档（按 `saves.inGameExport.match` 里的字段识别），提示玩家去游戏里按 `hint` 导入。
-  2. 预览：列出文件里的游戏、存档内容、版本对比；存档来自更新的版本或更早的主版本时给出提醒；会覆盖现有存档的标出来。玩家勾选要导入的游戏。
+  2. 预览：列出文件里的游戏、存档内容、版本对比（存档包里的旧版本号先按 `legacyVersions` 换算）；存档来自更新的版本或更早的主版本时给出提醒；会覆盖现有存档的标出来。玩家勾选要导入的游戏。
   3. 检查这些游戏是否正开在别的标签页里（见下文），是的话要求先关掉。
   4. 可选：先下载一份本机现有存档的备份。
   5. 对每个游戏：**整体替换**——先清掉该游戏已声明的全部数据，再写入文件里的数据；不属于该游戏声明范围的键和库会被忽略。写入失败时恢复成导入前的数据。

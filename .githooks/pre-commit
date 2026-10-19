@@ -10,14 +10,14 @@ branch=$(git symbolic-ref --short -q HEAD)
 case "$branch" in
   main|master)
     echo "✗ 不要直接在 $branch 上提交。" >&2
-    echo "  先拉分支再改：git switch -c <游戏id>-v<版本号>   例如 pixel-baseball-v0.2.0；改游戏厅框架用 hub-v1.1.0" >&2
+    echo "  先拉分支再改：git switch -c <游戏id>-v<版本号>   例如 pixel-baseball-v2.2.0；改游戏厅框架用 hub-v1.2.0" >&2
     echo "  改完后合并回 main：git switch main && git merge --no-ff <分支名>" >&2
     exit 1
     ;;
 esac
 
 if ! printf '%s' "$branch" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
-  echo "✗ 分支名「$branch」不符合规则：应为 <游戏id>-v<版本号>，例如 research-simulator-v0.2.0；改游戏厅框架用 hub-v1.1.0" >&2
+  echo "✗ 分支名「$branch」不符合规则：应为 <游戏id>-v<版本号>，例如 research-simulator-v1.4.0；改游戏厅框架用 hub-v1.2.0" >&2
   echo "  改名：git branch -m <新分支名>" >&2
   exit 1
 fi

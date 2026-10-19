@@ -16,6 +16,7 @@ function normalize(raw, id, dir) {
     url: new URL(raw.entry || 'index.html', dir).href,
     coverUrl: raw.cover ? new URL(raw.cover, dir).href : null,
     tags: Array.isArray(raw.tags) ? raw.tags : [],
+    legacyVersions: raw.legacyVersions && typeof raw.legacyVersions === 'object' && !Array.isArray(raw.legacyVersions) ? raw.legacyVersions : {},
     saves: {
       ...saves,
       localStorage: Array.isArray(saves.localStorage) ? saves.localStorage : [],

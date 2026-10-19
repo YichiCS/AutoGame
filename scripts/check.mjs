@@ -115,6 +115,17 @@ for (const id of ids) {
     }
     if (!changelogHas(join(dir, 'CHANGELOG.md'), g.version)) err(`games/${id}/CHANGELOG.md 里没有 v${g.version} 的条目`, join(dir, 'CHANGELOG.md'));
   }
+  // 旧版本号 → 新版本号：旧的必须比当前版本小（以后的版本号不会和它重复），新的不能比当前版本大
+  const lv = g.legacyVersions;
+  if (lv !== undefined) {
+    if (!lv || typeof lv !== 'object' || Array.isArray(lv)) E('legacyVersions 必须是 { "旧版本号": "新版本号" } 对象');
+    else
+      for (const [from, to] of Object.entries(lv)) {
+        if (!SEMVER.test(from) || !SEMVER.test(to)) E(`legacyVersions 里的「${from}」→「${to}」不是 x.y.z 格式`);
+        else if (SEMVER.test(g.version || '') && (cmpVer(from, g.version) >= 0 || cmpVer(to, g.version) > 0))
+          E(`legacyVersions 里的 ${from} → ${to}：旧版本号必须比当前版本 v${g.version} 小，新版本号不能比它大`);
+      }
+  }
   if (g.tags !== undefined && !(Array.isArray(g.tags) && g.tags.every(isStr))) E('tags 必须是字符串数组');
   if (g.color !== undefined && !/^#[0-9a-fA-F]{3,8}$/.test(g.color)) E(`color「${g.color}」不是 #rrggbb 格式`);
   if (g.cover !== undefined && !isFile(join(dir, g.cover || ''))) E(`cover 指向的文件不存在：${g.cover}`);
@@ -203,7 +214,7 @@ if (args.branch !== null) {
   console.log(`分支 ${args.branch}`);
   const m = BRANCH.exec(args.branch);
   if (!m) {
-    err(`分支名「${args.branch}」不符合规则：应为 <游戏id>-v<版本号>，例如 pixel-baseball-v0.2.0；修改游戏厅框架用 hub-v<版本号>`);
+    err(`分支名「${args.branch}」不符合规则：应为 <游戏id>-v<版本号>，例如 pixel-baseball-v2.2.0；修改游戏厅框架用 hub-v<版本号>`);
   } else {
     const [, id, ver] = m;
     const isHub = id === HUB_ID;

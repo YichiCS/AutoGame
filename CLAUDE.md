@@ -9,6 +9,7 @@
 - 改游戏厅框架（`hub/`、`index.html`、`scripts/`、`docs/`、根目录文件）用 `hub-v<新版本号>` 分支。
 - 一个分支只改一个游戏的目录；游戏分支只有在收录新游戏时才能改 `autogame.json`（登记 id）和 `README.md`。
 - 每次都要：升版本号（`game.json` 的 `version`，有 `package.json` 的同步改；hub 改 `autogame.json` 的 `version`），在对应的 `CHANGELOG.md` 顶部写 `## v<版本号> — 日期`。
+- 版本号规则（所有游戏和 hub 统一）：修 bug / 调数值 / 改文案 → 修订号；新内容、新玩法、改规则（改动再大，旧存档能接着玩）→ 次版本；旧存档没法接着玩 → 主版本。收录时能完整玩的游戏从 1.0.0 开始。主版本号决定游戏厅导入存档时的「不兼容」提醒，不要多升也不要漏升。旧版本号对照和 `legacyVersions` 见 CONTRIBUTING.md。
 - `game.json` 里有 `build` 的游戏：提交前在游戏目录构建，把构建产物（如 `dist/index.html`）一起提交——Pages 不会替你构建。
 - 提交前运行 `node scripts/check.mjs --branch <分支名> --base main`。
 - 合并 / 推送前问一下用户，除非用户已经明确要求。
@@ -17,7 +18,7 @@
 ## 存档
 
 - 存档只在玩家浏览器里（localStorage / IndexedDB），游戏厅按 `game.json` 的 `saves` 声明来导出、导入、清除。
-- 不要改已有的存档键名 / 库名；必须改时在游戏里写迁移并升主版本号。新增存储位置要同步 `saves`。
+- 不要改已有的存档键名 / 库名；必须改时在游戏里写迁移，旧键名继续留在 `saves` 里（迁移后旧存档能接着玩就只升次版本，不能才升主版本）。新增存储位置要同步 `saves`。
 - 新游戏：localStorage 键用 `<id>:` 前缀，IndexedDB 库名用 `<id>`；`autogame` 开头的名字是游戏厅保留的。
 - 游戏的 `save-adapter.js`（可选）只给游戏厅用：`describe(data)` 显示存档详情，`beforeImport(data)` 导入前调整数据。
 
