@@ -10,7 +10,7 @@ import { clamp, z } from '../core/util';
 import { aptOf, has } from '../core/attrs';
 import { PITCH_DEFS } from '../data/pitches';
 import * as AI from './ai';
-import { coverShape, type CoverShape, hotZones, locOf, nearZone, pickoffSkill, pitchQuality, rangeCenter, sampleLanding, spreadOf, swingOutcome, type Loc, type PitcherNow, type Rng, type Spread } from './pitching';
+import { batSide, coverShape, type CoverShape, hotZones, locOf, nearZone, pickoffSkill, pitchQuality, rangeCenter, sampleLanding, spreadOf, swingOutcome, type Loc, type PitcherNow, type Rng, type Spread } from './pitching';
 import { batterHunt, coachThrow, leadFor, mindSpreads, pickOpt, pitcherMind, type Mind } from './brain';
 
 /** 比赛用全局随机数（LiveGame 会把它换成比赛自己的状态） */
@@ -362,7 +362,8 @@ export class Match {
   /** 这一球打者的挥棒热区形状（打者、第几个打席、这个打席第几球决定；每一球的手感不同） */
   swingShape(): CoverShape {
     const b = this.batter();
-    return coverShape(b.a.contact, hash32(b.id, this.paNo * 37 + this.paNp, 13));
+    const p = this.dfn.get(this.dfn.pitcher);
+    return coverShape(b, batSide(b, p.throws), hash32(b.id, this.paNo * 37 + this.paNp, 13));
   }
 
   /** 申告敬远（玩家）：不投球，直接保送打者 */

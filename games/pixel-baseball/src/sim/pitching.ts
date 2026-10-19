@@ -487,20 +487,36 @@ export interface CoverShape {
   lobes: { x: number; y: number; sh: number; sv: number; w: number }[];
 }
 
+/** 手感起伏的幅度（1 = 一般）：选球眼和精神越好越稳，差的人一球大一球小 */
+export function coverSteady(b: Player): number {
+  const s = clamp((b.a.eye + b.a.mental) / 200, 0, 1);
+  return 1.45 - 0.9 * s;
+}
+
 /**
- * 这一球的挥棒热区：主体大小看击球能力，乘上这一球的手感（每一球都不太一样），旁边再随机长出两块小的——形状不规则。
+ * 这一球的挥棒热区：主体大小看击球能力，乘上这一球的手感（每一球都不太一样；选球眼、精神越好起伏越小），
+ * 旁边再随机长出两块小的——形状不规则；打者类型再往他拿手的方向多长一块（低球打者往下、拉打型往内角……）。
  * seed 由打者、第几个打席、这个打席第几球决定（不用比赛的随机数，画面上看到的就是判定用的）。
  */
-export function coverShape(con: number, seed: number): CoverShape {
+export function coverShape(b: Player, side: 'R' | 'L', seed: number): CoverShape {
   const r = makeRng(seed);
-  const [sh, sv] = coverWidth(con);
-  const feel = clamp(r.gauss(1, 0.14), 0.7, 1.3);
-  const lobes = [{ x: r.gauss(0, 0.04), y: r.gauss(0, 0.04), sh: sh * feel * clamp(r.gauss(1, 0.12), 0.75, 1.25), sv: sv * feel * clamp(r.gauss(1, 0.12), 0.75, 1.25), w: 1 }];
+  const [sh, sv] = coverWidth(b.a.contact);
+  const st = coverSteady(b);
+  const feel = clamp(r.gauss(1, 0.14 * st), 1 - 0.3 * st, 1 + 0.3 * st);
+  const jit = () => clamp(r.gauss(1, 0.12 * st), 1 - 0.25 * st, 1 + 0.25 * st);
+  const ht = hotType(b);
+  const main = ht === 'middle' ? 1.05 : 1;
+  const lobes = [{ x: r.gauss(0, 0.04 * st), y: r.gauss(0, 0.04 * st), sh: sh * feel * main * jit(), sv: sv * feel * main * jit(), w: 1 }];
   for (let k = 0; k < 2; k++) {
     const a = r.rand() * Math.PI * 2;
     const d = (0.45 + r.rand() * 0.45) * sh * feel;
-    lobes.push({ x: Math.cos(a) * d, y: Math.sin(a) * d * 0.7, sh: sh * feel * 0.55, sv: sv * feel * 0.55, w: 0.55 + r.rand() * 0.35 });
+    lobes.push({ x: Math.cos(a) * d, y: Math.sin(a) * d * 0.7, sh: sh * feel * 0.55, sv: sv * feel * 0.55, w: (0.55 + r.rand() * 0.35) * (ht === 'even' ? 1.12 : 1) });
   }
+  // 拿手的方向（好球带单位：x 向右、y 向上；右打者内角在 x < 0）
+  const inside = side === 'R' ? -1 : 1;
+  const dir: [number, number] | null =
+    ht === 'low' ? [0, -1] : ht === 'high' ? [0, 1] : ht === 'pull' ? [inside, 0] : ht === 'oppo' ? [-inside, 0] : null;
+  if (dir) lobes.push({ x: dir[0] * 0.75 * sh * feel, y: dir[1] * 0.95 * sv * feel, sh: sh * feel * 0.6, sv: sv * feel * 0.6, w: 0.88 });
   return { lobes };
 }
 
