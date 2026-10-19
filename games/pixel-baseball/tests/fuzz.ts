@@ -5,6 +5,7 @@ import { autoLineup } from '../src/core/team';
 import { Match, type TeamState } from '../src/sim/match';
 import type { MatchRules, OffTactic, TeamSetup, PitchApproach, Alignment } from '../src/sim/types';
 import type { Player, Pos } from '../src/core/types';
+import { GRID, cellCenter } from '../src/sim/pitching';
 
 seedRng(4242);
 const N = Number(process.argv[2] ?? 300);
@@ -60,7 +61,8 @@ function randomCommand(m: Match, me: TeamState): void {
   const batting = m.off === me;
   if (batting) {
     if (rand() < 0.35) me.tactic = pick(OFF);
-    if (rand() < 0.15) me.guess = pick(['FB', 'BR', null] as const);
+    // 这一球狙哪一格、跑者跑不跑（有时不下指令，交给教练）
+    if (rand() < 0.85) me.swingNext = { z: randInt(-1, 8), run: [rand() < 0.15, rand() < 0.08, rand() < 0.1] };
     if (rand() < 0.03) {
       const b = me.bench();
       if (b.length) m.pinchHit(me, me.batIdx, pick(b).id);
@@ -72,11 +74,16 @@ function randomCommand(m: Match, me: TeamState): void {
     }
   } else {
     if (rand() < 0.3) me.def.approach = pick(APP);
-    if (rand() < 0.2) me.call = { type: pick(['FB', 'SL', 'CB', 'FK', null] as const), intent: pick(['zone', 'edge', 'chase', null] as const) };
+    // 这一球投什么、瞄哪一格（有时不下指令，交给教练）
+    if (rand() < 0.85) {
+      const p = me.get(me.pitcher);
+      const [x, y] = cellCenter(randInt(0, GRID - 1), randInt(0, GRID - 1));
+      me.callNext = { type: rand() < 0.5 || !p.pitches.length ? 'FB' : pick(p.pitches).type, x, y };
+    }
     if (rand() < 0.3) me.def.align = pick(ALI);
     if (rand() < 0.04) me.def.ibb = true;
     if (rand() < 0.04) me.def.pitchout = true;
-    if (rand() < 0.04) m.ui(() => m.pickoff());
+    if (rand() < 0.04) m.ui(() => m.pickoff(randInt(-1, 2)));
     if (rand() < 0.03) m.moundVisit(me);
     if (rand() < 0.03) {
       const b = me.bench();

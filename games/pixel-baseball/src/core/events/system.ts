@@ -30,7 +30,7 @@ def('welcome', {
         '',
         '球队会自己运转：每天按你定下的方针训练，比赛日自动排出阵容、自动比赛。你的工作是定方针、修设施、在关键时刻拿主意——需要你决定的事出现时，时间会自动暂停。',
         '',
-        '右边的「方针」页可以调整训练和比赛的方针，也可以把小事交给托管；「设施」页用部费升级设施；「球员」页可以看每个人的详细能力和变化球。',
+        '「方针」页可以调整训练和比赛的方针，也可以把小事交给托管；「设施」页用部费升级设施；「球员」页可以看每个人的详细能力和变化球。',
         '',
         `校方今年的期待：${G.club.goal?.text ?? '好好干'}。目标是——甲子园！`,
       ),
@@ -54,7 +54,7 @@ def('newClass', {
         '值得关注的新人：',
         ...top.map((p) => `· ${fullName(p)}：${prospectBrief(p)}`),
         special.length ? '' : false,
-        special.length ? `特待生 / 推荐入部：${special.map(fullName).join('、')}` : false,
+        special.length ? `特待生 / 提前内定：${special.map(fullName).join('、')}` : false,
       ),
       choices: [OK('欢迎加入！')],
     };
@@ -69,10 +69,10 @@ def('captain', {
   cat: 'team',
   build: (c) => {
     const ps = (c.cands as number[]).map((id) => G.players[id]).filter(Boolean);
+    // best 只给托管用（界面上不标出来，也不附他的信息卡）
     const best = ps.slice().sort((a, b) => captainScore(b) - captainScore(a))[0];
     return {
       title: '新队伍：任命主将',
-      pid: best?.id,
       text: lines('三年级生引退了。以二年级为中心的新队伍就此起步。', '谁来担任主将？主将的性格和威信会影响全队的默契与干劲。'),
       choices: [
         ...ps.map((p) => ({
@@ -235,12 +235,12 @@ def('offers', {
 def('mgrLevel', {
   cat: 'career',
   build: (c) => {
+    // sug 只给托管用；选项按固定顺序排，不把它放在最前面
     const sug = suggestSkill();
-    const order = [sug, ...MGR_SKILLS.filter((k) => k !== sug)];
     return {
       title: `监督升级（Lv ${c.level}）`,
       text: lines('执教经验积累起来了。这次重点提升哪一项能力？（+3）'),
-      choices: order.map((k: MgrSkill) => ({
+      choices: MGR_SKILLS.map((k: MgrSkill) => ({
         label: `${MGR_SKILL_NAME[k]}（${Math.round(G.mgr.skills[k])}）`,
         hint: MGR_SKILL_DESC[k],
         def: k === sug,
@@ -403,10 +403,10 @@ def('scholarProspect', {
       pid: p?.id,
       text: monster
         ? lines(`报纸上管他叫「怪物」：${p ? prospectBrief(p) : ''}`, '他和家人来参观了练习。全国的名门都在抢他。')
-        : lines(`中学的教练推荐了一名球员：${p ? prospectBrief(p) : ''}`, `他对${mySchool().name}很感兴趣。`),
+        : lines(`中学的教练介绍了一名球员：${p ? prospectBrief(p) : ''}`, `他对${mySchool().name}很感兴趣。`),
       choices: [
         { label: `给特待生待遇（${cost} 万円）`, hint: '一定会来', def: G.funds >= cost + 100, disabled: G.funds < cost, apply: () => { if (!p) return ''; spend(cost, 'scholar'); p.joined = 'scholar'; commit(p); return `${fullName(p)} 答应 4 月入学！`; } },
-        { label: '普通推荐入学', hint: `也许会来（${monster ? 20 : 55}%）`, apply: () => { if (!p) return ''; if (chance(monster ? 0.2 : 0.55)) { commit(p); return `${fullName(p)} 决定 4 月入学！`; } delete G.players[p.id]; return `${fullName(p)} 最后去了别的学校。`; } },
+        { label: '普通的入学邀请', hint: `也许会来（${monster ? 20 : 55}%）`, apply: () => { if (!p) return ''; if (chance(monster ? 0.2 : 0.55)) { commit(p); return `${fullName(p)} 决定 4 月入学！`; } delete G.players[p.id]; return `${fullName(p)} 最后去了别的学校。`; } },
         { label: '这次就算了', def: G.funds < cost + 100, apply: () => { if (p && !G.incoming.includes(p.id)) delete G.players[p.id]; return ''; } },
       ],
     };

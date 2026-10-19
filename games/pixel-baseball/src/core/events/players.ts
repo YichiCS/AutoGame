@@ -1,10 +1,10 @@
 // 随机事件：球员个人、伤病、训练与球种
 import type { AttrKey, Delivery, PitchType, Player, Pos } from '../types';
-import { POS_NAME } from '../types';
+import { FIELD_POS, POS_NAME } from '../types';
 import { G, log, milestone, mySchool, note } from '../state';
 import { chance, hash32, pick, randInt } from '../rng';
 import { clamp } from '../util';
-import { fullName, has, isPitcher, overall, PERS_NAME } from '../attrs';
+import { ATTR_NAME, fullName, has, isPitcher, overall, PERS_NAME, pitchable, posKeyAttrs, posRating, refreshPos } from '../attrs';
 import { addExp, maxPitchCount, maxPitchLv } from '../growth';
 import { pickNewPitch } from '../player';
 import { injure } from '../daily';
@@ -232,12 +232,12 @@ def('copyPro', {
 
 def('secretPitch', {
   cat: 'training', weight: 2, cd: 80,
-  ctx: () => { const p = pickPlayer((x) => !isPitcher(x) && x.a.arm >= 62 && (x.apt.P ?? 0) < 50); return p ? { pid: p.id } : null; },
+  ctx: () => { const p = pickPlayer((x) => !isPitcher(x) && x.a.arm >= 62 && !pitchable(x)); return p ? { pid: p.id } : null; },
   build: (c) => ({
     title: '偷偷练投球', pid: P(c)?.id,
     text: `野手 ${N(c)} 每天练习结束后都在牛棚偷偷练投球。他的肩膀很强，球速居然有模有样。`,
     choices: [
-      { label: '让他兼任投手', def: true, apply: () => { const p = P(c); if (!alive(c)) return ''; p.apt.P = Math.max(p.apt.P ?? 0, 55); p.a.control = Math.min(60, p.a.control + 15); p.a.stamina = Math.min(60, p.a.stamina + 15); p.a.stuff = Math.min(60, p.a.stuff + 10); p.caps.control = Math.max(p.caps.control, 65); p.caps.stamina = Math.max(p.caps.stamina, 65); p.caps.stuff = Math.max(p.caps.stuff, 60); if (!p.pitches.length) p.pitches.push({ type: pickNewPitch([], 'three', 1) ?? 'SL', lv: 1 }); note(p, '开始兼任投手'); return `${p.fam}成了「二刀流」！`; } },
+      { label: '让他兼任投手', def: true, apply: () => { const p = P(c); if (!alive(c)) return ''; for (const [k, d] of [['control', 10], ['stamina', 10], ['stuff', 8]] as const) { p.caps[k] = Math.max(p.caps[k], p.a[k] + d + 8); p.a[k] = Math.min(95, p.a[k] + d); } p.a.velocity = Math.min(p.caps.velocity, p.a.velocity + 2); if (!p.pitches.length) p.pitches.push({ type: pickNewPitch([], 'three', 1) ?? 'SL', lv: 1 }); note(p, '开始兼任投手'); return `${p.fam}成了「二刀流」！`; } },
       { label: '"专心守备"', apply: () => { const p = P(c); if (!alive(c)) return ''; mor(p, -3); return '他有点失落。'; } },
     ],
   }),
@@ -248,7 +248,7 @@ def('switchHit', {
   ctx: () => { const p = pickPlayer((x) => !isPitcher(x) && x.bats === 'R' && x.a.speed >= 60 && x.grade <= 2); return p ? { pid: p.id } : null; },
   build: (c) => ({
     title: '改左打？', pid: P(c)?.id,
-    text: `${N(c)} 脚程很快。有人建议他改成左打——离一垒近一步，内野安打会多很多。`,
+    text: `${N(c)} 脚程很快。有人说他要是改成左打——离一垒近一步，内野安打会多很多。`,
     choices: [
       { label: '改左打', apply: () => { const p = P(c); if (!alive(c)) return ''; p.bats = 'L'; p.a.contact = Math.max(5, p.a.contact - 4); if (!has(p, 'infHit') && p.a.speed >= 60) p.traits.push('infHit'); note(p, '改为左打'); return `${p.fam}改成了左打，暂时还不太习惯。`; } },
       { label: '挑战左右开弓', hint: '更难，但成了就很强', apply: () => { const p = P(c); if (!alive(c)) return ''; p.bats = 'S'; p.a.contact = Math.max(5, p.a.contact - 6); addExp(p, { tech: 20 }); note(p, '挑战左右开弓'); return '左右开弓的特训开始了。'; } },
@@ -415,7 +415,7 @@ def('deliveryChange', {
   ctx: () => { const p = pickPlayer((x) => isPitcher(x) && (x.delivery === 'over' || x.delivery === 'three') && x.a.control < 55 && x.grade <= 2); return p ? { pid: p.id } : null; },
   build: (c) => ({
     title: '改成侧投？', pid: P(c)?.id,
-    text: `${N(c)} 的控球一直不稳定。有人建议他放低手臂改成侧投——球速会慢一点，但球路会刁钻得多，还适合投下沉球、内飘球。`,
+    text: `${N(c)} 的控球一直不稳定。有人提出让他放低手臂改成侧投——球速会慢一点，但球路会刁钻得多，还适合投下沉球、内飘球。`,
     choices: [
       { label: '改侧投', apply: () => { const p = P(c); if (!alive(c)) return ''; p.delivery = 'side'; p.a.velocity = Math.max(100, p.a.velocity - 3); p.a.control = Math.min(p.caps.control, p.a.control + 6); p.caps.control = Math.min(99, p.caps.control + 5); if (p.pitches.length < maxPitchCount(p)) { const t = pickNewPitch(p.pitches.map((x) => x.type), 'side', 2); if (t) p.pitches.push({ type: t, lv: 1 }); } note(p, '改为侧投'); return `${p.fam}改成了侧投。`; } },
       { label: '改下勾投法', hint: '更极端，变化更大', apply: () => { const p = P(c); if (!alive(c)) return ''; p.delivery = 'under'; p.a.velocity = Math.max(100, p.a.velocity - 6); p.a.control = Math.min(p.caps.control, p.a.control + 4); p.a.stuff = Math.min(p.caps.stuff, p.a.stuff + 6); if (p.pitches.length < maxPitchCount(p)) { const t = pickNewPitch(p.pitches.map((x) => x.type), 'under', 3); if (t) p.pitches.push({ type: t, lv: 1 }); } note(p, '改为下勾投法'); return `${p.fam}成了少见的下勾投手！`; } },
@@ -429,17 +429,18 @@ def('posChange', {
   ctx: () => {
     const p = pickPlayer((x) => !isPitcher(x) && x.grade <= 2 && x.pos !== 'C');
     if (!p) return null;
-    const best = (Object.entries(p.apt) as [Pos, number][]).filter(([pos]) => pos !== p.pos && pos !== 'P').sort((a, b) => b[1] - a[1])[0];
-    const to: Pos = p.a.arm >= 60 && p.a.catching >= 50 && chance(0.3) ? 'C' : best?.[0] ?? 'LF';
+    // 除了现在的位置，评价最高的另一个守备位置
+    const best = FIELD_POS.filter((pos) => pos !== p.pos).sort((a, b) => posRating(p, b) - posRating(p, a))[0];
+    const to: Pos = p.a.arm >= 60 && p.a.catching >= 50 && chance(0.3) ? 'C' : best ?? 'LF';
     return { pid: p.id, to };
   },
   build: (c) => {
     const to = c.to as Pos;
     return {
       title: '转换守备位置', pid: P(c)?.id,
-      text: `${N(c)} 现在守${P(c) ? POS_NAME[P(c).pos] : ''}。有人觉得他更适合守${POS_NAME[to]}${to === 'C' ? '——队里正缺捕手' : ''}。`,
+      text: `${N(c)} 现在守${P(c) ? POS_NAME[P(c).pos] : ''}。有人觉得他也能守${POS_NAME[to]}${to === 'C' ? '——队里正缺捕手' : ''}，要不要让他多练练？`,
       choices: [
-        { label: `转${POS_NAME[to]}`, apply: () => { const p = P(c); if (!alive(c)) return ''; p.apt[to] = Math.max(p.apt[to] ?? 15, 70); p.pos = to; note(p, `转为${POS_NAME[to]}`); return `${p.fam}开始练习${POS_NAME[to]}。`; } },
+        { label: `加练${POS_NAME[to]}`, apply: () => { const p = P(c); if (!alive(c)) return ''; const ks = posKeyAttrs(to); for (const k of ks) { p.caps[k] = Math.max(p.caps[k], p.a[k] + 6); p.a[k] = Math.min(95, p.a[k] + 3); } refreshPos(p); note(p, `加练${POS_NAME[to]}`); return `${p.fam}开始加练${POS_NAME[to]}，${ks.map((k) => ATTR_NAME[k]).join('、')}都有提升。${p.pos === to ? `现在他最适合的位置是${POS_NAME[to]}了。` : ''}`; } },
         { label: '维持现在的位置', def: true, apply: () => '' },
       ],
     };

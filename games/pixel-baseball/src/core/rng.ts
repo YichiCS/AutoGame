@@ -5,8 +5,16 @@ let s2 = 0xb7e15162;
 let s3 = 1;
 // Box-Muller 一次产生两个正态值，另一个缓存起来
 let spare: number | null = null;
+/** 事件结果预览时临时换上的随机数来源（分层抽样）；正常游戏里永远是 null */
+let source: (() => number) | null = null;
+
+/** 事件结果预览用：临时替换 rand() 的来源，传 null 恢复。不会改动发生器本身的状态 */
+export function setRandSource(f: (() => number) | null): void {
+  source = f;
+}
 
 export function rand(): number {
+  if (source) return source();
   s0 >>>= 0;
   s1 >>>= 0;
   s2 >>>= 0;

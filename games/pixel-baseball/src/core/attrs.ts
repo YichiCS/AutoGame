@@ -1,5 +1,6 @@
 // 能力值元数据与评价函数
 import type { AttrKey, ExpPool, Player, Pos, BatLine, PitLine, StatBlock, PitchSkill } from './types';
+import { POSITIONS } from './types';
 import { clamp } from './util';
 import { TRAIT_BY_ID } from '../data/traits';
 
@@ -118,11 +119,15 @@ const FIELD_W: Record<Exclude<Pos, 'P'>, Partial<Record<AttrKey, number>>> = {
   RF: { arm: 0.4, fielding: 0.3, speed: 0.2, catching: 0.1 },
 };
 
+/** 左投的人守捕手、二垒、三垒、游击传球不顺 */
+const LEFTY_HARD: readonly Pos[] = ['C', '2B', '3B', 'SS'];
+
+/** 位置适应（0..100）：谁都能守任何位置，好不好只看能力；唯一的例外是左投守捕手和二三游 */
 export function aptOf(p: Player, pos: Pos): number {
-  return p.apt[pos] ?? 15;
+  return p.throws === 'L' && LEFTY_HARD.includes(pos) ? 60 : 100;
 }
 
-/** 在某守备位置的守备价值（含适性） */
+/** 在某守备位置的守备价值 */
 export function fieldAt(p: Player, pos: Pos): number {
   if (pos === 'P') return 0.5 * p.a.fielding + 0.5 * p.a.catching;
   const w = FIELD_W[pos];
@@ -134,8 +139,8 @@ export function fieldAt(p: Player, pos: Pos): number {
   }
   if (has(p, 'glove')) v += 4;
   if (has(p, 'errorProne')) v -= 5;
-  const apt = aptOf(p, pos) / 100;
-  return v * (0.35 + 0.65 * apt) - (1 - apt) * 12;
+  if (aptOf(p, pos) < 100) v -= 15;
+  return v;
 }
 
 const OFF_W: Record<Pos, number> = { P: 0.5, C: 0.5, '1B': 0.76, '2B': 0.58, '3B': 0.64, SS: 0.52, LF: 0.72, CF: 0.6, RF: 0.68 };
@@ -145,8 +150,56 @@ export function batterOverall(p: Player, pos: Pos = p.pos === 'P' ? 'RF' : p.pos
   return batterOffense(p) * w + fieldAt(p, pos) * (1 - w);
 }
 
+/** 投手评价换算到和野手同一把尺子上（同样素质的投手和野手总评差不多），见 tests/rating.ts */
+const P_SCALE = { k: 0.9, c: 10.5 };
+
+/** 在某个位置上的总评（0..100）：投手看投球，其他位置看打击 + 这个位置的守备 */
+export function posRating(p: Player, pos: Pos): number {
+  if (pos === 'P') return clamp(pitcherOverall(p) * P_SCALE.k + P_SCALE.c, 0, 100);
+  return batterOverall(p, pos);
+}
+
+/** 最适合的位置：完全由能力决定 */
+export function bestPos(p: Player): Pos {
+  let best: Pos = 'P';
+  let bv = -Infinity;
+  for (const pos of POSITIONS) {
+    const v = posRating(p, pos);
+    if (v > bv) {
+      bv = v;
+      best = pos;
+    }
+  }
+  return best;
+}
+
+/** 总评：在最适合的位置上的评价 */
 export function overall(p: Player): number {
-  return isPitcher(p) ? pitcherOverall(p) : batterOverall(p);
+  return posRating(p, bestPos(p));
+}
+
+/** AI 用的「能投」：本职投手，或者投球评价接近总评的二刀流。玩家自己可以让任何人投 */
+export function pitchable(p: Player): boolean {
+  return p.pos === 'P' || posRating(p, 'P') >= overall(p) - 8;
+}
+
+/** 某个守备位置最看重的能力（练这个位置时提升） */
+export function posKeyAttrs(pos: Pos): AttrKey[] {
+  if (pos === 'P') return ['control', 'stuff', 'stamina'];
+  return (Object.entries(FIELD_W[pos]) as [AttrKey, number][]).filter(([, w]) => w >= 0.3).map(([k]) => k);
+}
+
+/**
+ * 能力变了以后更新位置（训练方向跟着位置走）。免得在差不多的位置之间来回跳：
+ * 守备位置之间，新的要高出 2 才换；投手和野手之间要高出 5 才换（练投球和练打击是两条路）。
+ */
+export function refreshPos(p: Player): boolean {
+  const b = bestPos(p);
+  if (b === p.pos) return false;
+  const margin = (b === 'P') !== (p.pos === 'P') ? 5 : 2;
+  if (posRating(p, b) < posRating(p, p.pos) + margin) return false;
+  p.pos = b;
+  return true;
 }
 
 /** 星级 1..5（用于潜力、球探评价） */

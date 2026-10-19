@@ -97,7 +97,8 @@ export function drawStadium(o: FieldOpts): HTMLCanvasElement {
   const ctx = c.getContext('2d')!;
   const img = ctx.createImageData(FW, FH);
   const R = localRng(o.seed);
-  const crowdPal = ['#f4f4f4', '#ffcd75', '#94b0c2', '#ef7d57', '#41a6f6', '#a7f070', '#b13e53', '#333c57', '#5d275d'];
+  // 观众：压暗的灰蓝色，不要太花
+  const crowdPal = ['#4a5578', '#56607e', '#3f4a68', '#646b86', '#525873', '#6e6a80'];
   const grassA = hex(o.koshien ? '#3a8f3f' : '#38b764');
   const grassB = hex(o.koshien ? '#327f37' : '#2f9e55');
   const dirt = hex(o.koshien ? '#3b2a24' : '#a0663e');
@@ -160,7 +161,8 @@ export function drawStadium(o: FieldOpts): HTMLCanvasElement {
           const base = alpsLeft ? awayC : homeC;
           const acc = alpsLeft ? awayS : homeS;
           const dim = (c: [number, number, number], f: number): [number, number, number] => [c[0] * f, c[1] * f, c[2] * f];
-          set(x, y, seat < 3 ? dim(acc, 0.85) : seat < 12 ? dim(base, 0.8) : dim(base, 0.55));
+          // 阿尔卑斯看台：两队的颜色，也压暗一些
+          set(x, y, seat < 3 ? dim(acc, 0.6) : seat < 12 ? dim(base, 0.62) : dim(base, 0.45));
         } else {
           const p = R();
           if (seat < 6 && p < 0.7) set(x, y, dim2(hex(crowdPal[(seat + (y >> 2)) % crowdPal.length])));

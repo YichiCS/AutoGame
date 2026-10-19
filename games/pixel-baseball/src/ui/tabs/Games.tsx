@@ -26,18 +26,19 @@ function MyPath(p: { t: Tour }) {
     rows.push({ r, name: t.roundNames[r], opp: isA ? m.b : m.a, my: isA ? m.sa : m.sb, their: isA ? m.sb : m.sa, done: m.done, win: m.w === me, note: m.note, day: t.roundDays[r] });
   });
   return (
-    <div>
+    <div class="glist">
       {rows.map((x) => (
-        <div key={x.r} class="gline">
+        <div key={x.r} class="lrow lr-path">
           <span class="dim">{mdStr(x.day)}</span>
-          <span>{x.name}</span>
-          <span class="grow">{x.note === '轮空' && x.opp === null ? '轮空' : `对 ${short(x.opp)}`}</span>
-          {x.done && x.note !== '轮空' && (
-            <b class={x.win ? 'win' : 'lose'}>
+          <span class="ell">{x.name}</span>
+          <span class="ell">{x.note === '轮空' && x.opp === null ? '轮空' : `对 ${short(x.opp)}`}</span>
+          {x.done && x.note !== '轮空' ? (
+            <b class={`n ${x.win ? 'win' : 'lose'}`}>
               {x.win ? '胜' : '负'} {x.my}-{x.their}
             </b>
+          ) : (
+            <span class="n dim">{x.done ? '' : '未开始'}</span>
           )}
-          {!x.done && <span class="dim">未开始</span>}
         </div>
       ))}
     </div>
@@ -80,14 +81,14 @@ function Bracket(p: { t: Tour }) {
               <summary>
                 {t.roundNames[r]} <span class="dim small">{mdStr(t.roundDays[r])}</span>
               </summary>
-              <div class="matches">
+              <div class="bms">
                 {shown.map((m, i) => {
                   const mine = m.a === me || m.b === me;
                   return (
-                    <div key={i} class={`match ${mine ? 'mine' : ''}`}>
-                      <span class={m.done && m.w === m.a ? 'w' : ''}>{short(m.a)}</span>
+                    <div key={i} class={`bm ${mine ? 'mine' : ''}`}>
+                      <span class={`ell ${m.done && m.w === m.a ? 'w' : ''}`}>{short(m.a)}</span>
                       <span class="sc">{m.done ? (m.note === '轮空' ? '—' : `${m.sa}-${m.sb}`) : 'vs'}</span>
-                      <span class={m.done && m.w === m.b ? 'w' : ''}>{short(m.b)}</span>
+                      <span class={`ell ${m.done && m.w === m.b ? 'w' : ''}`}>{short(m.b)}</span>
                       {m.note && m.note !== '轮空' && <small class="dim">{m.note}</small>}
                     </div>
                   );
@@ -107,48 +108,58 @@ export function Games() {
   const sel = selKind ? G.tours[selKind] : undefined;
   return (
     <div>
-      <SubTabs
-        value={sub}
-        onChange={(v) => setSub('games', v)}
-        tabs={[
-          { id: 'tours', label: '今年的大会' },
-          { id: 'bracket', label: '对阵表' },
-          { id: 'results', label: `比赛记录 ${G.games.length}` },
-        ]}
-      />
+      <div class="stick">
+        <SubTabs
+          value={sub}
+          onChange={(v) => setSub('games', v)}
+          tabs={[
+            { id: 'tours', label: '今年的大会' },
+            { id: 'bracket', label: '对阵表' },
+            { id: 'results', label: `比赛记录 ${G.games.length}` },
+          ]}
+        />
+      </div>
       {sub === 'tours' && (
         <div>
-          <div class="small dim mb6">{schoolYear(G.day, G.startYear)} 学年 · 正式比赛 {G.seasonWL[0]} 胜 {G.seasonWL[1]} 负</div>
-          {TOUR_ORDER.map((k) => {
-            const t = G.tours[k];
-            return (
-              <div key={k} class="gline">
-                <span class="grow">{t ? t.name : TOUR_NAME_SHORT[k]}</span>
-                {!t && <span class="dim">{k === 'koshien' || k === 'springRegion' || k === 'fallRegion' || k === 'jingu' || k === 'senbatsu' ? '需要晋级' : '未开幕'}</span>}
-                {t && !t.myFinish && <span class="dim">未参加</span>}
-                {t && t.myFinish && (alive(t, G.schoolId) && !t.done ? <span class="good">晋级中</span> : <b class={t.myFinish === '冠军' ? 'gold' : ''}>{t.myFinish}</b>)}
-                {t && (
-                  <button
-                    type="button"
-                    class="chip"
-                    onClick={() => {
-                      ui.sub.games = 'bracket';
-                      ui.sub.gamesTour = k;
-                      refresh();
-                    }}
-                  >
-                    对阵
-                  </button>
-                )}
-              </div>
-            );
-          })}
+          <div class="small dim mb6">
+            {schoolYear(G.day, G.startYear)} 学年 · 正式比赛 {G.seasonWL[0]} 胜 {G.seasonWL[1]} 负
+          </div>
+          <div class="glist">
+            {TOUR_ORDER.map((k) => {
+              const t = G.tours[k];
+              return (
+                <div key={k} class="lrow lr-tour">
+                  <span class="ell">{t ? t.name : TOUR_NAME_SHORT[k]}</span>
+                  <span class="n">
+                    {!t && <span class="dim">{k === 'koshien' || k === 'springRegion' || k === 'fallRegion' || k === 'jingu' || k === 'senbatsu' ? '需要晋级' : '未开幕'}</span>}
+                    {t && !t.myFinish && <span class="dim">未参加</span>}
+                    {t && t.myFinish && (alive(t, G.schoolId) && !t.done ? <span class="good">晋级中</span> : <b class={t.myFinish === '冠军' ? 'gold' : ''}>{t.myFinish}</b>)}
+                  </span>
+                  <span class="n">
+                    {t && (
+                      <button
+                        type="button"
+                        class="chip"
+                        onClick={() => {
+                          ui.sub.games = 'bracket';
+                          ui.sub.gamesTour = k;
+                          refresh();
+                        }}
+                      >
+                        对阵
+                      </button>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
           <div class="small dim mt6">晋级规则：夏季县大会冠军 → 甲子园；秋季县大会前几名 → 地区大会 → 冠军去明治神宫大会，地区大会成绩好的学校 1 月入选春季选拔。</div>
         </div>
       )}
       {sub === 'bracket' && (
         <div>
-          <div class="row wrap gap4 mb6">
+          <div class="btnrow mb6">
             {tours.map((t) => (
               <button type="button" key={t.kind} class={`chip ${t.kind === selKind ? 'on' : ''}`} onClick={() => setSub('gamesTour', t.kind)}>
                 {t.name}
@@ -161,26 +172,28 @@ export function Games() {
       {sub === 'results' && (
         <div>
           {G.games.length ? (
-            G.games.map((g) => (
-              <div
-                key={g.id}
-                class="gline click"
-                onClick={() => {
-                  ui.modal = { kind: 'box', gameId: g.id };
-                  refresh();
-                }}
-              >
-                <span class={g.win ? 'win' : 'lose'}>{g.win ? '胜' : '负'}</span>
-                <span class="dim">{mdStr(g.d)}</span>
-                <span class="grow">
-                  {g.label} · {g.oppName}
-                </span>
-                <b>
-                  {g.my}-{g.opp}
-                </b>
-                {g.inn !== 9 && <small class="dim">{g.called ? '提前' : `${g.inn}局`}</small>}
-              </div>
-            ))
+            <div class="glist">
+              {G.games.map((g) => (
+                <div
+                  key={g.id}
+                  class="lrow lr-game click"
+                  onClick={() => {
+                    ui.modal = { kind: 'box', gameId: g.id };
+                    refresh();
+                  }}
+                >
+                  <span class={g.win ? 'win' : 'lose'}>{g.win ? '胜' : '负'}</span>
+                  <span class="dim">{mdStr(g.d)}</span>
+                  <span class="ell">
+                    {g.label} · {g.oppName}
+                    {g.inn !== 9 && <small class="dim">{g.called ? '（提前结束）' : `（${g.inn} 局）`}</small>}
+                  </span>
+                  <b class="n">
+                    {g.my}-{g.opp}
+                  </b>
+                </div>
+              ))}
+            </div>
           ) : (
             <Empty>还没有比赛记录。</Empty>
           )}

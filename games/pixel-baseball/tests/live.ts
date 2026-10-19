@@ -6,14 +6,13 @@ import { runDays } from '../src/core/sim';
 import { LiveGame } from '../src/core/live';
 import { getRngState } from '../src/core/rng';
 import type { PendingMatch } from '../src/core/types';
-import type { BatCmd, PitchPlan, Zone } from '../src/sim/types';
+import { GRID, cellCenter } from '../src/sim/pitching';
 
 const N = Number(process.argv[2] ?? 20);
 // 测试自己的随机数（和游戏的分开）
 let s = 20261018;
 const r = (): number => ((s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
 const pick = <T>(a: readonly T[]): T => a[Math.floor(r() * a.length)];
-const ZONES: (Zone | 'none')[] = ['none', 'none', 'in', 'out', 'high', 'low'];
 
 const { state, offers } = prepareWorld({ mgrName: '测试 监督', bg: 'teacher', age: 35, prefId: 13, difficulty: 'normal', dh: true, seed: 99 });
 startGame(state, offers[1].id);
@@ -22,22 +21,6 @@ runDays(12);
 G.pending = null;
 const opps = Object.values(G.schools).filter((x) => x.id !== G.schoolId);
 
-function randBat(): BatCmd {
-  return { app: pick(['normal', 'normal', 'power', 'contact', 'aggressive', 'wait', 'bunt', 'buntHit', 'squeeze'] as const), sit: pick(['none', 'none', 'FB', 'BR'] as const), zone: pick(ZONES), run: pick(['none', 'none', 'none', 'steal', 'hitRun', 'doubleSteal'] as const), agg: pick([-1, 0, 0, 1] as const) };
-}
-function randPlan(g: LiveGame): PitchPlan {
-  const p = g.m.pitcher();
-  return {
-    mix: pick(['auto', 'auto', 'FB', 'BR'] as const),
-    finisher: r() < 0.5 ? null : r() < 0.3 || !p.pitches.length ? 'FB' : pick(p.pitches).type,
-    focus: pick(['auto', 'auto', 'in', 'out', 'high', 'low'] as const),
-    approach: pick(['normal', 'normal', 'max', 'contact', 'careful'] as const),
-    align: pick(['normal', 'normal', 'infieldIn', 'dp', 'noDoubles', 'buntShift'] as const),
-    ibb: r() < 0.03,
-    hold: r() < 0.2,
-    pitchout: r() < 0.05,
-  };
-}
 
 let fails = 0;
 const ok = (c: boolean, msg: string, extra?: unknown) => {
@@ -55,13 +38,18 @@ for (let k = 0; k < N; k++) {
   const snaps: string[] = [];
   let mid: { step: number; pm: string } | null = null;
   const coach = k % 4 === 3; // 每 4 场有一场整场交给教练
+  const endEarly = k % 5 === 1; // 每 5 场有一场打到一半「交给教练打完」
   if (coach) coachGames++;
   let guard = 0;
-  while (g.phase() !== 'over' && guard++ < 400) {
+  while (g.phase() !== 'over' && guard++ < 1500) {
     g.ready();
     snaps[g.step] = JSON.stringify(g.m.snap());
-    if (!mid && g.step === 25) mid = { step: g.step, pm: JSON.stringify(pm) };
-    if (coach) g.coachTurn();
+    if (!mid && g.step === 90) mid = { step: g.step, pm: JSON.stringify(pm) };
+    if (endEarly && g.step === 150) {
+      g.coachToEnd();
+      break;
+    }
+    if (coach || r() < 0.2) g.coachTurn();
     else {
       const t = g.myTeam;
       if (g.phase() === 'bat' && r() < 0.06) {
@@ -76,11 +64,15 @@ for (let k = 0; k < N; k++) {
         const bench = t.bench();
         if (bench.length) g.act({ k: 'pc', pid: pick(bench).id });
       }
-      if (g.phase() === 'pitch' && g.m.pickoffsLeft() > 0 && r() < 0.15) g.act({ k: 'po' });
-      if (g.phase() === 'bat') g.act({ k: 'bat', c: randBat() });
-      else if (g.phase() === 'pitch') g.act({ k: 'pitch', c: randPlan(g) });
+      if (g.phase() === 'pitch' && g.m.pickoffsLeft() > 0 && r() < 0.08) g.act({ k: 'po', base: pick([-1, 0, 1, 2]) });
+      if (g.phase() === 'bat') g.act({ k: 'swing', z: Math.floor(r() * 10) - 1, run: [r() < 0.12, r() < 0.06, r() < 0.08] });
+      else if (g.phase() === 'pitch') {
+        const p = g.m.pitcher();
+        const [x, y] = cellCenter(Math.floor(r() * GRID), Math.floor(r() * GRID));
+        g.act({ k: 'throw', t: r() < 0.5 || !p.pitches.length ? 'FB' : pick(p.pitches).type, x, y });
+      }
     }
-    g.play();
+    g.pitch();
   }
   totalPA += g.step;
   ok(g.phase() === 'over', `第${k + 1}场没有打完`, g.step);
@@ -93,10 +85,10 @@ for (let k = 0; k < N; k++) {
   // 中途读档
   if (mid) {
     const g3 = new LiveGame(JSON.parse(mid.pm) as PendingMatch);
-    ok(g3.step === mid.step, `第${k + 1}场中途读档的打席数不对`, [g3.step, mid.step]);
+    ok(g3.step === mid.step, `第${k + 1}场中途读档的球数不对`, [g3.step, mid.step]);
     ok(JSON.stringify(g3.m.snap()) === snaps[mid.step], `第${k + 1}场中途读档后的局面不一致`, [g3.m.snap(), snaps[mid.step]]);
   }
 }
 ok(JSON.stringify(getRngState()) === rng0, '亲自指挥的比赛动用了全局随机数');
-console.log(`${N} 场（其中 ${coachGames} 场全程交给教练），共 ${totalPA} 个打席`);
+console.log(`${N} 场（其中 ${coachGames} 场全程交给教练），共 ${totalPA} 球`);
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');

@@ -1,7 +1,11 @@
 // 存档：localStorage 'pixel-baseball:save'（整局一个 JSON）。旧的经营版存档在 IndexedDB 'pixel-koshien'，不再读取
-import type { GameState } from './types';
+import type { AttrKey, GameState } from './types';
+import { FIELD_POS } from './types';
 import { G, setG } from './state';
-import { getRngState, setRngState } from './rng';
+import { getRngState, hash32, setRngState } from './rng';
+import { posRating, refreshPos } from './attrs';
+import { MAX_VEL } from './growth';
+import { clamp } from './util';
 import { clearWorldCache } from './world';
 import { SAVE_VERSION } from './newgame';
 
@@ -29,8 +33,37 @@ function valid(s: unknown): s is GameState {
   return !!g && typeof g === 'object' && g.game === 'pixel-baseball' && typeof g.v === 'number' && !!g.players && !!g.schools && Array.isArray(g.roster);
 }
 
+/**
+ * v3 → v4（游戏 v2.2.0）：谁都能守任何位置，最适合的位置由能力决定（去掉守备适性 apt）。
+ * 旧的野手投球能力只有 15 左右、上限 45，按他的打击和守备水平补到正常（只升不降），位置按能力重新判断。
+ */
+function migrateV4(g: GameState): void {
+  for (const p of Object.values(g.players)) {
+    delete (p as { apt?: unknown }).apt;
+    if (p.pos !== 'P') {
+      const bat = (p.a.contact + p.a.power + p.a.eye + p.a.speed + p.a.arm + p.a.fielding + p.a.catching) / 7;
+      const pq = bat - 8 + (p.a.arm - bat) * 0.25;
+      // 每个人固定的一点浮动（不消耗随机数，同一个存档迁移几次结果都一样）
+      const j = (k: number) => (hash32(p.id, k) / 4294967296) * 2 - 1;
+      const up = (k: AttrKey, v: number) => (p.a[k] = Math.max(p.a[k], clamp(v, 5, 95)));
+      up('control', pq + j(1) * 6);
+      up('stamina', pq - 3 + j(2) * 6);
+      up('stuff', pq + j(3) * 5);
+      p.a.velocity = Math.max(p.a.velocity, clamp(104 + pq * 0.32 + j(4) * 3, 98, 145));
+      for (const k of ['control', 'stamina', 'stuff'] as AttrKey[]) p.caps[k] = Math.max(p.caps[k], Math.min(99, p.a[k] + 5 + p.pot * 0.36));
+      p.caps.velocity = Math.max(p.caps.velocity, Math.min(MAX_VEL, p.a.velocity + 3 + p.pot * 0.17));
+      // 旧的位置是按守备适性定的：野手直接换到评价最高的守备位置
+      p.pos = FIELD_POS.reduce((x, y) => (posRating(p, y) > posRating(p, x) ? y : x));
+    }
+    refreshPos(p);
+  }
+  // 比赛打到一半的存档：阵容、能力、对手名单都变了，没法按记录重演，从开赛前重新开始
+  if (g.pending?.live) delete g.pending.live;
+}
+
 /** 旧存档缺少的字段在这里补上 */
 function migrate(g: GameState): GameState {
+  if (g.v < 4) migrateV4(g);
   g.flags ??= {};
   g.cooldowns ??= {};
   g.schedule ??= [];

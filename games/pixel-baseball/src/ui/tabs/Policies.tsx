@@ -12,7 +12,7 @@ function Choice<T extends string | number>(p: { label: string; value: T; options
     <div class="pol">
       <div class="pol-l">{p.label}</div>
       <div class="pol-r">
-        <div class="row wrap gap4">
+        <div class="btnrow">
           {p.options.map(([v, name, tip]) => (
             <Btn key={String(v)} small on={p.value === v} title={tip} onClick={() => p.onChange(v)}>
               {name}
@@ -44,7 +44,7 @@ export function Policies() {
           onChange={(v) => set('intensity', v)}
           desc={['经验少，但轻松愉快，几乎不会受伤', '标准的训练量', '经验多，疲劳和受伤也多，有人会不满', '经验非常多，伤病风险高，家长可能投诉'][pol.intensity]}
         />
-        <Choice label="疲劳过高时" value={pol.autoRest ? 1 : 0} options={[[1, '自动休养'], [0, '继续练']]} onChange={(v) => set('autoRest', v === 1)} desc="疲劳超过 75 的人自动休息一天（推荐）" />
+        <Choice label="疲劳过高时" value={pol.autoRest ? 1 : 0} options={[[1, '自动休养'], [0, '继续练']]} onChange={(v) => set('autoRest', v === 1)} desc={pol.autoRest ? '疲劳超过 75 的人自动休息一天' : '疲劳再高也照常训练，受伤的风险更高'} />
         <Choice
           label="学业"
           value={pol.study}
@@ -107,7 +107,7 @@ export function Policies() {
         />
       </Panel>
       <Panel title="托管">
-        <div class="row wrap gap4">
+        <div class="btnrow">
           {AUTO_PRESETS.map((p) => (
             <Btn
               key={p.id}
@@ -138,7 +138,7 @@ export function Policies() {
             自定义
           </Btn>
         </div>
-        <div class="small dim mt4">托管的事会按推荐选项自动处理，只记在动态里；其他的事出现时时间会暂停，等你决定。</div>
+        <div class="small dim mt4">托管的事由教练替你决定，结果记在动态里；其他的事出现时时间会暂停，等你决定。</div>
         <div class="autocats mt6">
           {AUTO_CATS.map((c) => {
             const on = catAuto(c.id);

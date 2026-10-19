@@ -22,6 +22,18 @@ export function nextId(): number {
   return fallbackId++;
 }
 
+/** 事件结果预览用：记下 id 计数器，返回一个原样放回的函数（预览里生成的临时球员不能占掉真正游戏里的 id） */
+export function idSnapshot(): () => void {
+  const f = fallbackId;
+  const m = tempIdMode;
+  const t = tempId;
+  return () => {
+    fallbackId = f;
+    tempIdMode = m;
+    tempId = t;
+  };
+}
+
 /** 在这段逻辑里生成的对象使用临时（负数）id */
 export function withTempIds<T>(fn: () => T): T {
   const prev = tempIdMode;
@@ -56,7 +68,14 @@ export function seniors(): Player[] {
 export function log(text: string, kind: LogKind = 'info'): void {
   G.logs.unshift({ d: G.day, t: text, k: kind });
   if (G.logs.length > 200) G.logs.length = 200;
+  if (muted > 0) return;
   for (const fn of listeners) fn(text, kind);
+}
+
+/** 事件结果预览时不通知界面（模拟出来的动态不能弹提示、放音效） */
+let muted = 0;
+export function muteLog(on: boolean): void {
+  muted = Math.max(0, muted + (on ? 1 : -1));
 }
 
 /** 写进大事记（只记重要的事） */

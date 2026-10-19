@@ -1,11 +1,11 @@
 // 每天：训练、疲劳、伤病、调子、干劲
 import type { ExpPool, Injury, Player, TrainFocus } from './types';
-import { EXP_KINDS } from './types';
+import { EXP_KINDS, POS_NAME } from './types';
 import { G, log, myPlayers, note } from './state';
 import { chance, gauss, pick, randInt, weightedPick } from './rng';
 import { clamp } from './util';
-import { fullName, has, isPitcher, overall } from './attrs';
-import { autoSpend, curveMult, ethicMult, progressLearning, talentMult } from './growth';
+import { fullName, has, isPitcher, overall, refreshPos } from './attrs';
+import { autoSpend, curveMult, ethicMult, gainExp, progressLearning, talentMult } from './growth';
 import { isOffseason, monthOf, weekday } from './calendar';
 import { PITCH_DEFS } from '../data/pitches';
 import { queue } from './queue';
@@ -41,13 +41,13 @@ export const FOCUS_DESC: Record<TrainFocus, string> = {
 };
 
 const DIST_BAT: Record<TrainFocus, Partial<ExpPool>> = {
-  balanced: { str: 0.26, agi: 0.25, tech: 0.33, men: 0.16 },
-  batting: { str: 0.32, agi: 0.13, tech: 0.43, men: 0.12 },
-  pitching: { str: 0.26, agi: 0.25, tech: 0.33, men: 0.16 },
-  defense: { str: 0.14, agi: 0.38, tech: 0.34, men: 0.14 },
-  physical: { str: 0.45, agi: 0.35, tech: 0.08, men: 0.12 },
-  mental: { str: 0.15, agi: 0.15, tech: 0.25, men: 0.45 },
-  practical: { str: 0.22, agi: 0.24, tech: 0.34, men: 0.2 },
+  balanced: { str: 0.26, agi: 0.25, tech: 0.29, brk: 0.04, men: 0.16 },
+  batting: { str: 0.32, agi: 0.13, tech: 0.39, brk: 0.04, men: 0.12 },
+  pitching: { str: 0.26, agi: 0.25, tech: 0.29, brk: 0.04, men: 0.16 },
+  defense: { str: 0.14, agi: 0.38, tech: 0.3, brk: 0.04, men: 0.14 },
+  physical: { str: 0.45, agi: 0.35, tech: 0.04, brk: 0.04, men: 0.12 },
+  mental: { str: 0.15, agi: 0.15, tech: 0.21, brk: 0.04, men: 0.45 },
+  practical: { str: 0.22, agi: 0.24, tech: 0.3, brk: 0.04, men: 0.2 },
 };
 const DIST_PIT: Record<TrainFocus, Partial<ExpPool>> = {
   balanced: { str: 0.24, agi: 0.14, tech: 0.18, brk: 0.26, men: 0.18 },
@@ -224,7 +224,7 @@ export function dailyTeam(matchToday: boolean): void {
     // 训练
     const e = dailyExp(p) * (matchToday ? 0.5 : 1);
     const gain = expSplit(p, e);
-    for (const k of EXP_KINDS) p.exp[k] += gain[k];
+    for (const k of EXP_KINDS) gainExp(p, k, gain[k]);
     const velBefore = p.a.velocity;
     const got = autoSpend(p, p.plan, 30);
     const pts = Object.values(got).reduce((a, b) => a + (b ?? 0), 0);
@@ -232,6 +232,12 @@ export function dailyTeam(matchToday: boolean): void {
       p.gains = (p.gains ?? 0) + pts;
       const gw = (p.gw ??= {});
       for (const [k, v] of Object.entries(got)) gw[k as keyof typeof gw] = (gw[k as keyof typeof gw] ?? 0) + (v ?? 0);
+      // 能力涨了，最适合的位置可能跟着变
+      const from = p.pos;
+      if (refreshPos(p)) {
+        note(p, `最适合的位置从${POS_NAME[from]}变成了${POS_NAME[p.pos]}`);
+        log(`${fullName(p)} 最适合的位置从${POS_NAME[from]}变成了${POS_NAME[p.pos]}`, 'info');
+      }
     }
     if (isPitcher(p)) trackVelocity(p, velBefore);
     // 学新球种

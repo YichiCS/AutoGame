@@ -147,6 +147,15 @@ export interface PitchInfo {
   x: number; // 好球带坐标 -1..1 为好球带
   y: number;
   res: PitchResult;
+  /** 瞄准点 */
+  tx?: number;
+  ty?: number;
+  /** 这一球的质量 0..100 */
+  q?: number;
+  /** 失投（没变化、留在好打的位置） */
+  hang?: boolean;
+  /** 打者狙的九宫格（-1 不挥棒） */
+  hunt?: number;
 }
 
 export type BipKind = 'GB' | 'LD' | 'FB' | 'PU' | 'BU';

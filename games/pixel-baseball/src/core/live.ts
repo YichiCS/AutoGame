@@ -1,23 +1,17 @@
-// 亲自指挥的比赛：以打席为单位推进。
-// 比赛用自己的随机数；玩家（或教练）的每一个操作都记进 pm.live，读档时从头按记录重演，结果完全一样。
+// 亲自指挥的比赛：一球一球地推进。
+// 比赛用自己的随机数；玩家（或替玩家拿主意的教练）每一球的指令都记进 pm.live，读档时从头按记录重演，结果完全一样。
 import type { LiveAct, LiveRecord, PendingMatch, Pos } from './types';
-import type { BatCmd, MatchRules, PitchPlan, PlayEvent, TeamSetup } from '../sim/types';
+import type { MatchRules, PlayEvent, TeamSetup } from '../sim/types';
 import { Match, type TeamState } from '../sim/match';
-import * as Adapt from '../sim/adapt';
+import { coachHunt, coachRun, coachThrow } from '../sim/brain';
+import { makeRng, HALF } from '../sim/pitching';
+import { coachWantsChange } from '../sim/ai';
 import { G } from './state';
-import { getRngState, seedRng, setRngState, withSeed } from './rng';
+import { getRngState, hash32, seedRng, setRngState, withSeed } from './rng';
 import { mySetupFull, oppSetup, rulesFor, tourOf, type SimResult } from './matchday';
 import { schoolById } from './world';
 
 export type Phase = 'bat' | 'pitch' | 'over';
-
-/** 对方这个打席的打算，玩家看得到多少 */
-export interface Intel {
-  seen: boolean;
-  why: string[];
-  plan: PitchPlan | null;
-  cmd: BatCmd | null;
-}
 
 export class LiveGame {
   readonly pm: PendingMatch;
@@ -30,7 +24,7 @@ export class LiveGame {
   readonly notes: string[];
   readonly rec: LiveRecord;
   private rng: number[];
-  /** 第几个打席步（每打完一个打席加一） */
+  /** 第几球（每投一球、或者一次牵制让这一球没投出去，加一） */
   step = 0;
   /** 本场到目前为止的全部事件 */
   events: PlayEvent[] = [];
@@ -59,7 +53,6 @@ export class LiveGame {
     this.rng = getRngState();
     setRngState(saved);
     this.m = this.run(() => new Match(this.away, this.home, this.rules));
-    this.myTeam.defAI = false;
     if (rec0 && (rec0.log.length || rec0.played)) this.replay(rec0);
     else this.ready();
   }
@@ -83,11 +76,11 @@ export class LiveGame {
     }
   }
 
-  /** 准备好下一个打席（换局、对方换人等），返回新产生的事件 */
+  /** 准备好下一球（换局、换人、AI 这一球的打算），返回新产生的事件 */
   ready(): PlayEvent[] {
     const out: PlayEvent[] = [];
     let guard = 0;
-    while (!this.m.over && this.m.needPA && guard++ < 10) out.push(...this.run(() => this.m.prepare()));
+    while (!this.m.over && (this.m.needHalf || this.m.needPA || !this.m.pitchReady) && guard++ < 10) out.push(...this.run(() => this.m.prepare()));
     this.events.push(...out);
     return out;
   }
@@ -109,16 +102,28 @@ export class LiveGame {
   private apply(a: LiveAct): PlayEvent[] | null {
     const m = this.m;
     const t = this.myTeam;
-    if (m.over || m.needPA) return null;
+    if (m.over) return null;
+    if (a.k === 'end') {
+      // 交给教练打完：之后双方都由 AI 决定
+      return this.run(() => {
+        t.auto = true;
+        return m.toEnd();
+      });
+    }
+    if (m.needPA || m.needHalf) return null;
     const mine = m.half === this.mySide;
     switch (a.k) {
-      case 'bat':
-        if (!mine) return null;
-        this.run(() => m.setBatCmd(a.c));
-        return [];
-      case 'pitch':
+      case 'throw': {
         if (mine) return null;
-        this.run(() => m.setPitchPlan(a.c));
+        const p = m.pitcher();
+        if (a.t !== 'FB' && !p.pitches.some((x) => x.type === a.t)) return null;
+        if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || Math.abs(a.x) > HALF + 0.5 || Math.abs(a.y) > HALF + 0.5) return null;
+        t.callNext = { type: a.t, x: a.x, y: a.y };
+        return [];
+      }
+      case 'swing':
+        if (!mine || a.z < -1 || a.z > 8) return null;
+        t.swingNext = { z: a.z, run: [!!a.run[0], !!a.run[1], !!a.run[2]] };
         return [];
       case 'ph': {
         if (!mine) return null;
@@ -142,21 +147,24 @@ export class LiveGame {
       }
       case 'po': {
         if (mine || m.pickoffsLeft() <= 0) return null;
-        return this.run(() => m.pickoff());
+        const base = a.base ?? -1;
+        if (base >= 0 && !m.bases[base]) return null;
+        return this.run(() => m.pickoff(base));
       }
     }
+    return null;
   }
 
-  /** 打这个打席（玩家的指令应已下达），返回这个打席的全部事件 */
-  play(): PlayEvent[] {
+  /** 投这一球（这一球的指令应已下达；没有就交给教练），返回这一球的全部事件 */
+  pitch(): PlayEvent[] {
     if (this.m.over) return [];
     this.ready();
     if (this.m.over) return [];
-    const ev = this.run(() => this.m.stepPA());
+    const ev = this.run(() => this.m.step());
     this.events.push(...ev);
     this.step++;
     this.rec.played = this.step;
-    // 马上准备好下一个打席（换局、对方换人），读档重演后的局面才和现在一模一样
+    // 马上准备好下一球（换局、对方换人、对方这一球的打算），读档重演后的局面才和现在一模一样
     return [...ev, ...this.ready()];
   }
 
@@ -171,63 +179,60 @@ export class LiveGame {
     while (!this.m.over) {
       this.ready();
       while (i < log.length && log[i].n === this.step) this.act(log[i++].a);
-      if (this.step >= played) break;
-      this.play();
+      if (this.m.over || this.step >= played) break;
+      this.pitch();
     }
     this.replaying = false;
   }
 
-  // ---------------- 情报与教练 ----------------
-  /** 这个打席能不能看穿对方（同一个打席结果固定） */
-  scouted(): boolean {
-    return Adapt.scouted(this.pm.seed, this.step, Adapt.readChance(G.mgr.skills.insight, G.facilities.analysis));
+  // ---------------- 教练 ----------------
+  /** 教练这一球的随机数：只看比赛种子和第几球，不消耗比赛的随机数 */
+  private coachRng(salt: number) {
+    return makeRng(hash32(this.pm.seed, this.step, salt));
   }
 
-  intel(): Intel {
-    const ph = this.phase();
-    if (ph === 'over') return { seen: false, why: [], plan: null, cmd: null };
-    const opp = this.oppTeam;
-    const seen = this.scouted();
-    return {
-      seen,
-      why: seen ? opp.intent.why : [],
-      plan: seen && ph === 'bat' ? opp.plan : null,
-      cmd: seen && ph === 'pitch' ? opp.cmd : null,
-    };
-  }
-
-  /** 教练的建议 */
-  adviceBat(): Adapt.Advice<BatCmd> {
-    return Adapt.coachBat(this.m, this.myTeam, this.intel().plan);
-  }
-
-  advicePitch(): Adapt.Advice<PitchPlan> {
-    return Adapt.coachPitch(this.m, this.myTeam, this.intel().cmd);
-  }
-
-  /** 教练代为指挥这个打席（托管）：必要时换投，然后下达建议的指令 */
-  coachTurn(): PlayEvent[] {
-    const out: PlayEvent[] = [];
+  /** 教练替玩家拿这一球的主意（必要时先换投） */
+  coachActs(): LiveAct[] {
+    const m = this.m;
     const ph = this.phase();
     if (ph === 'pitch') {
-      const rel = Adapt.coachWantsChange(this.m, this.myTeam);
-      if (rel !== null) out.push(...this.act({ k: 'pc', pid: rel }));
-      if (this.phase() === 'pitch' && !this.m.needPA) out.push(...this.act({ k: 'pitch', c: this.advicePitch().cmd }));
-    } else if (ph === 'bat') {
-      out.push(...this.act({ k: 'bat', c: this.adviceBat().cmd }));
+      const out: LiveAct[] = [];
+      if (m.balls === 0 && m.strikes === 0) {
+        const rel = coachWantsChange(m, this.myTeam);
+        if (rel !== null) out.push({ k: 'pc', pid: rel });
+      }
+      return out;
     }
+    return [];
+  }
+
+  /** 教练这一球的指令 */
+  coachCall(): LiveAct | null {
+    const m = this.m;
+    const ph = this.phase();
+    if (ph === 'pitch') {
+      const c = coachThrow(m, this.myTeam, m.pitcherNow(), this.coachRng(1));
+      return { k: 'throw', t: c.type, x: c.x, y: c.y };
+    }
+    if (ph === 'bat') {
+      const r = this.coachRng(2);
+      return { k: 'swing', z: coachHunt(m, this.myTeam, m.mind, m.mindSp, r), run: coachRun(m, this.myTeam, r) };
+    }
+    return null;
+  }
+
+  /** 教练代为指挥这一球：必要时换投，然后下达指令（都记下来） */
+  coachTurn(): PlayEvent[] {
+    const out: PlayEvent[] = [];
+    for (const a of this.coachActs()) out.push(...this.act(a));
+    const c = this.coachCall();
+    if (c) out.push(...this.act(c));
     return out;
   }
 
   /** 交给教练直接打到比赛结束（不看过程） */
-  coachToEnd(): void {
-    let guard = 0;
-    while (!this.m.over && guard++ < 400) {
-      this.ready();
-      if (this.m.over) break;
-      this.coachTurn();
-      this.play();
-    }
+  coachToEnd(): PlayEvent[] {
+    return this.act({ k: 'end' });
   }
 
   /** 比赛结束后交给 applyResult 写回 */

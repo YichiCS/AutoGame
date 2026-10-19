@@ -103,5 +103,5 @@ export function notableProspect(kind: 'star' | 'gem' | 'monster'): Player {
 export function prospectBrief(p: Player): string {
   const pit = isPitcher(p);
   const key = pit ? `最快 ${Math.round(p.a.velocity)} km/h，${p.pitches.length} 种变化球` : `击球 ${Math.round(p.a.contact)} · 力量 ${Math.round(p.a.power)} · 跑速 ${Math.round(p.a.speed)}`;
-  return `${p.middle} · ${pit ? '投手' : '野手'} · 综合 ${Math.round(overall(p))} · ${key}`;
+  return `${p.middle} · ${pit ? '投手' : '野手'} · 总评 ${Math.round(overall(p))} · ${key}`;
 }

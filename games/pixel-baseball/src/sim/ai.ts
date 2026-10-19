@@ -2,7 +2,7 @@
 import type { Match, TeamState } from './match';
 import type { OffTactic } from './types';
 import type { Player, Pos } from '../core/types';
-import { batterOffense, fieldAt, aptOf, has, isPitcher, pitcherOverall } from '../core/attrs';
+import { batterOffense, fieldAt, aptOf, has, isPitcher, pitchable, pitcherOverall } from '../core/attrs';
 import { chance } from '../core/rng';
 
 const STYLE = {
@@ -17,9 +17,7 @@ function style(t: TeamState) {
   return STYLE[t.s.style] ?? STYLE.balanced;
 }
 
-function canPitch(p: Player): boolean {
-  return p.pos === 'P' || (p.apt.P ?? 0) >= 50;
-}
+const canPitch = pitchable;
 
 export function pickReliever(m: Match, t: TeamState): number | null {
   let cands = t.bench().filter(canPitch);
@@ -71,6 +69,11 @@ function shouldReplace(m: Match, t: TeamState): boolean {
   if (t.rattle > 0.75 && t.visits === 0 && m.risp() && relOv > curOv - 10) return true;
   if (diff >= 7 && f > 0.55 && box.np > 70 && relOv > 25) return true;
   return false;
+}
+
+/** 教练替玩家决定要不要换投、换谁（不消耗随机数） */
+export function coachWantsChange(m: Match, t: TeamState): number | null {
+  return shouldReplace(m, t) ? pickReliever(m, t) : null;
 }
 
 export function betweenInnings(m: Match, t: TeamState): void {
@@ -186,9 +189,6 @@ function chooseTactic(m: Match, t: TeamState): OffTactic {
 }
 
 export function offenseBeforePitch(m: Match, t: TeamState): void {
-  // 这个打席有既定的狙球就照做；否则打者有利的球数时常常锁定直球
-  if (t.cmd && t.cmd.sit !== 'none') t.guess = t.cmd.sit;
-  else t.guess = m.balls >= 2 && m.balls > m.strikes && chance(0.4) ? 'FB' : null;
   if (t.tactic !== 'swing' && t.tactic !== 'auto') return;
   const st = style(t);
   const [r1, r2, r3] = m.bases.map(Boolean);

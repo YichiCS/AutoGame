@@ -1,5 +1,5 @@
 import { G, myPlayers, mySchool } from '../../core/state';
-import { isPitcher, overall, pitcherOverall, batterOffense } from '../../core/attrs';
+import { isPitcher, overall, posRating, batterOffense } from '../../core/attrs';
 import { strengthOf, strengthLetter } from '../../core/team';
 import { repTier, mgrExpNeed, expectedRank } from '../../core/career';
 import { nextOfficial, TOUR_ORDER } from '../../core/season';
@@ -8,7 +8,7 @@ import { schoolById, schoolRating } from '../../core/world';
 import { SCHED, YEAR, daysText, doy, mdStr, yearIdx } from '../../core/calendar';
 import { monthlyNet } from '../../core/economy';
 import { PREFS } from '../../data/prefectures';
-import { Bar, Emblem, Money, Panel, PName } from '../components/common';
+import { Bar, Emblem, Money, Ovr, Panel, PName } from '../components/common';
 import { refresh, ui } from '../store';
 
 const CAL: [number, string][] = [
@@ -24,6 +24,18 @@ const CAL: [number, string][] = [
   [SCHED.senbatsu, '春季选拔'],
 ];
 
+/** 一行「名字 · 档位字母 · 数字 · 条」：数字和条都对齐 */
+function Meter(p: { label: string; v: number; color: string; letter?: boolean; max?: number }) {
+  return (
+    <div class="meter">
+      <span class="m-l">{p.label}</span>
+      {p.letter !== undefined && <b class="m-g">{p.letter ? strengthLetter(p.v) : ''}</b>}
+      <span class="m-n">{Math.round(p.v)}</span>
+      <Bar v={p.v} max={p.max} color={p.color} />
+    </div>
+  );
+}
+
 export function Overview() {
   const s = mySchool();
   const ps = myPlayers();
@@ -34,11 +46,12 @@ export function Overview() {
   const pref = PREFS[G.prefId];
   const today = doy(G.day);
   const upcoming = CAL.map(([d, name]) => ({ d: d >= today ? d - today : d + YEAR - today, name, at: d })).sort((a, b) => a.d - b.d).slice(0, 5);
-  const ace = ps.filter(isPitcher).sort((a, b) => pitcherOverall(b) - pitcherOverall(a))[0];
+  const ace = ps.filter(isPitcher).sort((a, b) => posRating(b, 'P') - posRating(a, 'P'))[0];
   const slugger = ps.filter((p) => !isPitcher(p)).sort((a, b) => batterOffense(b) - batterOffense(a))[0];
   const cap = G.club.captainId ? G.players[G.club.captainId] : null;
   const rank = expectedRank();
   const active = TOUR_ORDER.map((k) => G.tours[k]).filter((t) => t && t.myFinish !== null);
+  const need = mgrExpNeed(m.level);
   return (
     <div>
       <Panel title="学校">
@@ -54,7 +67,13 @@ export function Overview() {
         <div class="kv mt6">
           <span>监督</span>
           <span>
-            {m.name} · <b class="gold">{repTier(m.rep)}</b>（名声 {Math.round(m.rep)}）· Lv {m.level} <Bar v={m.exp} max={mgrExpNeed(m.level)} w={50} color="var(--blue)" />
+            {m.name} · <b class="gold">{repTier(m.rep)}</b>（名声 {Math.round(m.rep)}）
+          </span>
+          <span>等级</span>
+          <span class="row gap6">
+            Lv {m.level}
+            <Bar v={m.exp} max={need} w={64} color="var(--blue)" />
+            <span class="dim">经验 {Math.floor(m.exp)}/{need}</span>
           </span>
           <span>部费</span>
           <span>
@@ -72,41 +91,54 @@ export function Overview() {
             <b>{strengthLetter(st.total)}</b>
             <small>{st.total.toFixed(0)}</small>
           </div>
-          <div class="grow">
-            <div class="kv">
-              <span>打击</span>
-              <span><b>{strengthLetter(st.off)}</b> <Bar v={st.off} w={110} color="var(--orange)" /></span>
-              <span>投手</span>
-              <span><b>{strengthLetter(st.pit)}</b> <Bar v={st.pit} w={110} color="var(--blue)" /></span>
-              <span>守备</span>
-              <span><b>{strengthLetter(st.def)}</b> <Bar v={st.def} w={110} color="var(--green)" /></span>
-              <span>默契</span>
-              <span><Bar v={G.club.chemistry} w={110} color="var(--pink)" /></span>
-              <span>战术熟练</span>
-              <span><Bar v={G.club.tactics} w={110} color="var(--accent2)" /></span>
-            </div>
+          <div class="meters">
+            <Meter label="打击" v={st.off} letter color="var(--orange)" />
+            <Meter label="投手" v={st.pit} letter color="var(--blue)" />
+            <Meter label="守备" v={st.def} letter color="var(--green)" />
+            <Meter label="默契" v={G.club.chemistry} letter={false} color="var(--pink)" />
+            <Meter label="战术熟练" v={G.club.tactics} letter={false} color="var(--accent2)" />
           </div>
         </div>
         <div class="kv mt6">
           <span>主将</span>
           <span>{cap && !cap.retired ? <PName player={cap} /> : <span class="dim">（新队伍成立时任命）</span>}</span>
           <span>王牌</span>
-          <span>{ace ? <><PName player={ace} /> <span class="dim small">{Math.round(ace.a.velocity)}km/h · 综合 {Math.round(overall(ace))}</span></> : '—'}</span>
+          <span class="row gap6">
+            {ace ? (
+              <>
+                <PName player={ace} /> <Ovr v={overall(ace)} label /> <span class="dim small">{Math.round(ace.a.velocity)}km/h</span>
+              </>
+            ) : (
+              '—'
+            )}
+          </span>
           <span>主炮</span>
-          <span>{slugger ? <><PName player={slugger} /> <span class="dim small">综合 {Math.round(overall(slugger))}</span></> : '—'}</span>
+          <span class="row gap6">
+            {slugger ? (
+              <>
+                <PName player={slugger} /> <Ovr v={overall(slugger)} label />
+              </>
+            ) : (
+              '—'
+            )}
+          </span>
         </div>
       </Panel>
 
       <Panel title="今年">
-        <div class="kv">
-          <span>校方目标</span>
-          <span>{G.club.goal?.text ?? '—'}</span>
-          <span>校方满意度</span>
-          <span><Bar v={G.club.board} w={110} color={G.club.board < 30 ? 'var(--red)' : 'var(--green)'} /></span>
-          <span>OB 会</span>
-          <span><Bar v={G.club.ob} w={110} color="var(--accent2)" /></span>
-          <span>正式比赛</span>
-          <span>{G.seasonWL[0]} 胜 {G.seasonWL[1]} 负</span>
+        <div class="meters nl">
+          <div class="meter">
+            <span class="m-l">校方目标</span>
+            <span class="m-t">{G.club.goal?.text ?? '—'}</span>
+          </div>
+          <Meter label="校方满意度" v={G.club.board} color={G.club.board < 30 ? 'var(--red)' : 'var(--green)'} />
+          <Meter label="OB 会" v={G.club.ob} color="var(--accent2)" />
+          <div class="meter">
+            <span class="m-l">正式比赛</span>
+            <span class="m-t">
+              {G.seasonWL[0]} 胜 {G.seasonWL[1]} 负
+            </span>
+          </div>
         </div>
         {nx && (
           <div class="next mt6">
@@ -127,36 +159,42 @@ export function Overview() {
 
       <Panel title="近期比赛">
         {G.games.length ? (
-          G.games.slice(0, 6).map((g) => (
-            <div
-              key={g.id}
-              class="gline"
-              onClick={() => {
-                ui.modal = { kind: 'box', gameId: g.id };
-                refresh();
-              }}
-            >
-              <span class={g.win ? 'win' : 'lose'}>{g.win ? '胜' : '负'}</span>
-              <span class="dim">{mdStr(g.d)}</span>
-              <span class="grow">{g.label} · {g.oppName}</span>
-              <b>
-                {g.my} - {g.opp}
-              </b>
-            </div>
-          ))
+          <div class="glist">
+            {G.games.slice(0, 6).map((g) => (
+              <div
+                key={g.id}
+                class="lrow lr-game click"
+                onClick={() => {
+                  ui.modal = { kind: 'box', gameId: g.id };
+                  refresh();
+                }}
+              >
+                <span class={g.win ? 'win' : 'lose'}>{g.win ? '胜' : '负'}</span>
+                <span class="dim">{mdStr(g.d)}</span>
+                <span class="ell">
+                  {g.label} · {g.oppName}
+                </span>
+                <b class="n">
+                  {g.my}-{g.opp}
+                </b>
+              </div>
+            ))}
+          </div>
         ) : (
           <div class="dim small">还没有比赛。周六有练习赛，4 月中旬是春季县大会。</div>
         )}
       </Panel>
 
       <Panel title="日程">
-        {upcoming.map((u) => (
-          <div key={u.name} class="gline">
-            <span class="dim">{mdStr(u.at + yearIdx(G.day) * YEAR)}</span>
-            <span class="grow">{u.name}</span>
-            <span class="dim">{daysText(u.d)}</span>
-          </div>
-        ))}
+        <div class="glist">
+          {upcoming.map((u) => (
+            <div key={u.name} class="lrow lr-cal">
+              <span class="dim">{mdStr(u.at + yearIdx(G.day) * YEAR)}</span>
+              <span class="ell">{u.name}</span>
+              <span class="dim n">{daysText(u.d)}</span>
+            </div>
+          ))}
+        </div>
       </Panel>
     </div>
   );

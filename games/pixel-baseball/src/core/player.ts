@@ -1,9 +1,9 @@
 // 球员生成
 import type { AttrKey, BatSide, Delivery, Hand, Personality, PitchSkill, PitchType, Player, Pos } from './types';
-import { ALL_ATTRS } from './types';
+import { ALL_ATTRS, FIELD_POS } from './types';
 import { chance, gauss, pick, randInt, weightedPick } from './rng';
 import { clamp } from './util';
-import { emptyBlock, isPitcher } from './attrs';
+import { emptyBlock, posRating, refreshPos } from './attrs';
 import { aiGrow, emptyExp, MAX_VEL } from './growth';
 import { FAMILY_NAMES, GIVEN_NAMES } from '../data/names';
 import { TRAITS } from '../data/traits';
@@ -25,18 +25,6 @@ const POS_OFFSET: Record<Exclude<Pos, 'P'>, Partial<Record<AttrKey, number>>> = 
   RF: { arm: 7, power: 3, fielding: -1 },
 };
 
-const SIMILAR: Record<Pos, Partial<Record<Pos, number>>> = {
-  P: { RF: 35, LF: 35, '1B': 40 },
-  C: { '1B': 45, '3B': 30 },
-  '1B': { LF: 45, RF: 40, '3B': 35 },
-  '2B': { SS: 62, '3B': 48, '1B': 45, CF: 35 },
-  '3B': { '1B': 60, SS: 45, '2B': 45, LF: 40, RF: 40 },
-  SS: { '2B': 75, '3B': 70, CF: 45, '1B': 40 },
-  LF: { RF: 75, CF: 55, '1B': 40 },
-  CF: { LF: 80, RF: 80 },
-  RF: { LF: 75, CF: 55, '1B': 40 },
-};
-
 const PERS_W: [Personality, number][] = [
   ['hot', 14], ['calm', 14], ['diligent', 14], ['genius', 8], ['lazy', 10], ['proud', 12], ['shy', 10], ['leader', 6], ['cheerful', 12],
 ];
@@ -44,6 +32,7 @@ const PERS_W: [Personality, number][] = [
 export interface GenOpts {
   quality: number; // 入学（1 年级 4 月）时的平均能力
   grade?: number; // 0..3；>1 时会补上成长
+  /** 类型（投手型、游击型……）：只决定能力往哪边偏，最后守什么位置由能力决定 */
   pos?: Pos;
   enrollYear: number;
   monster?: boolean;
@@ -72,6 +61,7 @@ export function generatePlayer(o: GenOpts): Player {
   const q = o.quality;
   const pos: Pos = o.pos ?? weightedPick(POS_WEIGHT, (x) => x[1])[0];
   const pitcher = pos === 'P';
+  // 所有能力都围绕同一个素质 q：投手型打击略弱、野手型投球略弱，但不会差到断层
   let throws: Hand = 'R';
   if (pitcher) throws = chance(0.3) ? 'L' : 'R';
   else if (pos === '1B' || pos === 'LF' || pos === 'CF' || pos === 'RF') throws = chance(0.22) ? 'L' : 'R';
@@ -80,37 +70,34 @@ export function generatePlayer(o: GenOpts): Player {
 
   const a = {} as Record<AttrKey, number>;
   const off = pitcher ? {} : POS_OFFSET[pos as Exclude<Pos, 'P'>];
-  const bq = pitcher ? q - 7 : q;
+  const bq = pitcher ? q - 5 : q;
   const B = (k: AttrKey, base: number, sd: number) => (a[k] = clamp(base + (off[k] ?? 0) + g(sd), 5, 95));
   B('contact', bq, 8);
   B('power', bq, 9);
   B('eye', bq - 3, 8);
   B('speed', bq, 10);
   B('arm', pitcher ? q + 4 : bq, 9);
-  B('fielding', pitcher ? q - 6 : bq, 8);
-  B('catching', pitcher ? q - 6 : bq, 8);
+  B('fielding', pitcher ? q - 5 : bq, 8);
+  B('catching', pitcher ? q - 5 : bq, 8);
   B('bunt', bq - 6, 10);
   B('baserun', bq - 4, 9);
   a.mental = clamp(q - 3 + g(10), 5, 95);
   a.durability = clamp(42 + q * 0.2 + g(10), 10, 95);
-  if (pitcher) {
-    a.velocity = clamp(108 + q * 0.36 + g(4), 100, 150);
-    a.control = clamp(q + g(9), 5, 95);
-    a.stamina = clamp(q - 3 + g(9), 5, 95);
-    a.stuff = clamp(q + g(8), 5, 95);
-  } else {
-    a.velocity = clamp(97 + a.arm * 0.3 + g(3), 95, 135);
-    a.control = clamp(15 + g(5), 5, 40);
-    a.stamina = clamp(20 + g(6), 5, 40);
-    a.stuff = clamp(15 + g(5), 5, 40);
-  }
+  // 投球能力：野手型的略低，肩力好的更能投
+  const pq = pitcher ? q : q - 8 + (a.arm - q) * 0.25;
+  a.velocity = pitcher ? clamp(108 + q * 0.36 + g(4), 100, 150) : clamp(104 + pq * 0.32 + g(4), 98, 145);
+  a.control = clamp(pq + g(9), 5, 95);
+  a.stamina = clamp(pq - 3 + g(9), 5, 95);
+  a.stuff = clamp(pq + g(8), 5, 95);
   if (o.monster) {
     for (const k of ALL_ATTRS) if (k !== 'velocity') a[k] = clamp(a[k] + 6, 5, 97);
     if (pitcher) a.velocity = clamp(a.velocity + 6, 100, 152);
   }
 
-  let delivery: Delivery = 'over';
-  if (pitcher) delivery = weightedPick<[Delivery, number]>([['over', 42], ['three', 36], ['side', 16], ['under', 6]], (x) => x[1])[0];
+  const delivery: Delivery = weightedPick<[Delivery, number]>(
+    pitcher ? [['over', 42], ['three', 36], ['side', 16], ['under', 6]] : [['over', 55], ['three', 35], ['side', 8], ['under', 2]],
+    (x) => x[1],
+  )[0];
 
   // 变化球：数量看素质，球种看投球姿势和亲缘
   const pitches: PitchSkill[] = [];
@@ -121,14 +108,10 @@ export function generatePlayer(o: GenOpts): Player {
       if (!t) break;
       pitches.push({ type: t, lv: clamp(Math.round((q - 18) / 16 + g(0.7)), 1, 4) });
     }
-  }
-
-  // 守备适性
-  const apt: Partial<Record<Pos, number>> = { [pos]: clamp(85 + g(8), 70, 100) };
-  for (const [p2, v] of Object.entries(SIMILAR[pos])) apt[p2 as Pos] = clamp(v + g(10), 15, 90);
-  if (!pitcher && a.arm > 60 && chance(0.12)) apt.P = clamp(30 + g(10), 15, 60);
-  if (throws === 'L') {
-    for (const p2 of ['C', '2B', '3B', 'SS'] as Pos[]) if (p2 !== pos) apt[p2] = Math.min(apt[p2] ?? 15, 15);
+  } else if (chance(clamp((pq - 30) / 60, 0, 0.6))) {
+    // 野手型也有人会投一种变化球
+    const t = pickNewPitch([], delivery, 2);
+    if (t) pitches.push({ type: t, lv: clamp(Math.round((pq - 25) / 18 + g(0.6)), 1, 3) });
   }
 
   // 潜力与上限
@@ -138,11 +121,6 @@ export function generatePlayer(o: GenOpts): Player {
   for (const k of ALL_ATTRS) {
     if (k === 'velocity') caps[k] = clamp(a[k] + 3 + pot * 0.17 + g(3), a[k] + 2, MAX_VEL);
     else caps[k] = clamp(a[k] + 5 + pot * 0.36 + g(6), a[k] + 3, 99);
-  }
-  if (!pitcher) {
-    caps.control = Math.min(caps.control, 45);
-    caps.stamina = Math.min(caps.stamina, 50);
-    caps.stuff = Math.min(caps.stuff, 45);
   }
 
   const pers = weightedPick(PERS_W, (x) => x[1])[0];
@@ -158,7 +136,6 @@ export function generatePlayer(o: GenOpts): Player {
     throws,
     bats,
     pos,
-    apt,
     a,
     caps,
     traj: a.power < 35 ? 1 : a.power < 55 ? 2 : a.power < 72 ? 3 : 4,
@@ -212,6 +189,9 @@ export function generatePlayer(o: GenOpts): Player {
   // 已入学者补成长
   const weeks = o.weeksGrown ?? Math.max(0, (o.grade ?? 1) - 1) * 44;
   if (weeks > 0) growPlayerOver(p, weeks, o.growFactor ?? 1);
+  // 野手型落到评价最高的守备位置；投手型和野手型之间要明显更合适才换（同 refreshPos）
+  if (!pitcher) p.pos = FIELD_POS.reduce((x, y) => (posRating(p, y) > posRating(p, x) ? y : x));
+  refreshPos(p);
   return p;
 }
 
@@ -235,6 +215,3 @@ export function available(p: Player): boolean {
   return !p.injury && !p.retired && p.benched <= 0 && p.grade >= 1 && p.grade <= 3;
 }
 
-export function canPitch(p: Player): boolean {
-  return isPitcher(p) || (p.apt.P ?? 0) >= 50;
-}
