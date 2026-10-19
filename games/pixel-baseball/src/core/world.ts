@@ -129,6 +129,18 @@ export function clearWorldCache(): void {
   rosterCache.clear();
 }
 
+/** 事件结果预览用：记下现在的缓存，返回一个原样放回的函数（预览里跳槽会清缓存、生成的东西也不能留下） */
+export function worldCacheSnapshot(): () => void {
+  const ext = new Map(extCache);
+  const rosters = new Map(rosterCache);
+  return () => {
+    extCache.clear();
+    for (const [k, v] of ext) extCache.set(k, v);
+    rosterCache.clear();
+    for (const [k, v] of rosters) rosterCache.set(k, v);
+  };
+}
+
 /** 按 id 找学校（本县存档里的，或外县生成的；大会里登记过的外县学校以大会资料为准） */
 export function schoolById(id: number): SchoolLite | null {
   const s = G.schools[id];
