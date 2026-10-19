@@ -16,7 +16,7 @@
 
 ## v1.0.1 — 2026-10-18
 
-- 文档：`docs/architecture.md` 里的 `game.json` 示例和存档说明更新为像素甲子园 v1.0.0（挂机版）的实际配置（新存档 `pixel-baseball:save`，旧版存储仍然声明，方便备份和清除旧存档）。
+- 文档：`docs/architecture.md` 里的 `game.json` 示例和存档说明更新为像素甲子园 v1.0.0（挂机版，统一版本号后是 v2.0.0）的实际配置（新存档 `pixel-baseball:save`，旧版存储仍然声明，方便备份和清除旧存档）。
 
 ## v1.0.0 — 2026-10-18
 
