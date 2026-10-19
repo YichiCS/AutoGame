@@ -130,7 +130,7 @@ for (const id of ids) {
   if (g.color !== undefined && !/^#[0-9a-fA-F]{3,8}$/.test(g.color)) E(`color「${g.color}」不是 #rrggbb 格式`);
   if (g.cover !== undefined && !isFile(join(dir, g.cover || ''))) E(`cover 指向的文件不存在：${g.cover}`);
 
-  // 入口页面：必须存在，并且引入了游戏厅的悬浮标签
+  // 入口页面：必须存在，并且引入了游戏厅的接入脚本
   if (!isStr(g.entry) || !/\.html?$/.test(g.entry)) E('entry 必须是 .html 文件的相对路径');
   else if (!isFile(join(dir, g.entry))) E(`entry 指向的文件不存在：${g.entry}（需要构建的游戏要把构建产物提交上来）`);
   else checkDock(id, join(dir, g.entry));
@@ -160,8 +160,7 @@ for (const id of ids) {
   }
 
   if (g.dock !== undefined) {
-    if (g.dock.y !== undefined && !(typeof g.dock.y === 'number' && g.dock.y >= 0 && g.dock.y <= 1)) E('dock.y 必须是 0～1 之间的数');
-    if (g.dock.leaveConfirm !== undefined && typeof g.dock.leaveConfirm !== 'string') E('dock.leaveConfirm 必须是字符串');
+    warn(`games/${id}/game.json 的 dock 字段已经不用了（游戏厅 v1.2.0 去掉了悬浮标签），可以删掉`);
   }
 
   if (g.build !== undefined) {
@@ -176,7 +175,7 @@ function checkDock(id, entryFile) {
   const html = readFileSync(entryFile, 'utf8');
   const tags = [...html.matchAll(/<script\b[^>]*>/gi)].map((m) => m[0]).filter((t) => /\bsrc\s*=\s*["'][^"']*hub\/dock\.js["']/i.test(t));
   if (!tags.length) {
-    err(`games/${id} 的入口页面没有引入游戏厅悬浮标签 hub/dock.js`, entryFile);
+    err(`games/${id} 的入口页面没有引入游戏厅接入脚本 hub/dock.js`, entryFile);
     return;
   }
   const t = tags[0];

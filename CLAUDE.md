@@ -25,6 +25,6 @@
 ## 其他约定
 
 - 所有路径用相对路径（站点在 `/AutoGame/` 子路径下）。
-- 每个游戏的入口 HTML 都要引入 `hub/dock.js`（`data-game="<id>"`）。
+- 每个游戏的入口 HTML 都要引入 `hub/dock.js`（`data-game="<id>"`），它不显示任何东西。「返回游戏厅」「存档管理」放在游戏自己的设置菜单里，地址取 `window.AutoGame.hubUrl` / `savesUrl`（读不到就不显示）。不要在游戏画面上浮东西（用户不喜欢浮窗）。
 - 本地预览：`node scripts/serve.mjs` → <http://localhost:8080/AutoGame/>。
-- 框架说明（目录、`game.json` 字段、存档包格式、悬浮标签）：`docs/architecture.md`。
+- 框架说明（目录、`game.json` 字段、存档包格式、接入脚本）：`docs/architecture.md`。
