@@ -14,6 +14,9 @@ export type OffTactic =
   | 'steal' // 盗垒（前方跑者）
   | 'doubleSteal'; // 双盗垒
 
+/** 玩家这一球发动的进攻战术：盗垒、双盗、牺牲触击、抢分（强迫取分）、打带跑 */
+export type HumanTac = 'steal' | 'doubleSteal' | 'bunt' | 'squeeze' | 'hitRun';
+
 export type PitchApproach = 'normal' | 'max' | 'contact' | 'careful';
 /** 守备阵型；close = 趋近（一三垒手前压防触击、二游站双杀位置，玩家用），noDoubles = 防长打（外野后退） */
 export type Alignment = 'normal' | 'infieldIn' | 'dp' | 'noDoubles' | 'buntShift' | 'close';

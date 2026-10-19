@@ -49,8 +49,8 @@ function smartSwing(g: LiveGame): LiveAct {
       const [x, y] = cellCenter(i, j);
       if (inZone(x, y)) pStrike += heat[j * GRID + i];
     }
-  for (let cj = 1; cj <= 7; cj++)
-    for (let ci = 1; ci <= 7; ci++) {
+  for (let cj = -1; cj <= 9; cj++)
+    for (let ci = -1; ci <= 9; ci++) {
       const [hx, hy] = rangeCenter([ci, cj]);
       let e = 0;
       for (let j = 0; j < GRID; j++)

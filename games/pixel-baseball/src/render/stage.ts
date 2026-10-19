@@ -43,8 +43,11 @@ export interface Hud {
   hot: number[] | null;
   /** 投球：瞄准点（好球带坐标） */
   aim: { x: number; y: number } | null;
-  /** 打击：挥棒范围（好球带 9×9 里的 3×3）的中心（好球带坐标）；null 还没选 */
+  /** 打击：挥棒点（好球带坐标）；null 还没选。cover：挥棒热区（121 格的「合」） */
   hunt: { x: number; y: number } | null;
+  cover: number[] | null;
+  /** 投球：打者这一球的打算（121 格，0..1，越浓越是他在等、会出棒的地方） */
+  intent: number[] | null;
   /** 打击：这一球不挥棒 */
   take: boolean;
   /** 网格能不能点 */
@@ -113,7 +116,7 @@ const RES_MARK: Record<string, [string, string]> = {
   inplay: [PAL.sky, '击中'],
 };
 
-const EMPTY_HUD: Hud = { heat: null, heatCol: HEAT_BAT, hot: null, aim: null, hunt: null, take: false, active: false };
+const EMPTY_HUD: Hud = { heat: null, heatCol: HEAT_BAT, hot: null, aim: null, hunt: null, cover: null, intent: null, take: false, active: false };
 
 // 球场的颜色（略微压暗、偏冷，让人物和网格更显眼）
 const DIRT = '#a8774c';
@@ -716,20 +719,17 @@ export class MatchStage {
     const bat = this.scene?.mode === 'bat';
     c.globalAlpha = (bat ? 0.42 : 0.16) * A;
     rect(c, x0, y0, g.cs * n, g.cs * n, PAL.ink);
-    // 九宫格打击率：投球时热的格子上淡红色（打击时只看数字的颜色，免得和洋红的热区混在一起）
-    if (h.hot && !bat) {
-      for (let zn = 0; zn < 9; zn++) {
-        const v = h.hot[zn];
-        const col = zn % 3;
-        const row = Math.floor(zn / 3);
-        // 只给热区上淡红色；冷区不上色（数字是蓝的），免得和投球的散布预览混在一起
-        const tint = v >= 0.31 ? PAL.red : null;
-        if (!tint) continue;
-        const [zx, zy] = cellXY(1 + col * 3, 1 + row * 3);
-        const left = g.mx === 1 ? zx : zx - 2 * g.cs;
-        c.globalAlpha = Math.min(0.34, 0.1 + (v - 0.28) * 4) * A;
-        rect(c, left, zy, g.cs * 3, g.cs * 3, tint);
-      }
+    // 投球：打者的打算（橙色，越浓越是他在等、会出棒的地方）
+    if (h.intent) {
+      for (let j = 0; j < n; j++)
+        for (let i = 0; i < n; i++) {
+          const v = h.intent[j * n + i];
+          if (v < 0.12) continue;
+          const [x, y] = cellXY(i, j);
+          c.globalAlpha = (0.14 + 0.56 * v) * A;
+          rect(c, x + 1, y + 1, g.cs - 1, g.cs - 1, PAL.orange);
+        }
+      c.globalAlpha = 1;
     }
     // 热区（概率）
     if (h.heat) {
@@ -785,20 +785,36 @@ export class MatchStage {
       c.globalAlpha = 1;
       c.textAlign = 'left';
     }
-    // 挥棒范围（好球带 9×9 里的 3×3），中心一点是挥棒点
+    // 挥棒热区（黄）：越浓的格子越容易打中、打得越扎实；和投手的热区（洋红）对齐。中心一点是挥棒点
+    if (h.cover) {
+      for (let j = 0; j < n; j++)
+        for (let i = 0; i < n; i++) {
+          const v = h.cover[j * n + i];
+          if (v < 0.3) continue;
+          const [x, y] = cellXY(i, j);
+          c.globalAlpha = (0.06 + 0.34 * v) * A;
+          rect(c, x + 1, y + 1, g.cs - 1, g.cs - 1, PAL.yellow);
+          // 浓的一圈描边，看得出热区的形状
+          if (v >= 0.8) {
+            c.globalAlpha = 0.95 * A;
+            const edge = (di: number, dj: number) => {
+              const ii = i + di;
+              const jj = j + dj;
+              return ii < 0 || jj < 0 || ii >= n || jj >= n || h.cover![jj * n + ii] < 0.8;
+            };
+            if (edge(0, -1)) rect(c, x, y, g.cs + 1, 1, PAL.yellow);
+            if (edge(0, 1)) rect(c, x, y + g.cs, g.cs + 1, 1, PAL.yellow);
+            if (edge(g.mx === 1 ? -1 : 1, 0)) rect(c, x, y, 1, g.cs + 1, PAL.yellow);
+            if (edge(g.mx === 1 ? 1 : -1, 0)) rect(c, x + g.cs, y, 1, g.cs + 1, PAL.yellow);
+          }
+        }
+      c.globalAlpha = 1;
+    }
     if (h.hunt) {
       const [hx, hy] = this.zoneXY(h.hunt.x, h.hunt.y);
-      const w = g.cs * 3;
-      const left = Math.round(hx - w / 2);
-      const top = Math.round(hy - w / 2);
-      c.globalAlpha = 0.2 * A;
-      rect(c, left, top, w, w, PAL.yellow);
       c.globalAlpha = A;
-      rect(c, left - 1, top - 1, w + 2, 3, PAL.yellow);
-      rect(c, left - 1, top + w - 2, w + 2, 3, PAL.yellow);
-      rect(c, left - 1, top - 1, 3, w + 2, PAL.yellow);
-      rect(c, left + w - 2, top - 1, 3, w + 2, PAL.yellow);
-      rect(c, hx - 1.5, hy - 1.5, 3, 3, PAL.yellow);
+      rect(c, hx - 2, hy - 0.5, 5, 2, PAL.yellow);
+      rect(c, hx - 0.5, hy - 2, 2, 5, PAL.yellow);
       c.globalAlpha = 1;
     }
     // 瞄准点（投球）
