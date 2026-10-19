@@ -190,7 +190,7 @@
     return g;
   };
   G.freshYear = g => ({ papersA: 0, papers: 0, cites0: g.stats.cites, grants: 0, income: 0, expense: 0, rejects: 0, subs: 0, joined: 0, grads: 0 });
-  // v0.2.0 新加的方针，默认值就是以前的做法（旧存档读档时补上）：
+  // v1.1.0（原 v0.2.0）新加的方针，默认值就是以前的做法（旧存档读档时补上）：
   //   desk 工位分配顺序；exit 出路与到期（按身份）；pick 招人名单弹出来以后怎么办（按身份）；hire 持续招本科生 / 博士后
   G.newPolicies = () => ({
     desk: 'keep',
@@ -235,7 +235,7 @@
       g.teaching.ug = Math.floor(g.teaching.count / 2);
       g.teaching.grad = g.teaching.count - g.teaching.ug;
     }
-    // v0.2.0 之前的存档没有这几项方针：补上默认值（和以前的行为一样），已经设过的保留
+    // v1.1.0（原 v0.2.0）之前的存档没有这几项方针：补上默认值（和以前的行为一样），已经设过的保留
     const P = G.newPolicies();
     if (!g.policies.desk) g.policies.desk = P.desk;
     ['exit', 'pick', 'hire'].forEach(k => { g.policies[k] = Object.assign(P[k], g.policies[k]); });
