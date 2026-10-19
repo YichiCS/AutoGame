@@ -197,8 +197,8 @@ export function batterHunt(m: Match, t: TeamState, mind: Mind | null, spreads: S
   if (strikes < 2) {
     let pTake = 0;
     if (balls === 3 && strikes === 0) pTake = 0.75;
-    else if (balls >= 2 && balls > strikes) pTake = pStrike < 0.5 ? 0.55 : 0.25;
-    else if (balls === 0 && strikes === 0) pTake = 0.18 - (has(b, 'firstPitch') ? 0.15 : 0);
+    else if (balls >= 2 && balls > strikes) pTake = pStrike < 0.5 ? 0.42 : 0.16;
+    else if (balls === 0 && strikes === 0) pTake = 0.08 - (has(b, 'firstPitch') ? 0.08 : 0);
     pTake += 0.12 * z(eye) * (pStrike < 0.5 ? 1 : -0.5);
     if (r.rand() < clamp(pTake, 0, 0.9)) return -1;
   }

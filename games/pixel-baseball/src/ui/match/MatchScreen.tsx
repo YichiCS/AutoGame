@@ -1,7 +1,7 @@
 // 亲自指挥的比赛画面：一球一球地下指令。
 // 投球：选球种（质量 0-100），在网格上点要投的位置；对方跑者离垒太大时可以牵制。
 // 打击：看投手这一球的热区图，点要打的那一格（或不挥棒），决定垒上的跑者要不要提前跑。
-// 手机上一屏操作：上面比分，中间画面和网格，下面这一球的选择和开始按钮。
+// 手机上一屏操作：上面比分，中间画面和网格，下面这一球的选择和开始按钮（贴底，画面按剩下的高度缩放）。
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Player, Pos } from '../../core/types';
@@ -22,6 +22,7 @@ import { sfx } from '../sound';
 import { AUTO_NAME, type AutoMode, type MatchSession } from './session';
 import { LineupEditor } from '../tabs/Lineup';
 import { SW, SH } from '../../render/stage';
+import { useIsPhone } from '../layout';
 
 type Dlg = { kind: 'ph' } | { kind: 'pr' } | { kind: 'pc' } | { kind: 'ds' } | null;
 
@@ -259,16 +260,6 @@ function MatchView(p: { S: MatchSession }) {
             <>
               <Matchup S={S} />
               {ph === 'pitch' ? <PitchControls S={S} setDlg={setDlg} /> : <BatControls S={S} setDlg={setDlg} />}
-              <div class="mlog">
-                {S.lines
-                  .slice(-3)
-                  .reverse()
-                  .map((l, i) => (
-                    <div key={i} class={`ml ${l.big ? 'big' : ''} ${l.side === L.mySide ? 'mine' : ''}`}>
-                      {l.t}
-                    </div>
-                  ))}
-              </div>
             </>
           )}
         </aside>
@@ -423,6 +414,7 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
   const v = S.muView();
   const ready = S.state === 'ready' && !S.coaching;
   const left = m.pickoffsLeft();
+  const phone = useIsPhone();
   return (
     <section class="ctl">
       <div class="ctl-h">
@@ -439,7 +431,22 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
       </div>
       {m.bases.some(Boolean) && (
         <div class="runners">
-          {m.bases.map((r, i) =>
+          {phone ? (
+            // 手机：每个垒一格排成一行，整格就是牵制按钮
+            <div class="rcells">
+              {m.bases.map((r, i) =>
+                r ? (
+                  <button type="button" key={i} class={`rcell ${m.leads[i] === 'big' ? 'warn' : ''}`} disabled={!ready || left <= 0} onClick={() => S.act({ k: 'po', base: i })}>
+                    <span class="rc-t">
+                      {BASE[i]}
+                      {m.leads[i] === 'big' ? ' ⚠ 离垒大' : ''}
+                    </span>
+                    <span>牵制</span>
+                  </button>
+                ) : null,
+              )}
+            </div>
+          ) : m.bases.map((r, i) =>
             r ? (
               <div key={i} class={`runner ${m.leads[i] === 'big' ? 'warn' : ''}`}>
                 <span class="rb">{BASE[i]}</span>
@@ -479,6 +486,7 @@ function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
   const occupied = m.bases.map(Boolean);
   // 一垒跑者要跑，前面（二垒）得空着或者也跑
   const canRun = (i: number) => occupied[i] && (i === 2 || !occupied[i + 1] || S.run[i + 1]);
+  const phone = useIsPhone();
   return (
     <section class="ctl">
       <div class="ctl-h">
@@ -493,7 +501,20 @@ function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
       </div>
       {occupied.some(Boolean) && (
         <div class="runners">
-          {m.bases.map((r, i) =>
+          {phone ? (
+            <div class="rcells">
+              {m.bases.map((r, i) =>
+                r ? (
+                  <button type="button" key={i} class={`rcell ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)}>
+                    <span class="rc-t">
+                      {BASE[i]} 跑速 <Num v={m.off.get(r.pid).a.speed} />
+                    </span>
+                    <span>{S.run[i] ? '提前跑 ✓' : '提前跑'}</span>
+                  </button>
+                ) : null,
+              )}
+            </div>
+          ) : m.bases.map((r, i) =>
             r ? (
               <div key={i} class="runner">
                 <span class="rb">{BASE[i]}</span>
@@ -789,6 +810,9 @@ function Postgame(p: { S: MatchSession }) {
         {sum.called ? '（提前结束）' : sum.innings > 9 ? `（延长 ${sum.innings} 局）` : ''}
       </div>
       {mvp && <div class="gold">MVP：{fullName(mvp)}</div>}
+      <Btn kind="primary" big onClick={() => S.finish()}>
+        回到学校
+      </Btn>
       <div class="box">
         <div class="bx bx-head">
           <span>打者</span>
@@ -814,9 +838,6 @@ function Postgame(p: { S: MatchSession }) {
           ))}
         </ul>
       )}
-      <Btn kind="primary" big onClick={() => S.finish()}>
-        回到学校
-      </Btn>
     </section>
   );
 }

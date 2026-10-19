@@ -3,6 +3,7 @@ import { POS_ABBR, POSITIONS } from '../../core/types';
 import { G, myPlayers, seniors } from '../../core/state';
 import { batterOffense, fieldAt, fullName, isPitcher, overall, pitcherOverall } from '../../core/attrs';
 import { PITCH_DEFS } from '../../data/pitches';
+import { pitchQuality } from '../../sim/pitching';
 import { strengthOf, strengthLetter } from '../../core/team';
 import { Cond, Empty, Fatigue, Gain, Num, Ovr, Portrait, SubTabs, recentGain } from '../components/common';
 import { refresh, setSub, ui } from '../store';
@@ -58,7 +59,7 @@ function PlayerRow(p: { pl: Player }) {
             <Cell k="控" v={pl.a.control} />
             <Cell k="耐" v={pl.a.stamina} />
             <Cell k="威" v={pl.a.stuff} />
-            <span class="sc pits">{pl.pitches.map((x) => (x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].short) + x.lv).join(' ') || '只有直球'}</span>
+            <span class="sc pits" title="数字是球种质量（0-100）">{pl.pitches.map((x) => (x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].short) + Math.round(pitchQuality(pl, x.type))).join(' ') || '只有直球'}</span>
           </>
         ) : (
           <>

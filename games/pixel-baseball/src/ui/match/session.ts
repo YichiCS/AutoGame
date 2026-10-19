@@ -535,6 +535,7 @@ export class MatchSession {
     this.syncDisp();
     for (const e of L.events.slice(-30)) this.pushLine(e);
     this.state = 'over';
+    this.updateHud();
     saveGame();
     refresh();
   }

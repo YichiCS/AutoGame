@@ -6,6 +6,7 @@ import {
 } from '../../core/attrs';
 import { rate3 } from '../../core/util';
 import { learnNeed, maxPitchCount, maxPitchLv } from '../../core/growth';
+import { fbQuality, pitchQuality } from '../../sim/pitching';
 import { PITCH_DEFS, type PitchDir } from '../../data/pitches';
 import { TRAIT_BY_ID } from '../../data/traits';
 import { dateStr } from '../../core/calendar';
@@ -57,8 +58,13 @@ export function PitchChart(p: { pl: Player }) {
         <span class="pdir">{DIR_LABEL[dir]}</span>
         {ps.map((x) => (
           <div key={x.type} class={`pitem ${x.sig ? 'sig' : ''}`} title={`${PITCH_DEFS[x.type].name}：${PITCH_DEFS[x.type].desc}`}>
-            <span>{x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].name}</span>
-            <span class="lv7">
+            <span class="pname">
+              {x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].name}
+              <span class="pq" title="球种质量（0-100）：等级和球威决定，比赛中累了会下降">
+                <Num v={pitchQuality(pl, x.type)} />
+              </span>
+            </span>
+            <span class="lv7" title="练习等级（越高质量越好）">
               {'●'.repeat(x.lv)}
               <span class="dim">{'●'.repeat(Math.max(0, 7 - x.lv))}</span>
               <span class="lvn">{x.lv}</span>
@@ -85,7 +91,7 @@ export function PitchChart(p: { pl: Player }) {
         <div class="pcell fb">
           <span class="pdir">直球</span>
           <b>{Math.round(pl.a.velocity)}</b>
-          <small>km/h</small>
+          <small>km/h · 质量 <Num v={fbQuality(pl)} /></small>
         </div>
         {cell('R')}
       </div>
@@ -100,7 +106,12 @@ export function PitchChart(p: { pl: Player }) {
             <span class="pdir">？</span>
             {knuckle.map((x) => (
               <div key={x.type} class="pitem">
-                <span>{x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].name}</span>
+                <span class="pname">
+                  {x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].name}
+                  <span class="pq">
+                    <Num v={pitchQuality(pl, x.type)} />
+                  </span>
+                </span>
                 <span class="lv7">
                   {'●'.repeat(x.lv)}
                   <span class="lvn">{x.lv}</span>
@@ -111,7 +122,7 @@ export function PitchChart(p: { pl: Player }) {
         </div>
       )}
       <div class="small dim mt4">
-        球种 {pl.pitches.length} / {maxPitchCount(pl)} · 变化等级上限 {maxPitchLv(pl)} · {flip ? '左投' : '右投'}{' '}
+        数字是球种质量（0-100），圆点是练习等级 · 球种 {pl.pitches.length} / {maxPitchCount(pl)} · 等级上限 {maxPitchLv(pl)} · {flip ? '左投' : '右投'}{' '}
         {delivery}
       </div>
       {pl.learning && (

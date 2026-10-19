@@ -335,7 +335,7 @@ export interface SwingOut {
 /** 挥棒模型的参数（tests/balance.ts 校准：打率、三振率、保送率、挥空率接近旧版） */
 export const SWING_K = {
   /** 出棒范围：狙的那一格中心多远以内 */
-  reach0: 0.56,
+  reach0: 0.6,
   reachEye: 0.12,
   reach2s: 0.16,
   /** 「合」的衰减距离 */

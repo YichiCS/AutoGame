@@ -261,7 +261,8 @@ export class MatchStage {
   private pitcherFeet(): [number, number, number] {
     const s = this.scene!;
     if (s.mode === 'bat') return [180, 138, 112];
-    return [s.pitcher.side === 'R' ? 58 : 302, 480, 330];
+    // 机位偏向一边，投手不挡住打者：打者站右边（右打）投手就在左边，反之亦然
+    return [s.batter.side === 'R' ? 58 : 302, 480, 330];
   }
 
   private releasePoint(): [number, number] {
