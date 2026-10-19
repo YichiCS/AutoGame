@@ -14,7 +14,7 @@ import { schoolById } from './world';
 export type Phase = 'bat' | 'pitch' | 'over';
 
 /** 比赛引擎的版本：改了比赛规则、随机数用法就加一（旧的记录没法原样重演，那场比赛从头开始） */
-export const LIVE_ENGINE = 4;
+export const LIVE_ENGINE = 5;
 
 const ALIGN = { close: 'close', normal: 'normal', deep: 'noDoubles' } as const;
 

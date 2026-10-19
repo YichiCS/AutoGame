@@ -4,8 +4,9 @@ import { EXP_KINDS, POS_NAME } from './types';
 import { G, log, myPlayers, note } from './state';
 import { chance, gauss, pick, randInt, weightedPick } from './rng';
 import { clamp } from './util';
-import { fullName, has, isPitcher, overall, refreshPos } from './attrs';
-import { autoSpend, curveMult, ethicMult, gainExp, progressLearning, talentMult } from './growth';
+import { ATTR_NAME, fullName, has, isPitcher, overall, refreshPos } from './attrs';
+import { attrMax, autoSpend, curveMult, emptyExp, ethicMult, gainExp, progressLearning, talentMult } from './growth';
+import type { AttrKey } from './types';
 import { isOffseason, monthOf, weekday } from './calendar';
 import { PITCH_DEFS } from '../data/pitches';
 import { queue } from './queue';
@@ -186,6 +187,85 @@ function trackVelocity(p: Player, before: number): void {
   }
 }
 
+/** 特训能提升的能力 */
+const SP_PIT: AttrKey[] = ['velocity', 'control', 'stamina', 'stuff', 'mental', 'fielding'];
+const SP_BAT: AttrKey[] = ['contact', 'power', 'eye', 'speed', 'arm', 'fielding', 'catching', 'baserun'];
+
+/** 特训：随机 1～3 项能力各 +1～+4（潜力高、状态好的人更容易多涨；到了上限的能力很难再涨），练完累一些 */
+function specialTrain(p: Player, got: Partial<Record<AttrKey | 'pitch', number>>): string {
+  const pool = [...(isPitcher(p) ? SP_PIT : SP_BAT)];
+  const n = randInt(1, 3);
+  const bonus = (p.pot >= 70 || (p.form ?? 1) >= 1.2) && chance(0.35) ? 1 : 0;
+  const parts: string[] = [];
+  for (let i = 0; i < n && pool.length; i++) {
+    const k = pool.splice(randInt(0, pool.length - 1), 1)[0];
+    let amt = randInt(1, 4) + bonus;
+    if (p.a[k] >= p.caps[k]) amt = chance(0.3) ? 1 : 0;
+    const before = p.a[k];
+    p.a[k] = Math.min(attrMax(k), Math.floor(p.a[k]) + amt);
+    const d = Math.round(p.a[k] - before);
+    if (d > 0) {
+      got[k] = (got[k] ?? 0) + d;
+      parts.push(`${ATTR_NAME[k]} +${d}`);
+    }
+  }
+  p.fatigue = Math.min(100, p.fatigue + 8);
+  return parts.join('、') || '没什么收获';
+}
+
+/**
+ * 每月 1 日：上个月攒下的训练经验一起结算成长——乘上这一学年的状态和一点每月的起伏（潜力决定成长速度，已经算在每天的经验里），
+ * 按培养方针加点；再进行特训。日志里列出这个月进步最多的人。
+ */
+export function monthlyGrowth(): void {
+  const special = new Set((G.special ?? []).slice(0, 9));
+  const rows: { p: Player; pts: number; ovr: [number, number] }[] = [];
+  const spLines: string[] = [];
+  for (const p of myPlayers()) {
+    const o0 = overall(p);
+    const velBefore = p.a.velocity;
+    // 0.87：一次结算比每天零碎地加点用得更足，校准成和以前一年的总成长一样（tests/yeargrowth.ts）
+    const f = 0.87 * (p.form ?? 1) * clamp(gauss(1, 0.12), 0.7, 1.3);
+    const bank = p.bank ?? emptyExp();
+    for (const k of EXP_KINDS) gainExp(p, k, bank[k] * f);
+    p.bank = emptyExp();
+    const got = autoSpend(p, p.plan, 9999);
+    if (special.has(p.id) && !p.injury) spLines.push(`${fullName(p)}：${specialTrain(p, got)}`);
+    const pts = Object.values(got).reduce((a, b) => a + (b ?? 0), 0);
+    p.gm = got;
+    p.gains = (p.gains ?? 0) + pts;
+    // 能力涨了，最适合的位置可能跟着变
+    const from = p.pos;
+    if (refreshPos(p)) {
+      note(p, `最适合的位置从${POS_NAME[from]}变成了${POS_NAME[p.pos]}`);
+      log(`${fullName(p)} 最适合的位置从${POS_NAME[from]}变成了${POS_NAME[p.pos]}`, 'info');
+    }
+    if (isPitcher(p)) trackVelocity(p, velBefore);
+    rows.push({ p, pts, ovr: [o0, overall(p)] });
+  }
+  const top = rows.filter((r) => r.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 3);
+  if (top.length) log(`上个月的成长：${top.map((r) => `${fullName(r.p)} 能力 +${r.pts}（总评 ${Math.round(r.ovr[0])}→${Math.round(r.ovr[1])}）`).join('、')}`, 'good');
+  if (spLines.length) log(`特训：${spLines.join('；')}`, 'good');
+}
+
+/** 特训名单：加入或移出（最多 9 人）；返回是否成功 */
+export function toggleSpecial(id: number): boolean {
+  const s = (G.special ??= []);
+  const i = s.indexOf(id);
+  if (i >= 0) {
+    s.splice(i, 1);
+    return true;
+  }
+  if (s.length >= 9) return false;
+  s.push(id);
+  return true;
+}
+
+/** 每年 4 月：每个人这一学年的状态（突破年 / 普通 / 低迷） */
+export function drawForms(): void {
+  for (const p of myPlayers()) p.form = clamp(gauss(1, 0.22), 0.55, 1.5);
+}
+
 /** 每天：所有在籍球员的训练与状态 */
 export function dailyTeam(matchToday: boolean): void {
   const pol = G.policies;
@@ -221,25 +301,11 @@ export function dailyTeam(matchToday: boolean): void {
       activity.set(p.id, 'rest');
       continue;
     }
-    // 训练
+    // 训练：经验先攒进这个月的成长池，每月 1 日一起结算成长（monthlyGrowth）
     const e = dailyExp(p) * (matchToday ? 0.5 : 1);
     const gain = expSplit(p, e);
-    for (const k of EXP_KINDS) gainExp(p, k, gain[k]);
-    const velBefore = p.a.velocity;
-    const got = autoSpend(p, p.plan, 30);
-    const pts = Object.values(got).reduce((a, b) => a + (b ?? 0), 0);
-    if (pts) {
-      p.gains = (p.gains ?? 0) + pts;
-      const gw = (p.gw ??= {});
-      for (const [k, v] of Object.entries(got)) gw[k as keyof typeof gw] = (gw[k as keyof typeof gw] ?? 0) + (v ?? 0);
-      // 能力涨了，最适合的位置可能跟着变
-      const from = p.pos;
-      if (refreshPos(p)) {
-        note(p, `最适合的位置从${POS_NAME[from]}变成了${POS_NAME[p.pos]}`);
-        log(`${fullName(p)} 最适合的位置从${POS_NAME[from]}变成了${POS_NAME[p.pos]}`, 'info');
-      }
-    }
-    if (isPitcher(p)) trackVelocity(p, velBefore);
+    const bank = (p.bank ??= emptyExp());
+    for (const k of EXP_KINDS) bank[k] += gain[k];
     // 学新球种
     if (p.learning) {
       const t = progressLearning(p, gain.brk * 0.9 * (1 + G.facilities.bullpen * 0.12) + 0.15);

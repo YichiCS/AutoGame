@@ -122,6 +122,12 @@ export interface Player {
   /** 这一周 / 上一周各项能力涨了多少（显示「最近成长」用） */
   gw?: Partial<Record<AttrKey | 'pitch', number>>;
   gwp?: Partial<Record<AttrKey | 'pitch', number>>;
+  /** 这个月攒下的训练经验（每月 1 日一起结算成长） */
+  bank?: ExpPool;
+  /** 这一学年的状态（每年 4 月抽：潜力一样的人，有的突破、有的低迷），1 = 普通 */
+  form?: number;
+  /** 上个月的成长（每月 1 日结算） */
+  gm?: Partial<Record<AttrKey | 'pitch', number>>;
   draft?: { team: string; round: number };
 }
 
@@ -380,6 +386,8 @@ export interface GameState {
   v: number;
   seed: number;
   rng: number[];
+  /** 特训名单（最多 9 人，每月 1 日进行） */
+  special?: number[];
   nextId: number;
   day: number; // 0 = 开局学年的 4 月 1 日
   startYear: number;

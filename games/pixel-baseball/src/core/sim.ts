@@ -5,7 +5,7 @@ import { chance, randInt } from './rng';
 import { clamp, sortBy } from './util';
 import { SCHED, doy, doyOf, domOf, schoolYear, yearIdx } from './calendar';
 import { emptyBlock, eraOf, fullName, isPitcher, avgOf } from './attrs';
-import { dailyTeam, exams, weatherDaily } from './daily';
+import { dailyTeam, drawForms, exams, monthlyGrowth, weatherDaily } from './daily';
 import { buildingDaily, monthlyMoney, autoBuildPick, startUpgrade, moneyStr } from './economy';
 import { seasonDaily, newSeason, afterMyMatch, TOUR_ORDER, championNews } from './season';
 import { simulatePending, applyResult, tourOf, type SimResult } from './matchday';
@@ -131,6 +131,7 @@ function calendar(t: number): void {
 }
 
 function monthly(): void {
+  monthlyGrowth();
   monthlyMoney();
   const c = G.club;
   c.board = clamp(c.board + (55 - c.board) * 0.05, 0, 100);
@@ -153,6 +154,7 @@ function newYear(): void {
     p.gains = 0;
   }
   const fresh = enrollClass();
+  drawForms();
   newSeason();
   setGoal();
   G.mgr.totals.seasons++;

@@ -9,7 +9,7 @@ import { autoLineup, strengthOf } from '../src/core/team';
 import { Match, type TeamState } from '../src/sim/match';
 import type { Alignment, MatchRules, TeamSetup } from '../src/sim/types';
 import type { PitchType, Player, Pos } from '../src/core/types';
-import { GRID, arsenal, batSide, cellCenter, commitFit, hotAt, hotZones, inZone, makeRng, nearZone, rangeCenter, spreadOf, zoneCenter, type Rng } from '../src/sim/pitching';
+import { GRID, arsenal, batSide, cellCenter, coverFit, hotAt, hotZones, inZone, makeRng, nearZone, rangeCenter, spreadOf, zoneCenter, type Rng } from '../src/sim/pitching';
 import { VIEW_K, batterView, coachHunt, coachRun, coachThrow, strikeProb } from '../src/sim/brain';
 import { SWING_K } from '../src/sim/pitching';
 import { coachAlign, coachWantsChange, wantsIBB } from '../src/sim/ai';
@@ -63,7 +63,7 @@ function heatOf(m: Match, seed: number, step: number): number[] | null {
 /** 会玩的玩家：每个挥棒范围的期望「合」，挑最大的；没把握（多半是坏球）就不挥 */
 function skilledSwing(m: Match, seed: number, step: number): SwingCall {
   const heat = heatOf(m, seed, step);
-  const con = m.batter().a.contact;
+  const shape = m.swingShape();
   if (!heat) return { z: 4, run: [false, false, false], commit: true, c: [4, 4] };
   let best = -1;
   let bc: [number, number] = [4, 4];
@@ -82,7 +82,7 @@ function skilledSwing(m: Match, seed: number, step: number): SwingCall {
           const v = heat[j * GRID + i];
           if (v < 1e-4) continue;
           const [x, y] = cellCenter(i, j);
-          e += v * commitFit(x - hx, y - hy, con);
+          e += v * coverFit(x - hx, y - hy, shape);
         }
       if (e > best) {
         best = e;

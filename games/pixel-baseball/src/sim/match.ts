@@ -5,12 +5,12 @@ import type {
   HumanTac, BipInfo, BipKind, BoxBat, BoxPit, DefTactic, EventKind, MatchRules, MatchSummary, OffTactic, PAMemo, PAResult,
   PitchInfo, PitchResult, PitchSpot, PitchUse, PlayEvent, RunnerMove, RunnerSlot, SeenPitches, Snap, TeamSetup, Zone,
 } from './types';
-import { chance, gauss, rand, weightedPick } from '../core/rng';
+import { chance, gauss, hash32, rand, weightedPick } from '../core/rng';
 import { clamp, z } from '../core/util';
 import { aptOf, has } from '../core/attrs';
 import { PITCH_DEFS } from '../data/pitches';
 import * as AI from './ai';
-import { hotZones, locOf, nearZone, pickoffSkill, pitchQuality, rangeCenter, sampleLanding, spreadOf, swingOutcome, type Loc, type PitcherNow, type Rng, type Spread } from './pitching';
+import { coverShape, type CoverShape, hotZones, locOf, nearZone, pickoffSkill, pitchQuality, rangeCenter, sampleLanding, spreadOf, swingOutcome, type Loc, type PitcherNow, type Rng, type Spread } from './pitching';
 import { batterHunt, coachThrow, leadFor, mindSpreads, pickOpt, pitcherMind, type Mind } from './brain';
 
 /** 比赛用全局随机数（LiveGame 会把它换成比赛自己的状态） */
@@ -357,6 +357,12 @@ export class Match {
     const dfn = this.dfn;
     this.coachMind = mind;
     this.coachSp = mindSpreads(mind, dfn.get(dfn.pitcher), this.pitcherNow(), dfn.fatigueRatio(dfn.pitcher));
+  }
+
+  /** 这一球打者的挥棒热区形状（打者、第几个打席、这个打席第几球决定；每一球的手感不同） */
+  swingShape(): CoverShape {
+    const b = this.batter();
+    return coverShape(b.a.contact, hash32(b.id, this.paNo * 37 + this.paNp, 13));
   }
 
   /** 申告敬远（玩家）：不投球，直接保送打者 */
@@ -1156,6 +1162,7 @@ export class Match {
     // 玩家（或替玩家拿主意的教练）这一球的指令：用一次就收回
     const human = off.auto ? null : off.swingNext;
     off.swingNext = null;
+    const shape = human?.commit ? this.swingShape() : undefined;
     const call = dfn.auto ? null : dfn.callNext;
     dfn.callNext = null;
 
@@ -1326,6 +1333,7 @@ export class Match {
         blind: !human && !readable && !!this.readMind,
         balls: this.balls,
         at: human?.commit && human.c ? rangeCenter(human.c) : undefined,
+        shape,
         x: info.x,
         y: info.y,
         q: qSwing,
