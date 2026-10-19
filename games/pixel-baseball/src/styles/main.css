@@ -686,10 +686,21 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
 .mu2-row .dim { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
 .mu2-tag { color: var(--bg2); background: var(--line2); text-align: center; font-size: 12px; line-height: 16px; }
 .mu2-r { text-align: right; white-space: nowrap; color: var(--muted); font-size: 12px; }
+/* 投手的体力（带数字的条）和心态 */
+.mu2-st { display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.stbar { flex: 0 0 84px; height: 8px; background: var(--panel2); box-shadow: inset 0 0 0 1px var(--shadow); }
+.stbar i { display: block; height: 100%; background: currentColor; }
+.mu2-st .hot { color: var(--accent); }
 
 /* 这一球的操作 */
 .ctl { display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 3px solid var(--shadow); box-shadow: inset 0 0 0 2px var(--line); padding: 8px 10px; }
-.ctl-h { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; color: var(--accent); }
+.ctl-h { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; color: var(--accent); }
+/* 守备阵型：趋近 / 正常 / 防长打 */
+.seg { display: inline-flex; border: 2px solid var(--shadow); background: var(--panel2); }
+.seg-b { background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 12px; padding: 2px 9px; min-height: 30px; cursor: pointer; }
+.seg-b + .seg-b { box-shadow: inset 1px 0 0 var(--shadow); }
+.seg-b.on { background: var(--accent2); color: var(--bg2); }
+.seg-b:disabled { opacity: 0.5; cursor: not-allowed; }
 .ptypes { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 4px; }
 .ptype { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 4px 8px; min-height: 40px; background: var(--panel2); border: 2px solid var(--shadow); color: var(--text); font: inherit; cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.3); text-align: left; }
 .ptype:hover:not(:disabled) { background: var(--panel3); }
@@ -716,6 +727,8 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
 .rcell:disabled { opacity: 0.45; cursor: not-allowed; }
 .chip:disabled { opacity: 0.35; cursor: not-allowed; }
 .huntrow { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.tend { line-height: 1.4; }
+.pshape { display: inline-block; width: 1.1em; font-size: 11px; opacity: 0.85; }
 .hunt { flex: 1; color: var(--muted); }
 .hunt.on { color: var(--accent); }
 .chip.big { min-height: 38px; padding: 2px 16px; }
@@ -793,6 +806,8 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
   .mside { flex: 0 1 auto; min-height: 0; width: 100%; border-left: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); overflow-y: auto; }
   .ctl { padding: 6px 8px; gap: 6px; }
   .ptypes { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+  /* 手机上按钮多，提示文字让位（按钮上已经写清楚了） */
+  .gobar .hint { display: none; }
   .mu2-row { grid-template-columns: 24px 2.4em max-content minmax(0, 1fr); }
   .mu2-row .mu2-r { display: none; }
   .mscreen.pre { padding: 0 0 76px; }

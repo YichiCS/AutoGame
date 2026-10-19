@@ -6,7 +6,8 @@ import type { PAMemo } from './types';
 import { PITCH_DEFS } from '../data/pitches';
 import { clamp, z } from '../core/util';
 import { has } from '../core/attrs';
-import { arsenal, batSide, hotAt, hotZones, inZone, nearZone, spreadOf, zoneCenter, type PitchOpt, type PitcherNow, type Rng, type Spread } from './pitching';
+import { hash32 } from '../core/rng';
+import { arsenal, batSide, density, hotAt, hotZones, inZone, makeRng, nearZone, spreadOf, zoneCenter, type PitchOpt, type PitcherNow, type Rng, type Spread } from './pitching';
 
 /** 投手这一球的一个打算 */
 export interface MindOpt {
@@ -74,6 +75,7 @@ export function pitcherMind(m: Match, t: TeamState, now: PitcherNow, r: Rng): Mi
   const ahead = strikes === 2 && balls <= 2;
   const prev = lastVs(m, b.id, m.half);
   const read = 0.35 + t.s.mgrTactics / 160;
+  const u = m.useOf(p.id);
   // 投手眼里每种结果的分量（正 = 对投手有利）：坏球（第四个是保送）、好球（第三个是三振）、界外、被打进场
   const vBall = balls === 3 ? -0.34 : -0.04 - balls * 0.015;
   const vStrike = strikes === 2 ? 0.3 : 0.07;
@@ -109,6 +111,8 @@ export function pitcherMind(m: Match, t: TeamState, now: PitcherNow, r: Rng): Mi
         if (isHitRes(prev.res) && L.t === o.type) v -= 3 * read;
         if (prev.res === 'K' && L.t === o.type && ahead) v += 3 * read;
       }
+      // 打者会从这场比赛学：同一个球种、同一个位置用得太多容易被抓住
+      if (u.tw > 3) v -= (6 * Math.max(0, (u.rt[o.type] ?? 0) / u.tw - 0.45) + 5 * Math.max(0, u.rz[nearZone(x, y)] / u.tw - 0.3)) * read;
       v += r.gauss(0, 1.2);
       cands.push({ o, x, y, v });
     }
@@ -128,6 +132,36 @@ export function pitcherMind(m: Match, t: TeamState, now: PitcherNow, r: Rng): Mi
   const ws = picked.map((c) => Math.exp((c.v - best.v) / 1.8));
   const tot = ws.reduce((a, c) => a + c, 0);
   return { opts: picked.map((c, i) => ({ type: c.o.type, x: c.x, y: c.y, w: ws[i] / tot })) };
+}
+
+/** 打者读投手的准确度 0..1：看选球眼（「选球眼差」的人再打折） */
+export function eyeAccuracy(b: Player): number {
+  const eye = b.a.eye - (has(b, 'eyeX') ? 10 : 0);
+  return clamp((eye - 15) / 75, 0, 1);
+}
+
+/**
+ * 打者眼里这一球的热区图（网格 121 格的概率）：选球眼越好越接近投手真正的打算；
+ * 眼力差的人看到的热点会偏、会糊，分量看不准，还可能多看出一个假的热点。按比赛种子和第几球固定，同一球怎么看都一样。
+ */
+export function batterView(m: Match, seed: number, step: number): number[] | null {
+  const mind = m.mind;
+  const sp = m.mindSp;
+  if (!mind || !sp) return null;
+  // 选球眼越好越准；同一个投手看到第二、第三个打席也越来越准
+  const b = m.batter();
+  const acc = clamp(eyeAccuracy(b) + 0.06 * Math.min(3, m.timesFaced(b.id, m.pitcher().id)), 0, 1);
+  const r = makeRng(hash32(seed, step, 7));
+  const err = 0.03 + 0.25 * (1 - acc);
+  const n = mind.opts.length;
+  const aims = mind.opts.map((o, i) => ({
+    x: o.x + r.gauss(0, err),
+    y: o.y + r.gauss(0, err),
+    w: o.w * (0.4 + 0.6 * acc) + ((1 - acc) * 0.6) / n,
+    sp: { ...sp[i], s: sp[i].s * (1 + 0.35 * (1 - acc)) },
+  }));
+  if (acc < 0.5 && r.rand() < 0.7 - acc) aims.push({ x: r.gauss(0, 0.55), y: r.gauss(0, 0.55), w: 0.25 * (1 - acc), sp: { ...sp[0], s: sp[0].s * 1.15 } });
+  return density(aims, hash32(seed, step, 5));
 }
 
 /** 按权重从打算里挑出这一球 */
@@ -192,6 +226,12 @@ export function batterHunt(m: Match, t: TeamState, mind: Mind | null, spreads: S
       }
       arrive[zn] = a;
     }
+  }
+  // 看不透投手（对手是玩家、教练，只能猜）：参考这场比赛学到的这个投手的落点，越有把握越照着猜
+  const lz = mind && mind === m.mind ? null : m.learnedZones(p.id, b);
+  if (lz) {
+    const tot = arrive.reduce((a, c) => a + c, 0) || 1;
+    for (let zn = 0; zn < 9; zn++) arrive[zn] = (1 - lz.L) * (arrive[zn] / tot) + lz.L * lz.z[zn];
   }
   // 打者有利的球数、投手又不太进好球带：等
   if (strikes < 2) {

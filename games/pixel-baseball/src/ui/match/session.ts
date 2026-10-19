@@ -3,22 +3,24 @@
 // 也可以交给教练（整场、本局、或者只在关键时刻问我），逐事件演出。
 import type { LiveAct, PendingMatch, PitchType, Player, Pos } from '../../core/types';
 import { PITCH_DEFS } from '../../data/pitches';
-import type { BipInfo, PitchInfo, PitchResult, PlayEvent, Snap } from '../../sim/types';
+import type { Alignment, BipInfo, PitchInfo, PitchResult, PlayEvent, Snap } from '../../sim/types';
 import { LiveGame } from '../../core/live';
 import { G } from '../../core/state';
 import { finishPending } from '../../core/sim';
 import { simulatePending } from '../../core/matchday';
 import { RES_NAME } from '../../sim/labels';
-import { arsenal, batSide, density, hotZones, pickoffSkill, spreadOf, type PitchOpt } from '../../sim/pitching';
+import { CELL, arsenal, batSide, clampRange, density, hotZones, nearZone, pickoffSkill, rangeCenter, spreadOf, type PitchOpt } from '../../sim/pitching';
+import { batterView, eyeAccuracy } from '../../sim/brain';
+import { fullName } from '../../core/attrs';
 import { hash32 } from '../../core/rng';
-import { MatchStage, type Hud, type StageScene, type Swing } from '../../render/stage';
+import { HEAT_BAT, MatchStage, type Hud, type StageScene, type Swing } from '../../render/stage';
 import { FieldRenderer } from '../../render/field';
 import type { Look } from '../../render/figure';
 import { faceColors } from '../../render/portrait';
 import { PAL } from '../../render/pix';
 import { settings, saveSettings } from '../settings';
 import { refresh, toast, ui } from '../store';
-import { sfx } from '../sound';
+import { cueSound, sfx } from '../sound';
 import { saveGame } from '../../core/save';
 
 export type MState = 'pregame' | 'ready' | 'playing' | 'over';
@@ -59,7 +61,20 @@ export interface MuView {
   /** 投手各球种此刻的质量 */
   ars: PitchOpt[];
   pickoff: number;
+  /** 投手的心态 -1..1（正 = 有信心，负 = 动摇） */
+  mood: number;
+  /** 打者读投手的准确度 0..1（选球眼） */
+  eyeAcc: number;
+  /** 这一球之前的垒上跑者、离垒、还能牵制几次、守方阵型（演出中用这个快照：按钮的多少不变，画面不跟着缩放，不剧透） */
+  runners: ({ pid: number; name: string; speed: number; lead: 'big' | 'normal' | null } | null)[];
+  pickLeft: number;
+  align: Alignment;
+  /** 投手今天的配球：球数、各球种比例（多的在前）、偏内外角（+ 外角多）、偏高低（+ 高球多） */
+  tend: { n: number; types: [string, number][]; side: number; height: number };
 }
+
+/** 守备阵型按钮：趋近（防触击、双杀）/ 正常 / 防长打 */
+export type AlignKey = 'close' | 'normal' | 'deep';
 
 export interface PitchRow {
   n: number;
@@ -112,8 +127,9 @@ export class MatchSession {
   /** 投球：球种、瞄准点 */
   ptype: PitchType | 'FB' = 'FB';
   aim: { x: number; y: number } | null = null;
-  /** 打击：狙哪一格（-1 不挥棒，null 还没选）、各垒跑者提前跑 */
-  hunt: number | null = null;
+  /** 打击：挥棒范围（好球带 9×9 里的 3×3）中心格的列、行（1..7）；null 还没选。taking：这一球按了「不挥棒」 */
+  hunt: [number, number] | null = null;
+  taking = false;
   run: [boolean, boolean, boolean] = [false, false, false];
   private skipPA = false;
   private autoTimer = 0;
@@ -153,6 +169,7 @@ export class MatchSession {
   /** 开赛（读档时直接按记录恢复） */
   begin(): void {
     this.live = new LiveGame(this.pm, this.starter);
+    if (this.live.restarted) toast('比赛规则更新了，这场比赛从第一局重新开始', 'info', 5000);
     this.numberPlayers();
     this.state = this.live.phase() === 'over' ? 'over' : 'ready';
     this.syncDisp();
@@ -197,6 +214,13 @@ export class MatchSession {
     this.stage.speed = this.speed;
     this.field = new FieldRenderer(fieldCv, { koshien: L.rules.koshien, fence: L.rules.fence, homeColors: home, awayColors: away, seed: this.pm.seed });
     this.field.speed = this.speed;
+    // 出手、挥棒、碰到球、进手套、接球、传球……在动画的那一刻出声（跳过时不出声）
+    this.stage.onCue = (c) => {
+      if (!this.skipPA) cueSound(c);
+    };
+    this.field.onCue = (c) => {
+      if (!this.skipPA) cueSound(c);
+    };
     this.paKey = '';
     this.prepareScene();
     this.updateHud();
@@ -343,6 +367,16 @@ export class MatchSession {
       stamina: Math.max(0, 1 - m.T[dfn].fatigueRatio(pt.id)),
       ars: arsenal(pt, m.pitcherNow()),
       pickoff: Math.round(pickoffSkill(pt)),
+      mood: m.moodNow(),
+      eyeAcc: eyeAccuracy(b),
+      runners: m.bases.map((r, i) => {
+        if (!r) return null;
+        const rp = m.T[off].get(r.pid);
+        return { pid: r.pid, name: fullName(rp), speed: rp.a.speed, lead: m.leads[i] ?? null };
+      }),
+      pickLeft: m.pickoffsLeft(),
+      align: m.T[dfn].def.align,
+      tend: m.tendency(pt.id, side),
     };
   }
 
@@ -364,6 +398,7 @@ export class MatchSession {
       this.hunt = null;
       this.pitches = [];
     }
+    this.taking = false;
     this.run = [false, false, false];
     if (L.phase() === 'pitch') {
       const p = m.pitcher();
@@ -372,14 +407,14 @@ export class MatchSession {
     this.updateHud();
   }
 
-  /** 打击时：投手这一球的热区图（按比赛种子和第几球固定，同一球怎么看都一样） */
+  /** 打击时：打者眼里投手这一球的热区图（选球眼越好越准；按比赛种子和第几球固定，同一球怎么看都一样） */
   heat(): number[] | null {
     const L = this.live;
-    if (!L || L.phase() !== 'bat' || !L.m.mind || !L.m.mindSp) return null;
-    const key = `${L.step}`;
+    if (!L || L.phase() !== 'bat') return null;
+    const key = `${L.step}-${L.m.batter().id}`;
     if (this.heatCache?.key === key) return this.heatCache.heat;
-    const sp = L.m.mindSp;
-    const heat = density(L.m.mind.opts.map((o, i) => ({ x: o.x, y: o.y, w: o.w, sp: sp[i] })), hash32(this.pm.seed, L.step, 5));
+    const heat = batterView(L.m, this.pm.seed, L.step);
+    if (!heat) return null;
     this.heatCache = { key, heat };
     return heat;
   }
@@ -404,11 +439,18 @@ export class MatchSession {
     const active = this.state === 'ready' && !this.coaching && ph !== 'over';
     const hud: Hud =
       ph === 'bat'
-        ? { heat: this.heat(), heatCol: PAL.orange, hot: mu?.hot ?? null, aim: null, hunt: this.hunt, active }
+        ? { heat: this.heat(), heatCol: HEAT_BAT, hot: mu?.hot ?? null, aim: null, hunt: this.huntXY(), take: this.taking, active }
         : ph === 'pitch'
-          ? { heat: this.preview(), heatCol: PAL.cyan, hot: mu?.hot ?? null, aim: this.aim, hunt: null, active }
-          : { heat: null, heatCol: PAL.orange, hot: null, aim: null, hunt: null, active: false };
+          ? { heat: this.preview(), heatCol: PAL.cyan, hot: mu?.hot ?? null, aim: this.aim, hunt: null, take: false, active }
+          : { heat: null, heatCol: HEAT_BAT, hot: null, aim: null, hunt: null, take: false, active: false };
     this.stage.setHud(hud);
+  }
+
+  /** 挥棒范围的中心（好球带坐标） */
+  huntXY(): { x: number; y: number } | null {
+    if (!this.hunt) return null;
+    const [x, y] = rangeCenter(this.hunt);
+    return { x, y };
   }
 
   /** 点了画面上的某一点（画布坐标） */
@@ -424,14 +466,18 @@ export class MatchSession {
         return;
       }
       this.aim = c;
+      sfx('aim');
     } else if (L.phase() === 'bat') {
-      const zn = this.stage.zoneAtPoint(px, py);
-      if (zn < 0) return;
-      if (this.hunt === zn) {
+      const cell = this.stage.cellAtPoint(px, py);
+      if (!cell) return;
+      // 点到的格子当挥棒范围（3×3）的中心；靠边的往里收，整个范围留在好球带里。点同一格两次：直接挥
+      const c = clampRange((cell.x + 1) / CELL - 0.5, (1 - cell.y) / CELL - 0.5);
+      if (this.hunt && this.hunt[0] === c[0] && this.hunt[1] === c[1]) {
         this.go();
         return;
       }
-      this.hunt = zn;
+      this.hunt = c;
+      sfx('aim');
     }
     this.updateHud();
     refresh();
@@ -443,10 +489,39 @@ export class MatchSession {
     refresh();
   }
 
-  setTake(): void {
-    this.hunt = this.hunt === -1 ? null : -1;
-    this.updateHud();
+  /** 这一球不挥棒：马上开始（跑者照「提前跑」的选择） */
+  take(): void {
+    const L = this.live;
+    if (!L || this.state !== 'ready' || this.coaching || L.phase() !== 'bat') return;
+    window.clearTimeout(this.autoTimer);
+    this.taking = true;
+    L.act({ k: 'swing', z: -1, run: [...this.run] as [boolean, boolean, boolean] });
+    void this.runPitch();
+  }
+
+  /** 申告敬远（防守时） */
+  ibb(): void {
+    const L = this.live;
+    if (!L || this.state !== 'ready' || this.coaching || L.phase() !== 'pitch') return;
+    window.clearTimeout(this.autoTimer);
+    const mu = this.captureMu();
+    const memoN = L.m.memo.length;
+    void this.runPlay(() => L.act({ k: 'ibb' }), mu, memoN);
+  }
+
+  /** 守备阵型（防守时；一直有效，直到再改） */
+  setAlign(a: AlignKey): void {
+    const L = this.live;
+    if (!L || this.state !== 'ready' || L.phase() !== 'pitch') return;
+    L.act({ k: 'al', a });
+    saveGame();
     refresh();
+  }
+
+  /** 我方现在的守备阵型 */
+  get align(): AlignKey {
+    const a = this.live?.myTeam.def.align;
+    return a === 'close' ? 'close' : a === 'noDoubles' ? 'deep' : 'normal';
   }
 
   toggleRun(i: number): void {
@@ -454,7 +529,7 @@ export class MatchSession {
     refresh();
   }
 
-  /** 这一球可以开始了吗（投球要有瞄准点；打击要选好狙哪一格或不挥棒） */
+  /** 这一球可以开始了吗（投球要有瞄准点；打击要定好挥棒范围） */
   canGo(): boolean {
     const L = this.live;
     if (!L || this.state !== 'ready' || this.coaching) return false;
@@ -504,7 +579,15 @@ export class MatchSession {
         refresh();
         return;
       }
-      const ev = this.live!.coachTurn();
+      const L = this.live!;
+      const mu = this.captureMu();
+      const memoN = L.m.memo.length;
+      const ev = L.coachTurn();
+      // 教练申告了敬远：演出敬远（这个打席就结束了）
+      if (ev.some((e) => e.k === 'ibb')) {
+        void this.runPlay(() => ev, mu, memoN);
+        return;
+      }
       for (const e of ev) this.applyEvent(e);
       this.newPitch();
       void this.runPitch();
@@ -552,6 +635,7 @@ export class MatchSession {
     }
     for (const e of ev) this.applyEvent(e);
     if (a.k === 'po') {
+      sfx('pickoff');
       const last = ev.find((e) => e.k === 'pickoff') ?? ev[ev.length - 1];
       if (last) toast(last.text, last.big ? 'good' : 'info');
     }
@@ -569,7 +653,11 @@ export class MatchSession {
     if (!L || !this.canGo()) return;
     window.clearTimeout(this.autoTimer);
     if (L.phase() === 'pitch' && this.aim) L.act({ k: 'throw', t: this.ptype, x: this.aim.x, y: this.aim.y });
-    else if (L.phase() === 'bat') L.act({ k: 'swing', z: this.hunt ?? -1, run: [...this.run] as [boolean, boolean, boolean] });
+    else if (L.phase() === 'bat' && this.hunt) {
+      // 一定挥：朝着挥棒范围
+      const [hx, hy] = rangeCenter(this.hunt);
+      L.act({ k: 'swing', z: nearZone(hx, hy), run: [...this.run] as [boolean, boolean, boolean], commit: true, c: [this.hunt[0], this.hunt[1]] });
+    }
     void this.runPitch();
   }
 
@@ -583,14 +671,21 @@ export class MatchSession {
   // ---------------- 投一球 ----------------
   private async runPitch(): Promise<void> {
     const L = this.live;
+    if (!L) return;
+    await this.runPlay(() => L.pitch());
+  }
+
+  /** 执行并演出（投一球、敬远）。mu、memoN0：演出期间显示的对决快照、执行前的打席数（事先已经执行了的要传进来） */
+  private async runPlay(produce: () => PlayEvent[], mu: MuView | null = null, memoN0 = -1): Promise<void> {
+    const L = this.live;
     if (!L || this.state !== 'ready') return;
     this.state = 'playing';
     this.coaching = false;
-    const memoN = L.m.memo.length;
-    this.mu = this.captureMu();
+    const memoN = memoN0 >= 0 ? memoN0 : L.m.memo.length;
+    this.mu = mu ?? this.captureMu();
     this.updateHud();
     refresh();
-    const events = L.pitch();
+    const events = produce();
     try {
       await this.animate(events);
     } catch (e) {
@@ -632,20 +727,21 @@ export class MatchSession {
         const bip = e.bip ?? null;
         const swing = swingOf(e.pitch.res, bip);
         const n = this.pitches.length + 1;
-        if (swing === 'hit' || swing === 'bunt' || swing === 'foul') sfx('bat');
+        // 出手、挥棒、碰到球、进手套的声音由动画在那一刻触发（onCue）
         await st.pitch(e.pitch, swing, bip, n, this.lvOf(e.pitch.type));
-        if (swing === 'take' || swing === 'miss') sfx('mitt');
         this.pitches.push({ n, text: pitchText(e.pitch), col: RES_COL[e.pitch.res] ?? PAL.white });
         if (bip && e.k === 'play') {
           await this.fieldPlay(e);
-          if (bip.res === 'HR') sfx('hr');
         } else if (e.moves?.length) await this.fieldMoves(e);
         this.applyEvent(e);
         refresh();
         continue;
       }
       if ((e.k === 'steal' || e.k === 'wp' || e.k === 'pickoff' || e.k === 'play') && e.moves?.length) {
-        if (e.k === 'pickoff') await st.banner('牵制！', PAL.cyan, '', 0.5);
+        if (e.k === 'pickoff') {
+          sfx('pickoff');
+          await st.banner('牵制！', PAL.cyan, '', 0.5);
+        }
         await this.fieldMoves(e);
         this.applyEvent(e);
         refresh();
@@ -658,7 +754,10 @@ export class MatchSession {
         const t = e.text.includes('三振') ? '三振' : e.text.includes('四坏') ? '四坏球' : e.text.includes('触身') ? '触身球' : '';
         if (t) await st.banner(t, t === '三振' ? (e.side === this.live!.mySide ? PAL.orange : PAL.yellow) : PAL.lime, '', 0.7);
       }
-      if (e.k === 'ibb') await st.banner('敬远', PAL.lime, '', 0.8);
+      if (e.k === 'ibb') {
+        sfx('ibb');
+        await st.banner('敬远', PAL.lime, '', 0.8);
+      }
       refresh();
     }
   }

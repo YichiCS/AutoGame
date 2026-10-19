@@ -65,8 +65,16 @@ for (let k = 0; k < N; k++) {
         if (bench.length) g.act({ k: 'pc', pid: pick(bench).id });
       }
       if (g.phase() === 'pitch' && g.m.pickoffsLeft() > 0 && r() < 0.08) g.act({ k: 'po', base: pick([-1, 0, 1, 2]) });
-      if (g.phase() === 'bat') g.act({ k: 'swing', z: Math.floor(r() * 10) - 1, run: [r() < 0.12, r() < 0.06, r() < 0.08] });
-      else if (g.phase() === 'pitch') {
+      if (g.phase() === 'pitch' && r() < 0.06) g.act({ k: 'al', a: pick(['close', 'normal', 'deep'] as const) });
+      if (g.phase() === 'pitch' && r() < 0.02) g.act({ k: 'ibb' });
+      const run: [boolean, boolean, boolean] = [r() < 0.12, r() < 0.06, r() < 0.08];
+      const u = r();
+      if (g.phase() === 'bat') {
+        // 一定挥（挥棒范围的中心格 1..7）、不挥棒、教练式的「狙一格」
+        if (u < 0.5) g.act({ k: 'swing', z: Math.floor(r() * 9), run, commit: true, c: [1 + Math.floor(r() * 7), 1 + Math.floor(r() * 7)] });
+        else if (u < 0.7) g.act({ k: 'swing', z: -1, run });
+        else g.act({ k: 'swing', z: Math.floor(r() * 9), run });
+      } else if (g.phase() === 'pitch') {
         const p = g.m.pitcher();
         const [x, y] = cellCenter(Math.floor(r() * GRID), Math.floor(r() * GRID));
         g.act({ k: 'throw', t: r() < 0.5 || !p.pitches.length ? 'FB' : pick(p.pitches).type, x, y });

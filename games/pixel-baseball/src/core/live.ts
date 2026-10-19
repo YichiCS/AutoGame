@@ -5,13 +5,18 @@ import type { MatchRules, PlayEvent, TeamSetup } from '../sim/types';
 import { Match, type TeamState } from '../sim/match';
 import { coachHunt, coachRun, coachThrow } from '../sim/brain';
 import { makeRng, HALF } from '../sim/pitching';
-import { coachWantsChange } from '../sim/ai';
+import { coachAlign, coachWantsChange, wantsIBB } from '../sim/ai';
 import { G } from './state';
 import { getRngState, hash32, seedRng, setRngState, withSeed } from './rng';
 import { mySetupFull, oppSetup, rulesFor, tourOf, type SimResult } from './matchday';
 import { schoolById } from './world';
 
 export type Phase = 'bat' | 'pitch' | 'over';
+
+/** 比赛引擎的版本：改了比赛规则、随机数用法就加一（旧的记录没法原样重演，那场比赛从头开始） */
+export const LIVE_ENGINE = 2;
+
+const ALIGN = { close: 'close', normal: 'normal', deep: 'noDoubles' } as const;
 
 export class LiveGame {
   readonly pm: PendingMatch;
@@ -30,12 +35,20 @@ export class LiveGame {
   events: PlayEvent[] = [];
   /** 重演中（读档恢复） */
   replaying = false;
+  /** 存档里打到一半的比赛是旧版本记的，从头重新开始了 */
+  restarted = false;
 
   constructor(pm: PendingMatch, forcedStarter: number | null = null) {
     this.pm = pm;
     this.rules = rulesFor(tourOf(pm), pm.round);
     const opp = schoolById(pm.oppId)!;
     const rec0 = pm.live;
+    if (rec0 && (rec0.eng ?? 1) !== LIVE_ENGINE) {
+      if (rec0.log.length || rec0.played) this.restarted = true;
+      rec0.log = [];
+      rec0.played = 0;
+      rec0.eng = LIVE_ENGINE;
+    }
     const built = withSeed(pm.seed, () => ({
       mine: mySetupFull(this.rules, { human: true, forced: forcedStarter, rec: rec0 }),
       theirs: oppSetup(opp, this.rules, G.day),
@@ -45,7 +58,7 @@ export class LiveGame {
     this.mySide = pm.home ? 1 : 0;
     this.away = pm.home ? built.theirs : mine;
     this.home = pm.home ? mine : built.theirs;
-    this.rec = rec0 ?? { order: mine.order.slice(), defense: { ...mine.defense }, players: mine.players.map((p) => p.id), log: [], played: 0 };
+    this.rec = rec0 ?? { order: mine.order.slice(), defense: { ...mine.defense }, players: mine.players.map((p) => p.id), log: [], played: 0, eng: LIVE_ENGINE };
     pm.live = this.rec;
     // 比赛自己的随机数（和全局的分开，读档重演时才能一模一样）
     const saved = getRngState();
@@ -121,10 +134,13 @@ export class LiveGame {
         t.callNext = { type: a.t, x: a.x, y: a.y };
         return [];
       }
-      case 'swing':
+      case 'swing': {
         if (!mine || a.z < -1 || a.z > 8) return null;
-        t.swingNext = { z: a.z, run: [!!a.run[0], !!a.run[1], !!a.run[2]] };
+        // 一定挥：挥棒范围（3×3）的中心格要在好球带 9×9 的 1..7 里
+        const c = a.commit && a.z >= 0 && a.c && a.c.every((v) => Number.isInteger(v) && v >= 1 && v <= 7) ? ([a.c[0], a.c[1]] as [number, number]) : undefined;
+        t.swingNext = { z: a.z, run: [!!a.run[0], !!a.run[1], !!a.run[2]], commit: !!a.commit && a.z >= 0, c };
         return [];
+      }
       case 'ph': {
         if (!mine) return null;
         const r = this.run(() => m.act(() => m.pinchHit(t, a.slot, a.pid) && (m.rePlanPA(), true)));
@@ -150,6 +166,16 @@ export class LiveGame {
         const base = a.base ?? -1;
         if (base >= 0 && !m.bases[base]) return null;
         return this.run(() => m.pickoff(base));
+      }
+      case 'ibb': {
+        if (mine) return null;
+        const ev = this.run(() => m.intentionalWalk());
+        return ev.length ? ev : null;
+      }
+      case 'al': {
+        if (mine || !(a.a in ALIGN)) return null;
+        t.def.align = ALIGN[a.a];
+        return [];
       }
     }
     return null;
@@ -191,15 +217,20 @@ export class LiveGame {
     return makeRng(hash32(this.pm.seed, this.step, salt));
   }
 
-  /** 教练替玩家拿这一球的主意（必要时先换投） */
+  /** 教练替玩家拿这一球的主意：打席开始时看要不要换投、守备阵型、申告敬远 */
   coachActs(): LiveAct[] {
     const m = this.m;
     const ph = this.phase();
     if (ph === 'pitch') {
       const out: LiveAct[] = [];
       if (m.balls === 0 && m.strikes === 0) {
-        const rel = coachWantsChange(m, this.myTeam);
+        const t = this.myTeam;
+        const rel = coachWantsChange(m, t);
         if (rel !== null) out.push({ k: 'pc', pid: rel });
+        const al = coachAlign(m, t);
+        if (ALIGN[al] !== t.def.align) out.push({ k: 'al', a: al });
+        // 和 AI 一样的局面、一样的五成
+        if (wantsIBB(m, t) && this.coachRng(3).rand() < 0.5) out.push({ k: 'ibb' });
       }
       return out;
     }
@@ -224,7 +255,11 @@ export class LiveGame {
   /** 教练代为指挥这一球：必要时换投，然后下达指令（都记下来） */
   coachTurn(): PlayEvent[] {
     const out: PlayEvent[] = [];
-    for (const a of this.coachActs()) out.push(...this.act(a));
+    for (const a of this.coachActs()) {
+      out.push(...this.act(a));
+      // 敬远了：这个打席结束，下一个打者的这一球下次再想
+      if (a.k === 'ibb') return out;
+    }
     const c = this.coachCall();
     if (c) out.push(...this.act(c));
     return out;

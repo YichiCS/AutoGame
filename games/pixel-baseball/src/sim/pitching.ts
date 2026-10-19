@@ -162,8 +162,9 @@ const DIR_VEC: Record<string, [number, number]> = {
  * 还有一定概率「失投」——没变化、留在高处的好打的球；蝴蝶球乱飘。
  */
 export function spreadOf(type: PitchType | 'FB', throws: 'R' | 'L', ctl: number, q: number, fatigue: number): Spread {
-  let s = 0.16 + 0.42 * (1 - clamp(ctl, 0, 110) / 100);
-  s *= 1 + 0.9 * Math.max(0, fatigue - 0.55);
+  let s = 0.154 + 0.403 * (1 - clamp(ctl, 0, 110) / 100);
+  // 体力：从第一球起就一点点变散，过了一半以后明显变散
+  s *= 1 + 0.07 * fatigue + 0.9 * Math.max(0, fatigue - 0.55);
   s *= 1.1 - (0.22 * q) / 100;
   // 再差的投手也有四成好球：散布有上限
   s = Math.min(s, 0.58);
@@ -307,6 +308,11 @@ export interface SwingIn {
   hunt: number;
   /** 不管来什么球都要挥（打带跑） */
   force?: boolean;
+  /** 玩家按了「挥棒」：一定挥，朝着挥棒范围（at 是它的中心；没有就用狙的那一格）——来球离得越远越容易挥空、打得越差 */
+  commit?: boolean;
+  at?: [number, number];
+  /** AI 打者看不透投手（对手是玩家、教练）：没来到狙的位置、但进了好球带的球也常出棒 */
+  blind?: boolean;
   x: number;
   y: number;
   /** 这一球的有效质量 */
@@ -316,6 +322,7 @@ export interface SwingIn {
   con: number;
   eye: number;
   strikes: number;
+  balls?: number;
   hot: number[];
   /** 内角方向（右打者 -1：x < 0 是内角） */
   insideSign: -1 | 1;
@@ -330,6 +337,8 @@ export interface SwingOut {
   m: number;
   /** 打中时的扎实程度 0..1 */
   solid: number;
+  /** 一定挥时：来球比挥棒点高（> 0，打到球的下半部，容易飞高）还是低（< 0，容易打成滚地），-1..1 */
+  lift?: number;
 }
 
 /** 挥棒模型的参数（tests/balance.ts 校准：打率、三振率、保送率、挥空率接近旧版） */
@@ -355,6 +364,19 @@ export const SWING_K = {
   /** 界外球 */
   foul0: 0.36,
   foulFit: 0.24,
+  /** AI 打者看不透投手时，好球带里不是狙的位置的球出棒的基准 */
+  blind0: 0.5,
+  /** 玩家「一定挥」：出了挥棒范围以后，左右差一点还能靠球棒长短补，上下差一点就挥空（衰减距离；打击能力好的更宽）；范围里越靠中心越好 */
+  cFitH: 1.05,
+  cFitV: 0.78,
+  cFitCon: 0.2,
+  cCore: 0.08,
+  /** 一定挥：打中的概率、界外、击球质量随「合」变化 */
+  cCon0: 0.15,
+  cConFit: 0.83,
+  cFoul0: 0.18,
+  cFoulFit: 0.42,
+  cSolidFit: 0.4,
 };
 
 /** 狙的那一格附近多远以内会出棒 */
@@ -376,6 +398,7 @@ export function swingOutcome(o: SwingIn, r: Rng): SwingOut {
   const K = SWING_K;
   const strike = inZone(o.x, o.y);
   const qz = (o.q - 50) / 50;
+  if (o.commit && o.hunt >= 0) return committedSwing(o, r, strike, qz);
   let swing = false;
   let m = 0;
   if (o.force) {
@@ -393,6 +416,11 @@ export function swingOutcome(o: SwingIn, r: Rng): SwingOut {
       // 追打：差一点就到狙的位置的坏球
       swing = true;
       m = fitOf(d) * 0.8;
+    } else if (o.blind && strike && o.strikes < 2 && r.rand() < clamp(K.blind0 + 0.1 * z(o.eye) - ((o.balls ?? 0) >= 3 ? 0.2 : 0), 0.15, 0.75)) {
+      // 看不透投手：不是狙的位置，进了好球带也出棒（合得差一些）
+      swing = true;
+      const [nx, ny] = zoneCenter(nearZone(o.x, o.y));
+      m = 0.6 * fitOf(Math.hypot(o.x - nx, o.y - ny));
     } else if (o.strikes === 2 && strike && r.rand() < 0.5 + 0.25 * (1 - o.eye / 100)) {
       // 两好球：不是狙的球也得碰一碰
       swing = true;
@@ -420,6 +448,50 @@ export function swingOutcome(o: SwingIn, r: Rng): SwingOut {
   const ba = hotAt(o.hot, o.x, o.y);
   const solid = clamp(K.solid0 + 1.9 * (ba - 0.29) + K.solidFit * (m - 0.6) - 0.13 * qz + (o.hang ? 0.12 : 0) + r.gauss(0, 0.17), 0.01, 0.99);
   return { res: 'inplay', swing: true, m, solid };
+}
+
+/** 挥棒范围（好球带 9×9 里任意一个 3×3）：中心格的列、行（1..7，左上为 0） → 中心的好球带坐标 */
+export function rangeCenter(c: [number, number]): [number, number] {
+  return [-1 + CELL * (c[0] + 0.5), 1 - CELL * (c[1] + 0.5)];
+}
+
+/** 挥棒范围的中心格要在 1..7 之间（3×3 整个在好球带里） */
+export function clampRange(i: number, j: number): [number, number] {
+  return [Math.max(1, Math.min(7, Math.round(i))), Math.max(1, Math.min(7, Math.round(j)))];
+}
+
+/**
+ * 一定挥的「合」（0..1）：来球在挥棒范围（3×3 格）里最好，越靠中心越扎实；出了范围，按左右、上下各偏出多少衰减——
+ * 左右差一点还能靠球棒长短补，上下差一点就挥空。打击能力好的人挥棒中还能调整，衰减得慢。
+ */
+export function commitFit(dx: number, dy: number, con: number): number {
+  const K = SWING_K;
+  const k = 1 + (K.cFitCon * (clamp(con, 0, 100) - 50)) / 50;
+  const half = 1.5 * CELL;
+  const ox = Math.max(0, Math.abs(dx) - half);
+  const oy = Math.max(0, Math.abs(dy) - half);
+  const core = 1 - K.cCore * Math.min(1, (dx * dx + dy * dy) / (2 * half * half));
+  return core * Math.exp(-((ox / (K.cFitH * k)) ** 2) - (oy / (K.cFitV * k)) ** 2);
+}
+
+/**
+ * 玩家按了「挥棒」：一定出棒（坏球也挥），朝着自己定的挥棒范围挥。来球离范围越远，越容易挥空，碰到了也多是界外、软弱的球；
+ * 上下差得比左右更要命。打到球的下半部（球比范围中心高）容易飞高，上半部容易打成滚地。
+ */
+function committedSwing(o: SwingIn, r: Rng, strike: boolean, qz: number): SwingOut {
+  const K = SWING_K;
+  // 极端内角：躲不开，触身球
+  if (o.x * o.insideSign > 1.65 && r.rand() < 0.22) return { res: 'hbp', swing: false, m: 0, solid: 0 };
+  const [hx, hy] = o.at ?? zoneCenter(o.hunt);
+  const dy = o.y - hy;
+  const m = commitFit(o.x - hx, dy, o.con);
+  const pc = clamp(K.cCon0 + K.cConFit * m + 0.5 * K.conSkill * z(o.con) - K.conQ * qz + (o.hang ? 0.1 : 0), 0.02, 0.97);
+  if (r.rand() >= pc) return { res: 'swinging', swing: true, m, solid: 0 };
+  const pf = clamp(K.cFoul0 + K.cFoulFit * (1 - m) + (strike ? 0 : 0.06) - (o.hang ? 0.08 : 0), 0.12, 0.8);
+  if (r.rand() < pf) return { res: 'foul', swing: true, m, solid: 0 };
+  const ba = hotAt(o.hot, o.x, o.y);
+  const solid = clamp(K.solid0 + 1.9 * (ba - 0.29) + K.cSolidFit * (m - 0.75) - 0.13 * qz + (o.hang ? 0.12 : 0) + r.gauss(0, 0.17), 0.01, 0.99);
+  return { res: 'inplay', swing: true, m, solid, lift: clamp(dy / 0.67, -1, 1) };
 }
 
 // ======================= 牵制 =======================

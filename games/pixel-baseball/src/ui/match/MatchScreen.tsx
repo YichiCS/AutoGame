@@ -4,7 +4,7 @@
 // 手机上一屏操作：上面比分，中间画面和网格，下面这一球的选择和开始按钮（贴底，画面按剩下的高度缩放）。
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import type { Player, Pos } from '../../core/types';
+import type { PitchType, Player, Pos } from '../../core/types';
 import { POS_NAME, POS_SHORT } from '../../core/types';
 import { G } from '../../core/state';
 import { batterOffense, fieldAt, fullName, has, posRating } from '../../core/attrs';
@@ -19,14 +19,13 @@ import { HOT_NAME, hotType } from '../../sim/pitching';
 import { Btn, Emblem, Num, Portrait } from '../components/common';
 import { refresh, ui, useStore } from '../store';
 import { sfx } from '../sound';
-import { AUTO_NAME, type AutoMode, type MatchSession } from './session';
+import { AUTO_NAME, type AlignKey, type AutoMode, type MatchSession, type MuView } from './session';
 import { LineupEditor } from '../tabs/Lineup';
-import { SW, SH } from '../../render/stage';
+import { SHAPE_GLYPH, SW, SH, pitchShape } from '../../render/stage';
 import { useIsPhone } from '../layout';
 
 type Dlg = { kind: 'ph' } | { kind: 'pr' } | { kind: 'pc' } | { kind: 'ds' } | null;
 
-const ZONE_TEXT = ['左上', '正上', '右上', '左中', '正中', '右中', '左下', '正下', '右下'];
 const BASE = ['一垒', '二垒', '三垒'];
 
 export function MatchScreen() {
@@ -365,11 +364,23 @@ function Diamond(p: { bases: boolean[] }) {
 }
 
 // ---------------- 对决 ----------------
+/** 投手心态的说法和颜色：被连续打、保送会动摇，连续三振越投越有信心 */
+function moodOf(v: number): [string, string] {
+  if (v <= -0.4) return ['慌乱', 'bad'];
+  if (v <= -0.12) return ['动摇', 'orange'];
+  if (v < 0.15) return ['平稳', 'dim'];
+  if (v < 0.45) return ['有信心', 'good'];
+  return ['气势如虹', 'hot'];
+}
+
 function Matchup(p: { S: MatchSession }) {
   const S = p.S;
   const v = S.muView();
   if (!v) return null;
   const { b, pt } = v;
+  const st = Math.round(v.stamina * 100);
+  const stCls = st < 15 ? 'bad' : st < 40 ? 'orange' : 'good';
+  const [mood, moodCls] = moodOf(v.mood);
   return (
     <section class="mu2">
       <div class="mu2-row">
@@ -388,9 +399,19 @@ function Matchup(p: { S: MatchSession }) {
         <span class="dim">
           {pt.throws === 'L' ? '左投' : '右投'} · {Math.round(pt.a.velocity)}km/h · 牵制 {v.pickoff}
         </span>
-        <span class="mu2-r">
-          {v.np} 球 · 体力 <span class={v.stamina < 0.15 ? 'bad' : v.stamina < 0.4 ? 'orange' : 'good'}>{Math.round(v.stamina * 100)}%</span>
+        <span class="mu2-r" />
+      </div>
+      {/* 投手的体力和心态：累了、动摇了，球种质量下降、落点变散；连续三振越投越有信心 */}
+      <div class="mu2-st" title="体力用得越多、心态越差（被连续打、保送），球种质量越低、落点越散；连续三振会越投越有信心">
+        <span class="dim">投手体力</span>
+        <span class={`stbar ${stCls}`}>
+          <i style={{ width: `${st}%` }} />
         </span>
+        <b class={stCls}>{st}%</b>
+        <span class="dim">心态</span>
+        <b class={moodCls}>{mood}</b>
+        <span class="grow" />
+        <span class="dim">{v.np} 球</span>
       </div>
     </section>
   );
@@ -407,56 +428,91 @@ function CoachBar(p: { S: MatchSession }) {
   );
 }
 
+const ALIGNS: [AlignKey, string, string][] = [
+  ['close', '趋近', '趋近：一三垒手前压防触击，二游站双杀位置（两侧的滚地球更容易穿过去）'],
+  ['normal', '正常', '正常站位'],
+  ['deep', '防长打', '防长打：外野后退，二垒打少一半（前面落下的安打会多一些）'],
+];
+
 function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
   const S = p.S;
-  const L = S.live!;
-  const m = L.m;
   const v = S.muView();
   const ready = S.state === 'ready' && !S.coaching;
-  const left = m.pickoffsLeft();
   const phone = useIsPhone();
+  // 敬远：点一下变成「确认敬远」，3 秒内再点一次才申告（免得误触）
+  const [arm, setArm] = useState(false);
+  useEffect(() => {
+    if (!arm) return;
+    const t = window.setTimeout(() => setArm(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [arm]);
+  if (!v) return null;
+  // 跑者、离垒、还能牵制几次：用这一球之前的快照（演出中不剧透，按钮的多少不变）
+  const runners = v.runners;
+  const left = v.pickLeft;
+  const al = S.align;
   return (
     <section class="ctl">
       <div class="ctl-h">
         <span>球种</span>
-        <span class="dim small">数字是质量（0-100，累了会下降）</span>
+        <span class="dim small">质量 0-100</span>
+        <span class="grow" />
+        <span class="dim small">守备</span>
+        <span class="seg" role="group" aria-label="守备阵型">
+          {ALIGNS.map(([k, t, tip]) => (
+            <button type="button" key={k} class={`seg-b ${al === k ? 'on' : ''}`} disabled={!ready} title={tip} onClick={() => S.setAlign(k)}>
+              {t}
+            </button>
+          ))}
+        </span>
       </div>
       <div class="ptypes">
-        {v?.ars.map((o) => (
+        {v.ars.map((o) => (
           <button type="button" key={o.type} class={`ptype ${S.ptype === o.type ? 'on' : ''}`} disabled={!ready} onClick={() => S.setPitchType(o.type)}>
-            <span class="pn">{o.sig ? `「${o.sig}」` : o.type === 'FB' ? '直球' : PITCH_DEFS[o.type].name}</span>
+            <span class="pn">
+              <span class="pshape">{SHAPE_GLYPH[pitchShape(o.type)]}</span>
+              {o.sig ? `「${o.sig}」` : o.type === 'FB' ? '直球' : PITCH_DEFS[o.type].name}
+            </span>
             <Num v={o.q} />
           </button>
         ))}
       </div>
-      {m.bases.some(Boolean) && (
+      {v.tend.n >= 5 && (
+        <div class="tend dim small">
+          今天的配球（{v.tend.n} 球）：{tendText(v.tend).text}
+          {tendText(v.tend).single && <span class="orange"> · ⚠ 太单一，打者会抓住</span>}
+        </div>
+      )}
+      {runners.some(Boolean) && (
         <div class="runners">
           {phone ? (
             // 手机：每个垒一格排成一行，整格就是牵制按钮
             <div class="rcells">
-              {m.bases.map((r, i) =>
+              {runners.map((r, i) =>
                 r ? (
-                  <button type="button" key={i} class={`rcell ${m.leads[i] === 'big' ? 'warn' : ''}`} disabled={!ready || left <= 0} onClick={() => S.act({ k: 'po', base: i })}>
+                  <button type="button" key={i} class={`rcell ${r.lead === 'big' ? 'warn' : ''}`} disabled={!ready || left <= 0} onClick={() => S.act({ k: 'po', base: i })}>
                     <span class="rc-t">
                       {BASE[i]}
-                      {m.leads[i] === 'big' ? ' ⚠ 离垒大' : ''}
+                      {r.lead === 'big' ? ' ⚠ 离垒大' : ''}
                     </span>
                     <span>牵制</span>
                   </button>
                 ) : null,
               )}
             </div>
-          ) : m.bases.map((r, i) =>
-            r ? (
-              <div key={i} class={`runner ${m.leads[i] === 'big' ? 'warn' : ''}`}>
-                <span class="rb">{BASE[i]}</span>
-                <span class="rn">{fullName(m.off.get(r.pid))}</span>
-                <span class="rl">{m.leads[i] === 'big' ? '⚠ 离垒很大' : i === 2 ? '' : '离垒正常'}</span>
-                <button type="button" class="chip" disabled={!ready || left <= 0} onClick={() => S.act({ k: 'po', base: i })}>
-                  牵制
-                </button>
-              </div>
-            ) : null,
+          ) : (
+            runners.map((r, i) =>
+              r ? (
+                <div key={i} class={`runner ${r.lead === 'big' ? 'warn' : ''}`}>
+                  <span class="rb">{BASE[i]}</span>
+                  <span class="rn">{r.name}</span>
+                  <span class="rl">{r.lead === 'big' ? '⚠ 离垒很大' : i === 2 ? '' : '离垒正常'}</span>
+                  <button type="button" class="chip" disabled={!ready || left <= 0} onClick={() => S.act({ k: 'po', base: i })}>
+                    牵制
+                  </button>
+                </div>
+              ) : null,
+            )
           )}
           <div class="dim small">还能牵制 {left} 次 · 离垒大、想跑的人容易抓到</div>
         </div>
@@ -468,7 +524,18 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
           <Btn disabled={!ready} onClick={() => p.setDlg({ kind: 'pc' })}>
             换投
           </Btn>
-          <span class="hint">{S.aim ? '再点同一格也能直接投' : '在网格上点要投的位置'}</span>
+          <Btn
+            kind={arm ? 'red' : undefined}
+            disabled={!ready}
+            onClick={() => {
+              if (!arm) return setArm(true);
+              setArm(false);
+              S.ibb();
+            }}
+          >
+            {arm ? '确认敬远' : '敬远'}
+          </Btn>
+          <span class="hint">{arm ? '再点一次就申告敬远' : S.aim ? '再点同一格也能直接投' : '在网格上点要投的位置'}</span>
           <Btn kind="primary" big disabled={!S.canGo()} onClick={() => S.go()}>
             {S.state === 'playing' ? '投球中…' : '▶ 投球'}
           </Btn>
@@ -478,53 +545,92 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
   );
 }
 
+/** 投手今天的配球：「直球 61% · 卡特球 39% · 外角多」；single：有没有太单一 */
+function tendText(t: MuView['tend']): { text: string; single: boolean } {
+  const name = (k: string) => (k === 'FB' ? '直球' : PITCH_DEFS[k as PitchType]?.name ?? k);
+  const parts = t.types.slice(0, 3).map(([k, v]) => `${SHAPE_GLYPH[pitchShape(k as PitchType | 'FB')]}${name(k)} ${Math.round(v * 100)}%`);
+  if (t.side > 0.25) parts.push('外角多');
+  else if (t.side < -0.25) parts.push('内角多');
+  if (t.height > 0.25) parts.push('高球多');
+  else if (t.height < -0.25) parts.push('低球多');
+  const single = (t.types[0]?.[1] ?? 0) > 0.62 || Math.abs(t.side) > 0.4 || Math.abs(t.height) > 0.4;
+  return { text: parts.join(' · '), single };
+}
+
+/** 打者读投手准不准（选球眼） */
+function eyeText(a: number): string {
+  return a >= 0.7 ? '看得很准' : a >= 0.4 ? '看得出个大概' : '不太看得清';
+}
+
+const H_TXT = ['', '最内', '内', '偏内', '中', '偏外', '外', '最外'];
+const V_TXT = ['', '最高', '高', '偏高', '中', '偏低', '低', '最低'];
+
+/** 挥棒范围在哪儿（按打者说内角 / 外角；捕手视角里右打者站左边，左边是内角） */
+function rangeText(c: [number, number], side: 'R' | 'L'): string {
+  const h = side === 'R' ? c[0] : 8 - c[0];
+  if (h === 4 && c[1] === 4) return '正中';
+  return `${V_TXT[c[1]]} · ${H_TXT[h]}`;
+}
+
 function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
   const S = p.S;
-  const L = S.live!;
-  const m = L.m;
+  const v = S.muView();
   const ready = S.state === 'ready' && !S.coaching;
-  const occupied = m.bases.map(Boolean);
+  const phone = useIsPhone();
+  if (!v) return null;
+  // 跑者：用这一球之前的快照（演出中不剧透）
+  const runners = v.runners;
+  const occupied = runners.map(Boolean);
   // 一垒跑者要跑，前面（二垒）得空着或者也跑
   const canRun = (i: number) => occupied[i] && (i === 2 || !occupied[i + 1] || S.run[i + 1]);
-  const phone = useIsPhone();
   return (
     <section class="ctl">
       <div class="ctl-h">
         <span>这一球</span>
-        <span class="dim small">橙色：投手可能投的位置 · 数字：打击率</span>
+        <span class="dim small">
+          选球 {Math.round(v.b.a.eye)}：投手的打算{eyeText(v.eyeAcc)}
+        </span>
       </div>
+      {v.tend.n >= 5 && (
+        <div class="tend dim small">
+          投手今天 {v.tend.n} 球：{tendText(v.tend).text}
+        </div>
+      )}
       <div class="huntrow">
-        <span class={`hunt ${S.hunt !== null && S.hunt >= 0 ? 'on' : ''}`}>{S.hunt === null ? '点网格选要打的一格' : S.hunt >= 0 ? `狙${ZONE_TEXT[S.hunt]}：球来到附近就挥` : '这一球不挥棒'}</span>
-        <button type="button" class={`chip big ${S.hunt === -1 ? 'on' : ''}`} disabled={!ready} onClick={() => S.setTake()}>
-          不挥棒
-        </button>
+        <span class={`hunt ${S.hunt ? 'on' : ''}`}>
+          {S.hunt ? `挥棒范围：${rangeText(S.hunt, v.side)}（再点同一格直接挥）` : '点网格定挥棒范围（洋红 = 投手可能投的位置，数字 = 你的打击率）'}
+        </span>
       </div>
       {occupied.some(Boolean) && (
         <div class="runners">
           {phone ? (
             <div class="rcells">
-              {m.bases.map((r, i) =>
+              {runners.map((r, i) =>
                 r ? (
                   <button type="button" key={i} class={`rcell ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)}>
                     <span class="rc-t">
-                      {BASE[i]} 跑速 <Num v={m.off.get(r.pid).a.speed} />
+                      {BASE[i]} 跑速 <Num v={r.speed} />
                     </span>
                     <span>{S.run[i] ? '提前跑 ✓' : '提前跑'}</span>
                   </button>
                 ) : null,
               )}
             </div>
-          ) : m.bases.map((r, i) =>
-            r ? (
-              <div key={i} class="runner">
-                <span class="rb">{BASE[i]}</span>
-                <span class="rn">{fullName(m.off.get(r.pid))}</span>
-                <span class="rl">跑速 <Num v={m.off.get(r.pid).a.speed} /></span>
-                <button type="button" class={`chip ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)}>
-                  {S.run[i] ? '提前跑 ✓' : '提前跑'}
-                </button>
-              </div>
-            ) : null,
+          ) : (
+            runners.map((r, i) =>
+              r ? (
+                <div key={i} class="runner">
+                  <span class="rb">{BASE[i]}</span>
+                  <span class="rn">{r.name}</span>
+                  <span class="rl">
+                    跑速 <Num v={r.speed} />
+                  </span>
+                  <button type="button" class={`chip ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)}>
+                    {S.run[i] ? '提前跑 ✓' : '提前跑'}
+                  </button>
+                </div>
+              ) : null,
+            )
           )}
           <div class="dim small">提前跑：没打中就盗垒，打中多跑一个垒；可能被牵制。</div>
         </div>
@@ -542,8 +648,11 @@ function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
             </Btn>
           )}
           <span class="grow" />
+          <Btn disabled={!ready} onClick={() => S.take()}>
+            不挥棒
+          </Btn>
           <Btn kind="primary" big disabled={!S.canGo()} onClick={() => S.go()}>
-            {S.state === 'playing' ? '比赛进行中…' : '▶ 开始'}
+            {S.state === 'playing' ? (S.taking ? '看球中…' : '挥棒中…') : '▶ 挥棒'}
           </Btn>
         </div>
       )}

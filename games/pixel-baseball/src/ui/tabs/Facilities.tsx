@@ -6,7 +6,6 @@ import { yearIdx } from '../../core/calendar';
 import { catAuto } from '../../core/queue';
 import { Bar, Btn, Money, Panel } from '../components/common';
 import { refresh } from '../store';
-import { sfx } from '../sound';
 
 /** 一项设施：图标 | 名字 | 等级 | 升级按钮，下面是说明。各列宽度固定 */
 function FacilityRow(p: { id: FacilityId }) {
@@ -38,7 +37,7 @@ function FacilityRow(p: { id: FacilityId }) {
             disabled={!!why}
             title={why ?? ''}
             onClick={() => {
-              if (startUpgrade(id)) sfx('click');
+              startUpgrade(id);
               refresh();
             }}
           >

@@ -200,15 +200,19 @@ export interface PendingMatch {
   live?: LiveRecord;
 }
 
-/** 亲自指挥时玩家的一个操作（每一球的投球 / 打击指令、换人、牵制、交给教练打完） */
+/** 亲自指挥时玩家的一个操作（每一球的投球 / 打击指令、换人、牵制、敬远、交给教练打完） */
 export type LiveAct =
   | { k: 'throw'; t: PitchType | 'FB'; x: number; y: number }
-  | { k: 'swing'; z: number; run: [boolean, boolean, boolean] }
+  // commit：玩家按了「挥棒」，不管球来到哪里都挥（教练的指令没有这个标记：看到球来到狙的位置附近才挥）
+  | { k: 'swing'; z: number; run: [boolean, boolean, boolean]; commit?: boolean; c?: [number, number] }
   | { k: 'ph'; slot: number; pid: number }
   | { k: 'pr'; base: number; pid: number }
   | { k: 'pc'; pid: number }
   | { k: 'ds'; pos: Pos; pid: number }
   | { k: 'po'; base?: number }
+  | { k: 'ibb' }
+  // 守备阵型：趋近（防触击、双杀）/ 正常 / 防长打
+  | { k: 'al'; a: 'close' | 'normal' | 'deep' }
   | { k: 'end' };
 
 export interface LiveRecord {
@@ -219,6 +223,8 @@ export interface LiveRecord {
   log: { n: number; a: LiveAct }[];
   /** 已经投了几球 */
   played: number;
+  /** 记录时的比赛引擎版本（没有 = 1）；和现在的不一样就没法按记录重演，这场比赛从头开始 */
+  eng?: number;
 }
 
 /** 打线里的一棒（不用 DH 时，守位是 P 的那一棒由当天的先发投手打） */

@@ -32,7 +32,19 @@ const HOME_POLAR: Record<Pos, [number, number]> = {
   RF: [82, 28],
 };
 
-export type FieldAlign = 'normal' | 'infieldIn' | 'dp' | 'noDoubles' | 'buntShift';
+export type FieldAlign = 'normal' | 'infieldIn' | 'dp' | 'noDoubles' | 'buntShift' | 'close';
+
+/** 俯视球场演出到了某个时刻（接住、落地、传球、进手套、飞出全垒打墙），让外面配上声音 */
+export type FieldCue = { k: 'catch'; air: boolean } | { k: 'land' } | { k: 'throw' } | { k: 'glove' } | { k: 'hr' };
+
+/** 打出去的球落下那一刻是什么声音：飞球被接住、滚地球被接到、安打落地、全垒打；滚地安打滚过去不出声 */
+function landCue(b: BipInfo): FieldCue | null {
+  if (b.res === 'HR') return { k: 'hr' };
+  const air = b.kind === 'LD' || b.kind === 'FB' || b.kind === 'PU';
+  const hit = b.res === '1B' || b.res === '2B' || b.res === '3B';
+  if (air) return hit || b.res === 'E' ? { k: 'land' } : { k: 'catch', air: true };
+  return hit ? null : { k: 'catch', air: false };
+}
 
 /** 根据守备阵型计算站位 */
 function alignedPositions(align: FieldAlign): Record<Pos, XY> {
@@ -42,12 +54,12 @@ function alignedPositions(align: FieldAlign): Record<Pos, XY> {
     const infield = k === '1B' || k === '2B' || k === 'SS' || k === '3B';
     const outfield = k === 'LF' || k === 'CF' || k === 'RF';
     if (align === 'infieldIn' && infield) d -= 8;
-    if (align === 'dp' && (k === '2B' || k === 'SS')) {
+    if ((align === 'dp' || align === 'close') && (k === '2B' || k === 'SS')) {
       d -= 2;
       a = a > 0 ? 8 : -8;
     }
     if (align === 'noDoubles' && outfield) d += 9;
-    if (align === 'buntShift' && (k === '1B' || k === '3B')) d = 17;
+    if ((align === 'buntShift' || align === 'close') && (k === '1B' || k === '3B')) d = 17;
     out[k] = polar(d, a);
   }
   return out;
@@ -263,6 +275,9 @@ export class FieldRenderer {
   raf = 0;
   last = 0;
   speed = 1;
+  /** 演出到了接住、落地、传球、进手套的那一刻（瞬间完成时不通知） */
+  onCue: ((c: FieldCue) => void) | null = null;
+  private quiet = false;
   frame = 0;
   flash: { text: string; t: number; color: string } | null = null;
   private resolves: (() => void)[] = [];
@@ -385,12 +400,19 @@ export class FieldRenderer {
     }
   };
 
+  private cue(c: FieldCue | null): void {
+    if (c && !this.quiet) this.onCue?.(c);
+  }
+
   private run(anims: Anim[]): Promise<void> {
     if (this.speed >= 50) {
+      // 瞬间完成：不出声
+      this.quiet = true;
       for (const a of anims) {
         a.step(1);
         a.done?.();
       }
+      this.quiet = false;
       this.draw();
       return Promise.resolve();
     }
@@ -456,6 +478,7 @@ export class FieldRenderer {
       step: (k) => {
         this.ball = { x: start.x + (land.x - start.x) * k, y: start.y + (land.y - start.y) * k, h: peak * 4 * k * (1 - k) };
       },
+      done: () => this.cue(landCue(b)),
     });
     // 野手跑向落点
     if (b.res !== 'HR') {
@@ -487,10 +510,12 @@ export class FieldRenderer {
       else if (b.res === 'SAC' || b.res === 'FC') dest = BASES[1];
       if (!dest) return;
       const d = dest;
+      this.cue({ k: 'throw' });
       return this.run([
         {
           dur: 0.28,
           t: 0,
+          done: () => this.cue({ k: 'glove' }),
           step: (k) => {
             this.ball = { x: ballAt.x + (d.x - ballAt.x) * k, y: ballAt.y + (d.y - ballAt.y) * k, h: 4 * k * (1 - k) * 8 };
           },

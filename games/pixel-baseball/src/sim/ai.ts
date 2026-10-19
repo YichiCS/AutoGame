@@ -89,15 +89,24 @@ export function defenseBeforePA(m: Match, t: TeamState): void {
     if (r !== null) m.changePitcher(t, r);
   }
   if (t.rattle > 0.55 && t.visits > 0 && (m.risp() || m.inning >= 7) && chance(0.6)) m.moundVisit(t);
-  const b = m.batter();
-  const next = m.onDeck(1);
-  const diff = m.scoreDiffFor(t.side);
-  const bOff = batterOffense(b);
   t.def.ibb = false;
-  if (!m.bases[0] && (m.bases[1] || m.bases[2]) && m.inning >= 6 && Math.abs(diff) <= 2 && bOff >= batterOffense(next) + 15 && bOff >= 58) {
-    t.def.ibb = chance(0.5);
-  }
+  if (wantsIBB(m, t)) t.def.ibb = chance(0.5);
   defenseTactics(m, t);
+}
+
+/** 值得申告敬远的局面：一垒空着、得点圈有人、后半场比分接近，这一棒明显比下一棒强（再掷五成） */
+export function wantsIBB(m: Match, t: TeamState): boolean {
+  const bOff = batterOffense(m.batter());
+  const diff = m.scoreDiffFor(t.side);
+  return !m.bases[0] && (!!m.bases[1] || !!m.bases[2]) && m.inning >= 6 && Math.abs(diff) <= 2 && bOff >= batterOffense(m.onDeck(1)) + 15 && bOff >= 58;
+}
+
+/** 教练替玩家定守备阵型（不用随机数）：一二垒有人、少于两出局就趋近（防触击、双杀），后半场领先一到三分就防长打 */
+export function coachAlign(m: Match, t: TeamState): 'close' | 'normal' | 'deep' {
+  const diff = m.scoreDiffFor(t.side);
+  if ((m.bases[0] || m.bases[1]) && !m.bases[2] && m.outs < 2) return 'close';
+  if (m.inning >= 7 && diff >= 1 && diff <= 3) return 'deep';
+  return 'normal';
 }
 
 /** 只决定守备阵型与投球方针（人类玩家可以把这部分交给 AI） */

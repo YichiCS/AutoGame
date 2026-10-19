@@ -4,6 +4,8 @@ import { FIELD_POS } from './types';
 import { G, setG } from './state';
 import { getRngState, hash32, setRngState } from './rng';
 import { posRating, refreshPos } from './attrs';
+import { PITCH_DEFS, PITCH_LIST, pitchAffinity } from '../data/pitches';
+import type { PitchType } from './types';
 import { MAX_VEL } from './growth';
 import { clamp } from './util';
 import { clearWorldCache } from './world';
@@ -61,9 +63,30 @@ function migrateV4(g: GameState): void {
   if (g.pending?.live) delete g.pending.live;
 }
 
+/**
+ * v4 → v5（游戏 v2.3.0）：投手的变化球补到至少两种（新补的是 1 级）。打者会从比赛里学投手的配球，球种太少容易被抓住。
+ * 球种按投球姿势和亲缘挑；用每个人固定的哈希挑，不消耗随机数，同一个存档迁移几次结果都一样。
+ */
+function migrateV5(g: GameState): void {
+  for (const p of Object.values(g.players)) {
+    if (p.pos !== 'P') continue;
+    for (let k = 0; p.pitches.length < 2 && k < 4; k++) {
+      const owned = p.pitches.map((x) => x.type);
+      if (p.learning) owned.push(p.learning.pitch);
+      const cands = PITCH_LIST.map((t) => [t, pitchAffinity(owned, p.delivery, t)] as [PitchType, number]).filter(([t, w]) => w > 0 && PITCH_DEFS[t].rarity <= 2);
+      const tot = cands.reduce((a, c) => a + c[1], 0);
+      if (!tot) break;
+      let x = (hash32(p.id, 501 + k) / 4294967296) * tot;
+      const pick = cands.find((c) => (x -= c[1]) < 0) ?? cands[cands.length - 1];
+      p.pitches.push({ type: pick[0], lv: 1 });
+    }
+  }
+}
+
 /** 旧存档缺少的字段在这里补上 */
 function migrate(g: GameState): GameState {
   if (g.v < 4) migrateV4(g);
+  if (g.v < 5) migrateV5(g);
   g.flags ??= {};
   g.cooldowns ??= {};
   g.schedule ??= [];
