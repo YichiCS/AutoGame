@@ -151,6 +151,12 @@ export class MatchSession {
     return settings.matchSpeed ?? 2;
   }
 
+  /** 这一球是教练（自动）指挥的：演出至少 4 倍速；亲手指挥的球用设定的速度 */
+  private fast = false;
+  get animSpeed(): number {
+    return this.fast ? Math.max(4, this.speed) : this.speed;
+  }
+
   setSpeed(v: number): void {
     settings.matchSpeed = v;
     saveSettings();
@@ -469,7 +475,7 @@ export class MatchSession {
     const L = this.live;
     const xy = this.huntXY();
     if (!L || !xy || L.phase() !== 'bat') return null;
-    return coverMap(xy.x, xy.y, L.m.batter().a.contact);
+    return coverMap(xy.x, xy.y, L.m.swingShape());
   }
 
   /** 对齐度：投手的热区（打者眼里的）和挥棒热区重合多少（0..1，「这一球合得上」的期望） */
@@ -534,6 +540,7 @@ export class MatchSession {
     const L = this.live;
     if (!L || this.state !== 'ready' || this.coaching || L.phase() !== 'bat') return;
     window.clearTimeout(this.autoTimer);
+    this.fast = false;
     this.taking = true;
     L.act({ k: 'swing', z: -1, run: [...this.run] as [boolean, boolean, boolean] });
     void this.runPitch();
@@ -550,6 +557,7 @@ export class MatchSession {
     const L = this.live;
     if (!L || this.state !== 'ready' || this.coaching || L.phase() !== 'bat' || !this.tacReady(t)) return;
     window.clearTimeout(this.autoTimer);
+    this.fast = false;
     const commit = t === 'hitRun' && !!this.hunt;
     this.taking = t === 'steal' || t === 'doubleSteal';
     const c = commit && this.hunt ? ([this.hunt[0], this.hunt[1]] as [number, number]) : undefined;
@@ -563,6 +571,7 @@ export class MatchSession {
     const L = this.live;
     if (!L || this.state !== 'ready' || this.coaching || L.phase() !== 'pitch') return;
     window.clearTimeout(this.autoTimer);
+    this.fast = false;
     const mu = this.captureMu();
     const memoN = L.m.memo.length;
     void this.runPlay(() => L.act({ k: 'ibb' }), mu, memoN);
@@ -641,6 +650,7 @@ export class MatchSession {
       const L = this.live!;
       const mu = this.captureMu();
       const memoN = L.m.memo.length;
+      this.fast = true;
       const ev = L.coachTurn();
       // 教练申告了敬远：演出敬远（这个打席就结束了）
       if (ev.some((e) => e.k === 'ibb')) {
@@ -711,6 +721,7 @@ export class MatchSession {
     const L = this.live;
     if (!L || !this.canGo()) return;
     window.clearTimeout(this.autoTimer);
+    this.fast = false;
     if (L.phase() === 'pitch' && this.aim) L.act({ k: 'throw', t: this.ptype, x: this.aim.x, y: this.aim.y });
     else if (L.phase() === 'bat' && this.hunt) {
       // 一定挥：朝着挥棒范围
@@ -742,6 +753,8 @@ export class MatchSession {
     this.coaching = false;
     const memoN = memoN0 >= 0 ? memoN0 : L.m.memo.length;
     this.mu = mu ?? this.captureMu();
+    if (this.stage) this.stage.speed = this.animSpeed;
+    if (this.field) this.field.speed = this.animSpeed;
     this.updateHud();
     refresh();
     const events = produce();
@@ -833,15 +846,15 @@ export class MatchSession {
     fd.resetPositions();
     fd.setBases(prev);
     fd.batterSide = L.m.batter().bats === 'L' ? 'L' : 'R';
-    fd.speed = this.speed;
+    fd.speed = this.animSpeed;
     this.view = 'field';
     refresh();
     await fd.playBip(e.bip, e.moves ?? []);
     const big = e.bip.res === 'HR' ? '本垒打！！' : HITS.has(e.bip.res) ? '安打！' : e.bip.res === 'E' ? '失误！' : e.bip.res === 'DP' ? '双杀！' : '';
     if (big) {
       fd.showFlash(big, e.bip.res === 'HR' ? PAL.yellow : e.side === L.mySide ? PAL.lime : PAL.orange, 1.1);
-      await sleep(900 / this.speed);
-    } else await sleep(450 / this.speed);
+      await sleep(900 / this.animSpeed);
+    } else await sleep(450 / this.animSpeed);
     this.view = 'stage';
     refresh();
   }
@@ -856,11 +869,11 @@ export class MatchSession {
     fd.setAlignment(L.m.T[dfn].def.align);
     fd.resetPositions();
     fd.setBases(prev);
-    fd.speed = this.speed;
+    fd.speed = this.animSpeed;
     this.view = 'field';
     refresh();
     await fd.playMoves(e.moves, 0.7);
-    await sleep(350 / this.speed);
+    await sleep(350 / this.animSpeed);
     this.view = 'stage';
     this.stage?.setBases([!!e.snap?.bases[0], !!e.snap?.bases[1], !!e.snap?.bases[2]]);
     refresh();

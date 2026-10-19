@@ -53,20 +53,18 @@ export function Grade(p: { v: number; showV?: boolean }) {
   );
 }
 
-/** 最近两周涨了多少 */
+/** 上个月涨了多少（每月 1 日结算） */
 export function recentGain(pl: Player, k?: string): number {
-  const a = pl.gw ?? {};
-  const b = pl.gwp ?? {};
-  if (k) return ((a as Record<string, number>)[k] ?? 0) + ((b as Record<string, number>)[k] ?? 0);
+  const a = pl.gm ?? {};
+  if (k) return (a as Record<string, number>)[k] ?? 0;
   let s = 0;
   for (const v of Object.values(a)) s += v ?? 0;
-  for (const v of Object.values(b)) s += v ?? 0;
   return s;
 }
 
 export function Gain(p: { n: number }) {
   if (!p.n) return null;
-  return <span class="gain" title="最近两周的成长">+{p.n}</span>;
+  return <span class="gain" title="上个月的成长">+{p.n}</span>;
 }
 
 /** 0-100 的能力数值，按档位上色 */

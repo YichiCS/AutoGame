@@ -8,7 +8,7 @@ import { runDays } from '../src/core/sim';
 import { LiveGame } from '../src/core/live';
 import { hash32 } from '../src/core/rng';
 import type { LiveAct, PendingMatch } from '../src/core/types';
-import { GRID, SWING_K, cellCenter, commitFit, inZone, rangeCenter } from '../src/sim/pitching';
+import { GRID, SWING_K, cellCenter, coverFit, inZone, rangeCenter } from '../src/sim/pitching';
 import { batterView } from '../src/sim/brain';
 
 // 调参：K='{"cFitH":0.8}' 覆盖挥棒模型的参数
@@ -36,7 +36,7 @@ function zoneOf(x: number, y: number): number {
 /** 会看热区的玩家：每个挥棒范围的期望「合」，挑最大的；没把握（期望低、多半是坏球）就不挥 */
 function smartSwing(g: LiveGame): LiveAct {
   const m = g.m;
-  const con = m.batter().a.contact;
+  const shape = m.swingShape();
   const sp = m.mindSp;
   // 玩家看到的是打者眼里的热区图（选球眼越好越准）
   const heat = sp ? batterView(m, g.pm.seed, g.step) : null;
@@ -58,7 +58,7 @@ function smartSwing(g: LiveGame): LiveAct {
           const v = heat[j * GRID + i];
           if (v < 1e-4) continue;
           const [x, y] = cellCenter(i, j);
-          e += v * commitFit(x - hx, y - hy, con);
+          e += v * coverFit(x - hx, y - hy, shape);
         }
       if (e > best) {
         best = e;

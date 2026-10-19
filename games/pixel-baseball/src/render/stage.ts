@@ -724,9 +724,9 @@ export class MatchStage {
       for (let j = 0; j < n; j++)
         for (let i = 0; i < n; i++) {
           const v = h.intent[j * n + i];
-          if (v < 0.12) continue;
+          if (v < 0.25) continue;
           const [x, y] = cellXY(i, j);
-          c.globalAlpha = (0.14 + 0.56 * v) * A;
+          c.globalAlpha = (0.08 + 0.7 * v) * A;
           rect(c, x + 1, y + 1, g.cs - 1, g.cs - 1, PAL.orange);
         }
       c.globalAlpha = 1;

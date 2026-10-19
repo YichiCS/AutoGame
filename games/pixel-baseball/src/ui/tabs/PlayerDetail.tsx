@@ -217,6 +217,15 @@ function PosRatings(p: { pl: Player }) {
   );
 }
 
+/** 潜力等级：S 85+ / A 70+ / B 55+ / C 40+ / D 25+ / E */
+function potGrade(v: number): string {
+  return v >= 85 ? 'S' : v >= 70 ? 'A' : v >= 55 ? 'B' : v >= 40 ? 'C' : v >= 25 ? 'D' : 'E';
+}
+
+function formText(f: number): string {
+  return f >= 1.25 ? '突破年' : f >= 1.08 ? '状态好' : f > 0.92 ? '普通' : f > 0.75 ? '状态差' : '低迷';
+}
+
 export function PlayerDetail(p: { pl: Player; onBack?: () => void }) {
   const pl = p.pl;
   const pit = isPitcher(pl);
@@ -281,9 +290,14 @@ export function PlayerDetail(p: { pl: Player; onBack?: () => void }) {
               <Ovr v={overall(pl)} big />
             </div>
             <div class="ph-kv">
-              <span>
+              <span title="潜力决定成长速度（S 最快）">
                 <i>潜力</i>
+                {potStars !== null ? <b class="pot-g">{potGrade(pl.pot)}</b> : null}
                 <Stars n={potStars} />
+              </span>
+              <span title="这一学年的状态：每年 4 月重新抽，潜力一样的人有的突破、有的低迷">
+                <i>今年</i>
+                {formText(pl.form ?? 1)}
               </span>
               <span title={PERS_DESC[pl.pers]}>
                 <i>性格</i>

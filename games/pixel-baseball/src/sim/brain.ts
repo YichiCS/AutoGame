@@ -288,12 +288,13 @@ export function batterIntentView(m: Match, seed: number, step: number): { heat: 
   const b = m.batter();
   const acc = catcherRead(m.dfn.fielder('C'));
   const r = makeRng(hash32(seed, step, 11));
-  const reach = (0.6 + (0.12 * clamp(b.a.eye, 0, 100)) / 100 + (m.strikes === 2 ? 0.16 : 0)) * (1 + 0.35 * (1 - acc));
+  // 画的范围比实际出棒的范围收一些、分量拉开对比，一眼看得出他最想打哪里
+  const reach = (0.3 + (0.06 * clamp(b.a.eye, 0, 100)) / 100 + (m.strikes === 2 ? 0.1 : 0)) * (1 + 0.3 * (1 - acc));
   const tot = it.w.reduce((a, c) => a + c, 0) || 1;
   const err = 0.04 + 0.3 * (1 - acc);
   const zs = it.w.map((w, zn) => {
     const [cx, cy] = zoneCenter(zn);
-    return { x: cx + r.gauss(0, err), y: cy + r.gauss(0, err), w: (w / tot) * Math.exp(r.gauss(0, 0.9 * (1 - acc))) };
+    return { x: cx + r.gauss(0, err), y: cy + r.gauss(0, err), w: (w / tot) ** 1.8 * Math.exp(r.gauss(0, 0.9 * (1 - acc))) };
   });
   const heat: number[] = [];
   let mx = 0;
@@ -306,7 +307,17 @@ export function batterIntentView(m: Match, seed: number, step: number): { heat: 
       mx = Math.max(mx, v);
     }
   const swing = clamp(1 - it.pTake + r.gauss(0, 0.12 * (1 - acc)), 0.05, 1);
-  return { heat: heat.map((v) => (mx > 0 ? (v / mx) * swing : 0)), swing, acc };
+  // 好打者整个好球带都有一层底（哪里都能打），差打者才有明显的空档
+  const base = clamp(((b.a.contact + b.a.eye) / 2 - 40) / 100, 0, 0.35);
+  return {
+    heat: heat.map((v, i) => {
+      const [x, y] = cellCenter(i % GRID, Math.floor(i / GRID));
+      const h = mx > 0 ? (v / mx) ** 1.6 : 0;
+      return Math.max(h, inZone(x, y) ? base : 0) * swing;
+    }),
+    swing,
+    acc,
+  };
 }
 
 /** 教练替玩家决定跑者：脚快、捕手肩弱、球数有利才跑；二垒有人时一垒不单独跑 */

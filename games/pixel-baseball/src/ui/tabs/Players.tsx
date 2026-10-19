@@ -6,7 +6,8 @@ import { PITCH_DEFS } from '../../data/pitches';
 import { pitchQuality } from '../../sim/pitching';
 import { strengthOf, strengthLetter } from '../../core/team';
 import { Cond, Empty, Fatigue, Gain, Num, Ovr, Portrait, SubTabs, recentGain } from '../components/common';
-import { refresh, setSub, ui } from '../store';
+import { refresh, setSub, toast, ui } from '../store';
+import { toggleSpecial } from '../../core/daily';
 import { PlayerDetail } from './PlayerDetail';
 import { prospectBrief } from '../../core/recruit';
 
@@ -43,6 +44,18 @@ function PlayerRow(p: { pl: Player }) {
         {pl.benched > 0 && <span class="tag">停</span>}
         {pl.learning && <span class="tag blue">学{PITCH_DEFS[pl.learning.pitch].short}</span>}
         {gain > 0 && <Gain n={gain} />}
+        <button
+          type="button"
+          class={`sp-t ${G.special?.includes(pl.id) ? 'on' : ''}`}
+          title="特训：每月 1 日随机提升 1～3 项能力（最多 9 人）"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!toggleSpecial(pl.id)) toast('特训最多 9 人', 'bad');
+            refresh();
+          }}
+        >
+          特训
+        </button>
       </span>
       <span class="gr">{pl.grade ? `${pl.grade}年` : '新生'}</span>
       <span class="ps">{POS_ABBR[pl.pos]}</span>
@@ -154,6 +167,11 @@ export function Players() {
             <span class="dim small nowrap">
               打 {strengthLetter(st.off)} · 投 {strengthLetter(st.pit)} · 守 {strengthLetter(st.def)}
             </span>
+          </div>
+        )}
+        {sub !== 'other' && (
+          <div class="dim small sp-head">
+            特训 {(G.special ?? []).filter((id) => G.players[id] && !G.players[id].retired).length}/9 · 每月 1 日进行，每人随机提升 1～3 项能力（练完累一些）。成长每月 1 日结算，潜力越高、这一学年状态越好涨得越多
           </div>
         )}
         {sub !== 'other' && list.length > 0 && <ListHead />}

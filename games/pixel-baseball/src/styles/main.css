@@ -730,6 +730,10 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
 .tacs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .tacs .chip { min-height: 34px; padding: 2px 12px; }
 .tend { line-height: 1.4; }
+.sp-t { margin-left: 6px; padding: 0 6px; min-height: 22px; background: var(--panel2); border: 1px solid var(--shadow); color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
+.sp-t.on { background: var(--accent2); color: var(--bg2); }
+.sp-head { padding: 2px 0 6px; line-height: 1.5; }
+.pot-g { color: var(--accent); margin-right: 4px; }
 .pshape { display: inline-block; width: 1.1em; font-size: 11px; opacity: 0.85; }
 .hunt { flex: 1; color: var(--muted); }
 .hunt.on { color: var(--accent); }

@@ -311,6 +311,8 @@ export interface SwingIn {
   /** 玩家按了「挥棒」：一定挥，朝着挥棒范围（at 是它的中心；没有就用狙的那一格）——来球离得越远越容易挥空、打得越差 */
   commit?: boolean;
   at?: [number, number];
+  /** 这一球的挥棒热区形状（没有就用平均的形状） */
+  shape?: CoverShape;
   /** AI 打者看不透投手（对手是玩家、教练）：没来到狙的位置、但进了好球带的球也常出棒 */
   blind?: boolean;
   x: number;
@@ -368,16 +370,16 @@ export const SWING_K = {
   blind0: 0.4,
   blindFit: 0.48,
   /** 玩家一定挥、球在挥棒范围里（合 ≥ 0.85）：等到了想要的球，打得更扎实 */
-  cSit: 0.1,
+  cSit: 0.25,
   /** 玩家「一定挥」的挥棒热区：左右、上下的宽度 = 基本 + 击球能力 × 系数（左右差一点还能靠球棒长短补，上下差一点就挥空） */
-  covH0: 1.1,
-  covH1: 0.45,
-  covV0: 0.76,
-  covV1: 0.35,
+  covH0: 0.7,
+  covH1: 0.35,
+  covV0: 0.5,
+  covV1: 0.24,
   /** 一定挥：打中的概率、界外、击球质量随「合」变化 */
-  cCon0: 0.15,
-  cConFit: 0.83,
-  cFoul0: 0.16,
+  cCon0: 0.25,
+  cConFit: 0.75,
+  cFoul0: 0.13,
   cFoulFit: 0.42,
   cSolidFit: 0.4,
 };
@@ -419,11 +421,12 @@ export function swingOutcome(o: SwingIn, r: Rng): SwingOut {
       // 追打：差一点就到狙的位置的坏球
       swing = true;
       m = fitOf(d) * 0.8;
-    } else if (o.blind && strike && o.strikes < 2 && r.rand() < clamp(K.blind0 + 0.1 * z(o.eye) - ((o.balls ?? 0) >= 3 ? 0.2 : 0), 0.15, 0.75)) {
+    } else if (o.blind && strike && o.strikes < 2 && r.rand() < clamp(K.blind0 + 0.1 * z(o.eye) + 0.12 * z(o.con) - ((o.balls ?? 0) >= 3 ? 0.2 : 0), 0.15, 0.8)) {
       // 看不透投手：不是狙的位置，进了好球带也出棒（合得差一些）
       swing = true;
       const [nx, ny] = zoneCenter(nearZone(o.x, o.y));
-      m = K.blindFit * fitOf(Math.hypot(o.x - nx, o.y - ny));
+      // 好打者没等到的球也打得不差：没有因为换了等球的位置就露出大破绽
+      m = clamp(K.blindFit + (0.25 * (o.con - 50)) / 50, 0.25, 0.8) * fitOf(Math.hypot(o.x - nx, o.y - ny));
     } else if (o.strikes === 2 && strike && r.rand() < 0.5 + 0.25 * (1 - o.eye / 100)) {
       // 两好球：不是狙的球也得碰一碰
       swing = true;
@@ -479,13 +482,58 @@ export function commitFit(dx: number, dy: number, con: number): number {
   return Math.exp(-((dx / sh) ** 2) - (dy / sv) ** 2);
 }
 
+/** 这一球的挥棒热区形状：几块椭圆（相对挥棒点的位置、宽窄、分量） */
+export interface CoverShape {
+  lobes: { x: number; y: number; sh: number; sv: number; w: number }[];
+}
+
+/** 手感起伏的幅度（1 = 一般）：选球眼和精神越好越稳，差的人一球大一球小 */
+export function coverSteady(b: Player): number {
+  const s = clamp((b.a.eye + b.a.mental) / 200, 0, 1);
+  return 1.45 - 0.9 * s;
+}
+
+/**
+ * 这一球的挥棒热区：主体大小看击球能力，乘上这一球的手感（每一球都不太一样；选球眼、精神越好起伏越小），
+ * 旁边再随机长出两块小的——形状不规则；打者类型再往他拿手的方向多长一块（低球打者往下、拉打型往内角……）。
+ * seed 由打者、第几个打席、这个打席第几球决定（不用比赛的随机数，画面上看到的就是判定用的）。
+ */
+export function coverShape(b: Player, side: 'R' | 'L', seed: number): CoverShape {
+  const r = makeRng(seed);
+  const [sh, sv] = coverWidth(b.a.contact);
+  const st = coverSteady(b);
+  const feel = clamp(r.gauss(1, 0.14 * st), 1 - 0.3 * st, 1 + 0.3 * st);
+  const jit = () => clamp(r.gauss(1, 0.12 * st), 1 - 0.25 * st, 1 + 0.25 * st);
+  const ht = hotType(b);
+  const main = ht === 'middle' ? 1.05 : 1;
+  const lobes = [{ x: r.gauss(0, 0.04 * st), y: r.gauss(0, 0.04 * st), sh: sh * feel * main * jit(), sv: sv * feel * main * jit(), w: 1 }];
+  for (let k = 0; k < 2; k++) {
+    const a = r.rand() * Math.PI * 2;
+    const d = (0.45 + r.rand() * 0.45) * sh * feel;
+    lobes.push({ x: Math.cos(a) * d, y: Math.sin(a) * d * 0.7, sh: sh * feel * 0.55, sv: sv * feel * 0.55, w: (0.55 + r.rand() * 0.35) * (ht === 'even' ? 1.12 : 1) });
+  }
+  // 拿手的方向（好球带单位：x 向右、y 向上；右打者内角在 x < 0）
+  const inside = side === 'R' ? -1 : 1;
+  const dir: [number, number] | null =
+    ht === 'low' ? [0, -1] : ht === 'high' ? [0, 1] : ht === 'pull' ? [inside, 0] : ht === 'oppo' ? [-inside, 0] : null;
+  if (dir) lobes.push({ x: dir[0] * 0.75 * sh * feel, y: dir[1] * 0.95 * sv * feel, sh: sh * feel * 0.6, sv: sv * feel * 0.6, w: 0.88 });
+  return { lobes };
+}
+
+/** 挥棒热区在偏离挥棒点 (dx, dy) 处的「合」 */
+export function coverFit(dx: number, dy: number, s: CoverShape): number {
+  let m = 0;
+  for (const l of s.lobes) m = Math.max(m, l.w * Math.exp(-(((dx - l.x) / l.sh) ** 2) - ((dy - l.y) / l.sv) ** 2));
+  return m;
+}
+
 /** 挥棒热区画在网格上（121 格，每格的「合」） */
-export function coverMap(cx: number, cy: number, con: number): number[] {
+export function coverMap(cx: number, cy: number, s: CoverShape): number[] {
   const out: number[] = [];
   for (let j = 0; j < GRID; j++)
     for (let i = 0; i < GRID; i++) {
       const [x, y] = cellCenter(i, j);
-      out.push(commitFit(x - cx, y - cy, con));
+      out.push(coverFit(x - cx, y - cy, s));
     }
   return out;
 }
@@ -500,7 +548,7 @@ function committedSwing(o: SwingIn, r: Rng, strike: boolean, qz: number): SwingO
   if (o.x * o.insideSign > 1.65 && r.rand() < 0.22) return { res: 'hbp', swing: false, m: 0, solid: 0 };
   const [hx, hy] = o.at ?? zoneCenter(o.hunt);
   const dy = o.y - hy;
-  const m = commitFit(o.x - hx, dy, o.con);
+  const m = o.shape ? coverFit(o.x - hx, dy, o.shape) : commitFit(o.x - hx, dy, o.con);
   const pc = clamp(K.cCon0 + K.cConFit * m + 0.5 * K.conSkill * z(o.con) - K.conQ * qz + (o.hang ? 0.1 : 0), 0.02, 0.97);
   if (r.rand() >= pc) return { res: 'swinging', swing: true, m, solid: 0 };
   const pf = clamp(K.cFoul0 + K.cFoulFit * (1 - m) + (strike ? 0 : 0.06) - (o.hang ? 0.08 : 0), 0.12, 0.8);
