@@ -556,7 +556,8 @@ export class MatchStage {
     s.bases.forEach((on, i) => {
       if (!on) return;
       const [x, y, h] = bp[i];
-      F.drawFigure(c, x, y, h, i === 2 ? F.mirror(F.RUNNER) : F.RUNNER, s.runner, 'front');
+      // 一垒、二垒的跑者往画面左边（下一个垒）跑，三垒的往右边（本垒）跑
+      F.drawFigure(c, x, y, h, i === 2 ? F.RUNNER : F.mirror(F.RUNNER), s.runner, 'front');
     });
     // 投手
     const [px, py, ph] = this.pitcherFeet();
