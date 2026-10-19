@@ -226,11 +226,14 @@ function MatchView(p: { S: MatchSession }) {
     S.tap(((e.clientX - r.left) * SW) / r.width, ((e.clientY - r.top) * SH) / r.height);
   };
   const ph = S.muView()?.phase ?? (L.phase() === 'over' ? null : L.phase());
+  const phone = useIsPhone();
   return (
     <div class="mscreen">
       <Scorebar S={S} onMenu={() => setMenu(true)} />
       <div class="mgrid">
         <div class="mleft">
+          <div class="mrow">
+          {phone && <SideCol S={S} side="left" ph={S.state === 'over' || ph === 'over' ? null : ph} setDlg={setDlg} />}
           <div class="mcanvas">
             <canvas ref={stageRef} class={`stage ${S.view === 'stage' ? '' : 'hide'} ${S.state === 'ready' && !S.coaching ? 'tappable' : ''}`} onPointerDown={onTap} />
             <canvas ref={fieldRef} class={`field ${S.view === 'field' ? '' : 'hide'}`} />
@@ -240,6 +243,8 @@ function MatchView(p: { S: MatchSession }) {
               </button>
             )}
             {S.lastRes && S.state !== 'playing' && <div class="msit">上一打席：{S.lastRes}</div>}
+          </div>
+          {phone && <SideCol S={S} side="right" ph={S.state === 'over' || ph === 'over' ? null : ph} setDlg={setDlg} />}
           </div>
           <div class="mlog">
             {S.lines
@@ -417,6 +422,100 @@ function Matchup(p: { S: MatchSession }) {
   );
 }
 
+// ---------------- 手机：画面两侧的窄栏 ----------------
+/** 敬远：点一下变成「确认敬远」，3 秒内再点一次才申告（免得误触） */
+function IbbButton(p: { S: MatchSession; ready: boolean; narrow?: boolean }) {
+  const [arm, setArm] = useState(false);
+  useEffect(() => {
+    if (!arm) return;
+    const t = window.setTimeout(() => setArm(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [arm]);
+  const click = () => {
+    if (!arm) return setArm(true);
+    setArm(false);
+    p.S.ibb();
+  };
+  if (p.narrow)
+    return (
+      <button type="button" class={`sbtn ${arm ? 'arm' : ''}`} disabled={!p.ready} onClick={click}>
+        {arm ? (
+          <>
+            <b>确认</b>
+            <span>敬远</span>
+          </>
+        ) : (
+          <b>敬远</b>
+        )}
+      </button>
+    );
+  return (
+    <Btn kind={arm ? 'red' : undefined} disabled={!p.ready} onClick={click}>
+      {arm ? '确认敬远' : '敬远'}
+    </Btn>
+  );
+}
+
+const BASE_S = ['一垒', '二垒', '三垒'];
+
+/**
+ * 手机：画面两侧的窄栏（按钮的位置固定，画面大小不跟着变）。
+ * 左：一二三垒的跑者（防守时牵制，⚠ 是离垒很大；进攻时提前跑）；右：防守时守备阵型和敬远，进攻时代打、代跑。
+ */
+function SideCol(p: { S: MatchSession; side: 'left' | 'right'; ph: 'bat' | 'pitch' | null; setDlg: (d: Dlg) => void }) {
+  const S = p.S;
+  const v = S.muView();
+  const ready = S.state === 'ready' && !S.coaching;
+  if (!v || !p.ph) return <div class={`mcol ${p.side}`} />;
+  if (p.side === 'left') {
+    const occupied = v.runners.map(Boolean);
+    const canRun = (i: number) => occupied[i] && (i === 2 || !occupied[i + 1] || S.run[i + 1]);
+    return (
+      <div class="mcol left">
+        {v.runners.map((r, i) =>
+          !r ? (
+            <div key={i} class="sbtn empty">
+              <b>{BASE_S[i]}</b>
+            </div>
+          ) : p.ph === 'pitch' ? (
+            <button type="button" key={i} class={`sbtn ${r.lead === 'big' ? 'warn' : ''}`} disabled={!ready || v.pickLeft <= 0} onClick={() => S.act({ k: 'po', base: i })} title={`${r.name}${r.lead === 'big' ? '：离垒很大' : ''}`}>
+              <b>{BASE_S[i]}</b>
+              <span>{r.lead === 'big' ? '⚠牵制' : '牵制'}</span>
+            </button>
+          ) : (
+            <button type="button" key={i} class={`sbtn ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)} title={`${r.name} 跑速 ${Math.round(r.speed)}`}>
+              <b>{BASE_S[i]}</b>
+              <span>{S.run[i] ? '跑 ✓' : '提前跑'}</span>
+            </button>
+          ),
+        )}
+      </div>
+    );
+  }
+  if (p.ph === 'pitch') {
+    return (
+      <div class="mcol right">
+        {ALIGNS.map(([k, t, tip]) => (
+          <button type="button" key={k} class={`sbtn seg1 ${S.align === k ? 'on' : ''}`} disabled={!ready} title={tip} onClick={() => S.setAlign(k)}>
+            <b>{t}</b>
+          </button>
+        ))}
+        <IbbButton S={S} ready={ready} narrow />
+      </div>
+    );
+  }
+  return (
+    <div class="mcol right">
+      <button type="button" class="sbtn" disabled={!ready} onClick={() => p.setDlg({ kind: 'ph' })}>
+        <b>代打</b>
+      </button>
+      <button type="button" class="sbtn" disabled={!ready || !v.runners.some(Boolean)} onClick={() => p.setDlg({ kind: 'pr' })}>
+        <b>代跑</b>
+      </button>
+    </div>
+  );
+}
+
 // ---------------- 这一球的选择 ----------------
 function CoachBar(p: { S: MatchSession }) {
   return (
@@ -439,13 +538,6 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
   const v = S.muView();
   const ready = S.state === 'ready' && !S.coaching;
   const phone = useIsPhone();
-  // 敬远：点一下变成「确认敬远」，3 秒内再点一次才申告（免得误触）
-  const [arm, setArm] = useState(false);
-  useEffect(() => {
-    if (!arm) return;
-    const t = window.setTimeout(() => setArm(false), 3000);
-    return () => window.clearTimeout(t);
-  }, [arm]);
   if (!v) return null;
   // 跑者、离垒、还能牵制几次：用这一球之前的快照（演出中不剧透，按钮的多少不变）
   const runners = v.runners;
@@ -456,15 +548,19 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
       <div class="ctl-h">
         <span>球种</span>
         <span class="dim small">质量 0-100</span>
-        <span class="grow" />
-        <span class="dim small">守备</span>
-        <span class="seg" role="group" aria-label="守备阵型">
-          {ALIGNS.map(([k, t, tip]) => (
-            <button type="button" key={k} class={`seg-b ${al === k ? 'on' : ''}`} disabled={!ready} title={tip} onClick={() => S.setAlign(k)}>
-              {t}
-            </button>
-          ))}
-        </span>
+        {!phone && (
+          <>
+            <span class="grow" />
+            <span class="dim small">守备</span>
+            <span class="seg" role="group" aria-label="守备阵型">
+              {ALIGNS.map(([k, t, tip]) => (
+                <button type="button" key={k} class={`seg-b ${al === k ? 'on' : ''}`} disabled={!ready} title={tip} onClick={() => S.setAlign(k)}>
+                  {t}
+                </button>
+              ))}
+            </span>
+          </>
+        )}
       </div>
       <div class="ptypes">
         {v.ars.map((o) => (
@@ -477,13 +573,16 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
           </button>
         ))}
       </div>
-      {v.tend.n >= 5 && (
-        <div class="tend dim small">
-          今天的配球（{v.tend.n} 球）：{tendText(v.tend).text}
-          {tendText(v.tend).single && <span class="orange"> · ⚠ 太单一，打者会抓住</span>}
-        </div>
-      )}
-      {runners.some(Boolean) && (
+      <div class="tend dim small">
+        {v.tend.n >= 5 ? (
+          <>
+            今天的配球（{v.tend.n} 球）：{tendText(v.tend).text}
+          </>
+        ) : (
+          '投满 5 球后这里显示今天的配球'
+        )}
+      </div>
+      {!phone && runners.some(Boolean) && (
         <div class="runners">
           {phone ? (
             // 手机：每个垒一格排成一行，整格就是牵制按钮
@@ -524,18 +623,8 @@ function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
           <Btn disabled={!ready} onClick={() => p.setDlg({ kind: 'pc' })}>
             换投
           </Btn>
-          <Btn
-            kind={arm ? 'red' : undefined}
-            disabled={!ready}
-            onClick={() => {
-              if (!arm) return setArm(true);
-              setArm(false);
-              S.ibb();
-            }}
-          >
-            {arm ? '确认敬远' : '敬远'}
-          </Btn>
-          <span class="hint">{arm ? '再点一次就申告敬远' : S.aim ? '再点同一格也能直接投' : '在网格上点要投的位置'}</span>
+          {!phone && <IbbButton S={S} ready={ready} />}
+          <span class="hint">{S.aim ? '再点同一格也能直接投' : '在网格上点要投的位置'}</span>
           <Btn kind="primary" big disabled={!S.canGo()} onClick={() => S.go()}>
             {S.state === 'playing' ? '投球中…' : '▶ 投球'}
           </Btn>
@@ -562,14 +651,17 @@ function eyeText(a: number): string {
   return a >= 0.7 ? '看得很准' : a >= 0.4 ? '看得出个大概' : '不太看得清';
 }
 
-const H_TXT = ['', '最内', '内', '偏内', '中', '偏外', '外', '最外'];
-const V_TXT = ['', '最高', '高', '偏高', '中', '偏低', '低', '最低'];
+// 挥棒范围中心格的说法：-1 和 9 是好球带外面一圈（坏球区）
+const H_TXT = ['内角边上', '最内', '内', '偏内', '中', '偏外', '外', '最外', '外角边上', '外侧坏球'];
+const V_TXT = ['高边上', '最高', '高', '偏高', '中', '偏低', '低', '最低', '低边上', '低的坏球'];
 
 /** 挥棒范围在哪儿（按打者说内角 / 外角；捕手视角里右打者站左边，左边是内角） */
 function rangeText(c: [number, number], side: 'R' | 'L'): string {
   const h = side === 'R' ? c[0] : 8 - c[0];
   if (h === 4 && c[1] === 4) return '正中';
-  return `${V_TXT[c[1]]} · ${H_TXT[h]}`;
+  const ht = h < 0 ? '内侧坏球' : H_TXT[h];
+  const vt = c[1] < 0 ? '高的坏球' : V_TXT[c[1]];
+  return `${vt} · ${ht}`;
 }
 
 function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
@@ -591,17 +683,19 @@ function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
           选球 {Math.round(v.b.a.eye)}：投手的打算{eyeText(v.eyeAcc)}
         </span>
       </div>
-      {v.tend.n >= 5 && (
-        <div class="tend dim small">
-          投手今天 {v.tend.n} 球：{tendText(v.tend).text}
-        </div>
-      )}
+      <div class="tend dim small">{v.tend.n >= 5 ? `投手今天 ${v.tend.n} 球：${tendText(v.tend).text}` : '投手投满 5 球后这里显示他今天的配球'}</div>
       <div class="huntrow">
         <span class={`hunt ${S.hunt ? 'on' : ''}`}>
-          {S.hunt ? `挥棒范围：${rangeText(S.hunt, v.side)}（再点同一格直接挥）` : '点网格定挥棒范围（洋红 = 投手可能投的位置，数字 = 你的打击率）'}
+          {S.hunt ? (
+            <>
+              挥棒点：{rangeText(S.hunt, v.side)} · 对齐 <b>{Math.round((S.alignScore() ?? 0) * 100)}%</b>
+            </>
+          ) : (
+            '点网格定挥棒点：黄 = 你的挥棒热区（看击球能力），对准洋红的投手热区'
+          )}
         </span>
       </div>
-      {occupied.some(Boolean) && (
+      {!phone && occupied.some(Boolean) && (
         <div class="runners">
           {phone ? (
             <div class="rcells">
@@ -639,10 +733,12 @@ function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
         <CoachBar S={S} />
       ) : (
         <div class="gobar">
-          <Btn disabled={!ready} onClick={() => p.setDlg({ kind: 'ph' })}>
-            代打
-          </Btn>
-          {occupied.some(Boolean) && (
+          {!phone && (
+            <Btn disabled={!ready} onClick={() => p.setDlg({ kind: 'ph' })}>
+              代打
+            </Btn>
+          )}
+          {!phone && occupied.some(Boolean) && (
             <Btn disabled={!ready} onClick={() => p.setDlg({ kind: 'pr' })}>
               代跑
             </Btn>

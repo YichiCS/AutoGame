@@ -113,6 +113,8 @@ export function pitcherMind(m: Match, t: TeamState, now: PitcherNow, r: Rng): Mi
       }
       // 打者会从这场比赛学：同一个球种、同一个位置用得太多容易被抓住
       if (u.tw > 3) v -= (6 * Math.max(0, (u.rt[o.type] ?? 0) / u.tw - 0.45) + 5 * Math.max(0, u.rz[nearZone(x, y)] / u.tw - 0.3)) * read;
+      // 直球是根本：落后时多投直球抢好球，两好球后才多用变化球（高中投手大约六成是直球）
+      if (o.type === 'FB') v += behind ? 3 : ahead ? 0.5 : 1.5;
       v += r.gauss(0, 1.2);
       cands.push({ o, x, y, v });
     }

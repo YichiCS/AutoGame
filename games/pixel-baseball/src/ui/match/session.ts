@@ -9,7 +9,7 @@ import { G } from '../../core/state';
 import { finishPending } from '../../core/sim';
 import { simulatePending } from '../../core/matchday';
 import { RES_NAME } from '../../sim/labels';
-import { CELL, arsenal, batSide, clampRange, density, hotZones, nearZone, pickoffSkill, rangeCenter, spreadOf, type PitchOpt } from '../../sim/pitching';
+import { CELL, arsenal, batSide, clampRange, coverMap, density, hotZones, nearZone, pickoffSkill, rangeCenter, spreadOf, type PitchOpt } from '../../sim/pitching';
 import { batterView, eyeAccuracy } from '../../sim/brain';
 import { fullName } from '../../core/attrs';
 import { hash32 } from '../../core/rng';
@@ -127,7 +127,7 @@ export class MatchSession {
   /** 投球：球种、瞄准点 */
   ptype: PitchType | 'FB' = 'FB';
   aim: { x: number; y: number } | null = null;
-  /** 打击：挥棒范围（好球带 9×9 里的 3×3）中心格的列、行（1..7）；null 还没选。taking：这一球按了「不挥棒」 */
+  /** 打击：挥棒范围（3×3）中心格的列、行（好球带 9×9 的格，-1 和 9 是外面一圈坏球区）；null 还没选。taking：这一球按了「不挥棒」 */
   hunt: [number, number] | null = null;
   taking = false;
   run: [boolean, boolean, boolean] = [false, false, false];
@@ -439,14 +439,36 @@ export class MatchSession {
     const active = this.state === 'ready' && !this.coaching && ph !== 'over';
     const hud: Hud =
       ph === 'bat'
-        ? { heat: this.heat(), heatCol: HEAT_BAT, hot: mu?.hot ?? null, aim: null, hunt: this.huntXY(), take: this.taking, active }
+        ? { heat: this.heat(), heatCol: HEAT_BAT, hot: mu?.hot ?? null, aim: null, hunt: this.huntXY(), cover: this.cover(), take: this.taking, active }
         : ph === 'pitch'
-          ? { heat: this.preview(), heatCol: PAL.cyan, hot: mu?.hot ?? null, aim: this.aim, hunt: null, take: false, active }
-          : { heat: null, heatCol: HEAT_BAT, hot: null, aim: null, hunt: null, take: false, active: false };
+          ? { heat: this.preview(), heatCol: PAL.cyan, hot: mu?.hot ?? null, aim: this.aim, hunt: null, cover: null, take: false, active }
+          : { heat: null, heatCol: HEAT_BAT, hot: null, aim: null, hunt: null, cover: null, take: false, active: false };
     this.stage.setHud(hud);
   }
 
-  /** 挥棒范围的中心（好球带坐标） */
+  /** 挥棒热区（121 格的「合」）：以挥棒点为中心，宽窄看这名打者的击球能力 */
+  cover(): number[] | null {
+    const L = this.live;
+    const xy = this.huntXY();
+    if (!L || !xy || L.phase() !== 'bat') return null;
+    return coverMap(xy.x, xy.y, L.m.batter().a.contact);
+  }
+
+  /** 对齐度：投手的热区（打者眼里的）和挥棒热区重合多少（0..1，「这一球合得上」的期望） */
+  alignScore(): number | null {
+    const heat = this.heat();
+    const cov = this.cover();
+    if (!heat || !cov) return null;
+    let s = 0;
+    let t = 0;
+    for (let i = 0; i < heat.length; i++) {
+      s += heat[i] * cov[i];
+      t += heat[i];
+    }
+    return t > 0 ? s / t : null;
+  }
+
+  /** 挥棒点（好球带坐标） */
   huntXY(): { x: number; y: number } | null {
     if (!this.hunt) return null;
     const [x, y] = rangeCenter(this.hunt);
@@ -470,7 +492,7 @@ export class MatchSession {
     } else if (L.phase() === 'bat') {
       const cell = this.stage.cellAtPoint(px, py);
       if (!cell) return;
-      // 点到的格子当挥棒范围（3×3）的中心；靠边的往里收，整个范围留在好球带里。点同一格两次：直接挥
+      // 点到的格子当挥棒点，挥棒热区（宽窄看击球能力）以它为中心（外面一圈坏球区也可以——专等引诱球）。点同一格两次：直接挥
       const c = clampRange((cell.x + 1) / CELL - 0.5, (1 - cell.y) / CELL - 0.5);
       if (this.hunt && this.hunt[0] === c[0] && this.hunt[1] === c[1]) {
         this.go();

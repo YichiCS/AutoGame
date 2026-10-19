@@ -138,8 +138,8 @@ export class LiveGame {
       }
       case 'swing': {
         if (!mine || a.z < -1 || a.z > 8) return null;
-        // 一定挥：挥棒范围（3×3）的中心格要在好球带 9×9 的 1..7 里
-        const c = a.commit && a.z >= 0 && a.c && a.c.every((v) => Number.isInteger(v) && v >= 1 && v <= 7) ? ([a.c[0], a.c[1]] as [number, number]) : undefined;
+        // 一定挥：挥棒范围（3×3）的中心格在网格里（-1..9，外面一圈坏球区也行）
+        const c = a.commit && a.z >= 0 && a.c && a.c.every((v) => Number.isInteger(v) && v >= -1 && v <= 9) ? ([a.c[0], a.c[1]] as [number, number]) : undefined;
         t.swingNext = { z: a.z, run: [!!a.run[0], !!a.run[1], !!a.run[2]], commit: !!a.commit && a.z >= 0, c };
         return [];
       }

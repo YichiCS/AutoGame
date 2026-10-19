@@ -795,13 +795,31 @@ canvas.field { display: block; width: 100%; max-width: 1080px; aspect-ratio: 360
 .rot { display: flex; align-items: center; gap: 6px; padding: 2px 0; border-bottom: 1px solid var(--panel2); flex-wrap: wrap; }
 .lineup select { background: var(--panel2); color: var(--text); border: 0; font: inherit; padding: 1px 4px; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.3); }
 
+/* 手机：画面两侧的窄栏（跑者 / 战术按钮），位置固定 */
+.mrow { display: flex; justify-content: center; flex: none; }
+.mcol { flex: none; width: 46px; display: flex; flex-direction: column; gap: 4px; padding: 3px; background: var(--bg2); }
+.sbtn { flex: 1; min-height: 36px; max-height: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 2px 1px; background: var(--panel2); border: 2px solid var(--shadow); color: var(--text); font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.3); }
+.sbtn b { font-weight: normal; }
+.sbtn span { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.sbtn.empty { background: transparent; border-style: dashed; border-color: var(--panel2); box-shadow: none; color: var(--dim); cursor: default; }
+.sbtn.warn { border-color: var(--orange); }
+.sbtn.warn span { color: var(--orange); }
+.sbtn.on, .sbtn.seg1.on { background: var(--accent2); color: var(--bg2); }
+.sbtn.on span { color: var(--bg2); }
+.sbtn.arm { background: var(--red2); }
+.sbtn:disabled:not(.empty) { opacity: 0.45; cursor: not-allowed; }
+
 @media (max-width: 900px) {
   .mtop { padding: 3px 8px; gap: 4px 10px; }
   .sb-wide { display: none; }
   .mgrid { flex-direction: column; }
-  /* 操作区按内容定高贴在底下，画面用剩下的高度（最大到屏宽）：有跑者、球种多时画面缩一点，按钮不会被挤出屏幕 */
+  /* 画面大小只看屏幕：操作区固定高度贴在底下（球种预留两排、配球预留两行），画面用剩下的高度，两侧各留一条按钮栏；
+     有没有跑者、配球文字多少，画面都不缩放 */
   .mleft { flex: 1 1 0; min-height: 160px; padding: 0; gap: 0; overflow: hidden; container-type: size; }
-  .mcanvas { width: min(100cqw, 100cqh); max-width: none; border-width: 0 0 3px; box-shadow: none; }
+  .mcanvas { width: min(calc(100cqw - 92px), 100cqh); max-width: none; border-width: 0 0 3px; box-shadow: none; }
+  .mside { height: 330px; flex: none !important; }
+  .ptypes { min-height: 84px; align-content: start; }
+  .tend { min-height: 2.8em; }
   .mleft > .mlog { padding: 4px 8px 0; }
   .mside { flex: 0 1 auto; min-height: 0; width: 100%; border-left: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); overflow-y: auto; }
   .ctl { padding: 6px 8px; gap: 6px; }

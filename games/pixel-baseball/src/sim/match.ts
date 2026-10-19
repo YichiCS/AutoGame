@@ -20,7 +20,7 @@ const RNG: Rng = { rand, gauss };
 export interface SwingCall {
   z: number;
   run: [boolean, boolean, boolean];
-  /** 玩家按了「挥棒」：一定挥，朝着挥棒范围（好球带 9×9 里的 3×3，c 是中心格的列、行 1..7） */
+  /** 玩家按了「挥棒」：一定挥，朝着挥棒范围（3×3，c 是中心格的列、行：好球带 9×9 的格，-1 和 9 是外面一圈） */
   commit?: boolean;
   c?: [number, number];
 }
@@ -561,9 +561,12 @@ export class Match {
     const pOut = ((0.03 + (0.22 * pk) / 100) * (big ? (going ? 2.2 : 1.3) : 0.45) * (1 - 0.35 * z(r.a.baserun))) / Math.sqrt(this.pickoffs);
     if (chance(0.006 + 0.004 * this.pickoffs)) {
       this.emit('pickoff', `牵制球暴传！${nm(r)}趁机推进！`);
+      t.rattle = clamp(t.rattle + 0.08, 0, 1);
       this.advanceRunnersBy(1, true);
       return;
     }
+    // 牵制一下，投手也缓一口气、重新找回节奏
+    t.rattle = Math.max(0, t.rattle - 0.06);
     if (chance(clamp(pOut, 0.005, 0.6))) {
       this.bases[idx] = null;
       this.outs++;
@@ -702,28 +705,23 @@ export class Match {
   }
 
   /**
-   * 打者从这场比赛里学到的：这个球种、这个位置最近出现得多不多（0..1）。
-   * 板凳上看到的算一半、自己打席里看到的全算；看得越多、选球眼越好越有把握。
+   * 打者从这场比赛里学到的：这个球种、这个位置在他自己的打席里最近出现得多不多（0..1）。
+   * 只算自己打席里看到的球（越近分量越重）；看得越多、选球眼越好越有把握。
    */
   familiar(pid: number, b: Player, type: string, zone: number): { ft: number; fz: number } {
-    const u = this.useOf(pid);
     const sv = this.seen.get(`${pid}-${b.id}`);
-    const w0 = u.tw * 0.5 + (sv?.tw ?? 0);
-    if (w0 < 3) return { ft: 0, fz: 0 };
-    const conf = clamp((w0 - 3) / 12, 0, 1) * (0.6 + 0.6 * clamp(b.a.eye / 100, 0, 1));
-    const ft = (((u.rt[type] ?? 0) * 0.5 + (sv?.rt[type] ?? 0)) / w0) * conf;
-    const fz = ((u.rz[zone] * 0.5 + (sv?.rz[zone] ?? 0)) / w0) * conf;
-    return { ft: Math.min(1, ft), fz: Math.min(1, fz) };
+    const w0 = sv?.tw ?? 0;
+    if (!sv || w0 < 2) return { ft: 0, fz: 0 };
+    const conf = clamp((w0 - 2) / 6, 0, 1) * (0.6 + 0.6 * clamp(b.a.eye / 100, 0, 1));
+    return { ft: Math.min(1, ((sv.rt[type] ?? 0) / w0) * conf), fz: Math.min(1, (sv.rz[zone] / w0) * conf) };
   }
 
-  /** 打者学到的这个投手的落点分布（九宫格的比例）和把握 L（0..0.6）：狙哪一格时参考 */
+  /** 打者在自己的打席里学到的这个投手的落点分布（九宫格的比例）和把握 L（0..0.6）：狙哪一格时参考 */
   learnedZones(pid: number, b: Player): { z: number[]; L: number } | null {
-    const u = this.useOf(pid);
     const sv = this.seen.get(`${pid}-${b.id}`);
-    const w0 = u.tw * 0.5 + (sv?.tw ?? 0);
-    if (w0 < 3) return null;
-    const z = u.rz.map((v, i) => (v * 0.5 + (sv?.rz[i] ?? 0)) / w0);
-    return { z, L: clamp((w0 - 3) / 12, 0, 1) * (0.25 + 0.35 * clamp(b.a.eye / 100, 0, 1)) };
+    const w0 = sv?.tw ?? 0;
+    if (!sv || w0 < 2) return null;
+    return { z: sv.rz.map((v) => v / w0), L: clamp((w0 - 2) / 6, 0, 1) * (0.25 + 0.35 * clamp(b.a.eye / 100, 0, 1)) };
   }
 
   /** 投手今天的配球（给玩家看）：各球种的比例（多的在前）、偏内外角（+ 是外角多）、偏高低（+ 是高球多） */
@@ -1245,7 +1243,7 @@ export class Match {
     const u = this.useOf(p.id);
     u.n++;
     u.tn[type] = (u.tn[type] ?? 0) + 1;
-    rememberPitch(u, type, zone, 0.93);
+    rememberPitch(u, type, zone, 0.93); // 投手自己避免太单一时用（打者学不到）
     const seenKey = `${p.id}-${b.id}`;
     let sv = this.seen.get(seenKey);
     if (!sv) {

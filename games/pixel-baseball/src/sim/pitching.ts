@@ -113,7 +113,7 @@ export function nowOf(p: Player): PitcherNow {
 
 /** 直球的质量：球速为主，球威、控球为辅 */
 export function fbQuality(p: Player, e: PitcherNow = nowOf(p)): number {
-  return clamp(0.55 * velScore(e.vel) + 0.3 * e.stuff + 0.15 * e.ctl + (has(p, 'nobi') ? 5 : 0) + (has(p, 'powerPitcher') ? 3 : 0), 0, 100);
+  return clamp(10 + 0.45 * velScore(e.vel) + 0.25 * e.stuff + 0.2 * e.ctl + (has(p, 'nobi') ? 5 : 0) + (has(p, 'powerPitcher') ? 3 : 0), 0, 100);
 }
 
 /** 某个球种的质量（0..100）。变化球看等级和球威；直球系变化球也看球速 */
@@ -122,7 +122,7 @@ export function pitchQuality(p: Player, type: PitchType | 'FB', e: PitcherNow = 
   const own = p.pitches.find((x) => x.type === type);
   const lv = own?.lv ?? 1;
   const d = PITCH_DEFS[type];
-  const base = 8 + 9 * lv + 0.3 * e.stuff + (own?.sig ? 8 : 0) + (has(p, 'kire') ? 4 : 0);
+  const base = 6 + 7.5 * lv + 0.3 * e.stuff + (own?.sig ? 8 : 0) + (has(p, 'kire') ? 4 : 0);
   return clamp((1 - d.velW) * base + d.velW * Math.max(base, fbQuality(p, e)), 0, 100);
 }
 
@@ -162,12 +162,12 @@ const DIR_VEC: Record<string, [number, number]> = {
  * 还有一定概率「失投」——没变化、留在高处的好打的球；蝴蝶球乱飘。
  */
 export function spreadOf(type: PitchType | 'FB', throws: 'R' | 'L', ctl: number, q: number, fatigue: number): Spread {
-  let s = 0.154 + 0.403 * (1 - clamp(ctl, 0, 110) / 100);
+  let s = 0.13 + 0.35 * (1 - clamp(ctl, 0, 110) / 100);
   // 体力：从第一球起就一点点变散，过了一半以后明显变散
   s *= 1 + 0.07 * fatigue + 0.9 * Math.max(0, fatigue - 0.55);
   s *= 1.1 - (0.22 * q) / 100;
   // 再差的投手也有四成好球：散布有上限
-  s = Math.min(s, 0.58);
+  s = Math.min(s, 0.5);
   if (type === 'FB') return { s, u: [0, 0], over: 1, under: 1, perp: 1, hang: 0, knuckle: false };
   const d = PITCH_DEFS[type];
   s *= 1 + d.ctrl * 2.5;
@@ -187,8 +187,8 @@ export interface Landing {
 }
 
 /** 偶尔控球大乱：这一球的散布放大（谁都有投歪的时候） */
-export const WILD_P = 0.16;
-export const WILD_K = 2.2;
+export const WILD_P = 0.13;
+export const WILD_K = 2.1;
 
 /** 按散布从目标点抽一个实际落点 */
 export function sampleLanding(tx: number, ty: number, sp0: Spread, r: Rng): Landing {
@@ -351,13 +351,13 @@ export const SWING_K = {
   fit: 0.68,
   /** 追打坏球：狙的那一格附近、刚出好球带的球 */
   chaseBand: 0.22,
-  chase0: 0.42,
+  chase0: 0.32,
   /** 打中的概率 */
-  con0: 0.6,
+  con0: 0.58,
   conFit: 0.42,
   conSkill: 0.16,
   /** 击球质量的基准 */
-  solid0: 0.64,
+  solid0: 0.63,
   solidFit: 0.2,
   conQ: 0.18,
   conOut: 0.1,
@@ -369,11 +369,11 @@ export const SWING_K = {
   blindFit: 0.48,
   /** 玩家一定挥、球在挥棒范围里（合 ≥ 0.85）：等到了想要的球，打得更扎实 */
   cSit: 0.1,
-  /** 玩家「一定挥」：出了挥棒范围以后，左右差一点还能靠球棒长短补，上下差一点就挥空（衰减距离；打击能力好的更宽）；范围里越靠中心越好 */
-  cFitH: 1.05,
-  cFitV: 0.78,
-  cFitCon: 0.2,
-  cCore: 0.08,
+  /** 玩家「一定挥」的挥棒热区：左右、上下的宽度 = 基本 + 击球能力 × 系数（左右差一点还能靠球棒长短补，上下差一点就挥空） */
+  covH0: 1.1,
+  covH1: 0.45,
+  covV0: 0.76,
+  covV1: 0.35,
   /** 一定挥：打中的概率、界外、击球质量随「合」变化 */
   cCon0: 0.15,
   cConFit: 0.83,
@@ -453,32 +453,45 @@ export function swingOutcome(o: SwingIn, r: Rng): SwingOut {
   return { res: 'inplay', swing: true, m, solid };
 }
 
-/** 挥棒范围（好球带 9×9 里任意一个 3×3）：中心格的列、行（1..7，左上为 0） → 中心的好球带坐标 */
+/** 挥棒范围（3×3）：中心格的列、行（好球带 9×9 的格，左上为 0；-1 和 9 是外面一圈坏球区） → 中心的好球带坐标 */
 export function rangeCenter(c: [number, number]): [number, number] {
   return [-1 + CELL * (c[0] + 0.5), 1 - CELL * (c[1] + 0.5)];
 }
 
-/** 挥棒范围的中心格要在 1..7 之间（3×3 整个在好球带里） */
+/** 挥棒范围的中心格：网格里哪一格都可以（-1..9，外面一圈坏球区也行——专等引诱球） */
 export function clampRange(i: number, j: number): [number, number] {
-  return [Math.max(1, Math.min(7, Math.round(i))), Math.max(1, Math.min(7, Math.round(j)))];
+  return [Math.max(-1, Math.min(9, Math.round(i))), Math.max(-1, Math.min(9, Math.round(j)))];
+}
+
+/** 挥棒热区的左右、上下宽度（好球带单位）：击球能力越好越宽 */
+export function coverWidth(con: number): [number, number] {
+  const K = SWING_K;
+  const c = clamp(con, 0, 100) / 100;
+  return [K.covH0 + K.covH1 * c, K.covV0 + K.covV1 * c];
 }
 
 /**
- * 一定挥的「合」（0..1）：来球在挥棒范围（3×3 格）里最好，越靠中心越扎实；出了范围，按左右、上下各偏出多少衰减——
- * 左右差一点还能靠球棒长短补，上下差一点就挥空。打击能力好的人挥棒中还能调整，衰减得慢。
+ * 一定挥的「合」（0..1）= 打者的挥棒热区在来球位置的浓度：以挥棒点为中心向四周渐淡（和投手的散布一样是一块热区），
+ * 宽窄看击球能力；左右宽、上下窄——左右差一点还能靠球棒长短补，上下差一点就挥空。
  */
 export function commitFit(dx: number, dy: number, con: number): number {
-  const K = SWING_K;
-  const k = 1 + (K.cFitCon * (clamp(con, 0, 100) - 50)) / 50;
-  const half = 1.5 * CELL;
-  const ox = Math.max(0, Math.abs(dx) - half);
-  const oy = Math.max(0, Math.abs(dy) - half);
-  const core = 1 - K.cCore * Math.min(1, (dx * dx + dy * dy) / (2 * half * half));
-  return core * Math.exp(-((ox / (K.cFitH * k)) ** 2) - (oy / (K.cFitV * k)) ** 2);
+  const [sh, sv] = coverWidth(con);
+  return Math.exp(-((dx / sh) ** 2) - (dy / sv) ** 2);
+}
+
+/** 挥棒热区画在网格上（121 格，每格的「合」） */
+export function coverMap(cx: number, cy: number, con: number): number[] {
+  const out: number[] = [];
+  for (let j = 0; j < GRID; j++)
+    for (let i = 0; i < GRID; i++) {
+      const [x, y] = cellCenter(i, j);
+      out.push(commitFit(x - cx, y - cy, con));
+    }
+  return out;
 }
 
 /**
- * 玩家按了「挥棒」：一定出棒（坏球也挥），朝着自己定的挥棒范围挥。来球离范围越远，越容易挥空，碰到了也多是界外、软弱的球；
+ * 玩家按了「挥棒」：一定出棒（坏球也挥），挥棒热区对着自己定的挥棒点。来球落在热区越浓的地方越容易打中、打得越扎实，离得远就挥空或界外、软弱；
  * 上下差得比左右更要命。打到球的下半部（球比范围中心高）容易飞高，上半部容易打成滚地。
  */
 function committedSwing(o: SwingIn, r: Rng, strike: boolean, qz: number): SwingOut {
