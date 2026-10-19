@@ -14,7 +14,7 @@ import { schoolById } from './world';
 export type Phase = 'bat' | 'pitch' | 'over';
 
 /** 比赛引擎的版本：改了比赛规则、随机数用法就加一（旧的记录没法原样重演，那场比赛从头开始） */
-export const LIVE_ENGINE = 2;
+export const LIVE_ENGINE = 3;
 
 const ALIGN = { close: 'close', normal: 'normal', deep: 'noDoubles' } as const;
 
@@ -132,6 +132,8 @@ export class LiveGame {
         if (a.t !== 'FB' && !p.pitches.some((x) => x.type === a.t)) return null;
         if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || Math.abs(a.x) > HALF + 0.5 || Math.abs(a.y) > HALF + 0.5) return null;
         t.callNext = { type: a.t, x: a.x, y: a.y };
+        // 教练投球：AI 打者读得到教练的打算。按同样的随机数重算，读档重演也一模一样
+        if (a.coach) m.coachRead(coachThrow(m, t, m.pitcherNow(), this.coachRng(1)).mind);
         return [];
       }
       case 'swing': {
@@ -243,7 +245,7 @@ export class LiveGame {
     const ph = this.phase();
     if (ph === 'pitch') {
       const c = coachThrow(m, this.myTeam, m.pitcherNow(), this.coachRng(1));
-      return { k: 'throw', t: c.type, x: c.x, y: c.y };
+      return { k: 'throw', t: c.type, x: c.x, y: c.y, coach: true };
     }
     if (ph === 'bat') {
       const r = this.coachRng(2);

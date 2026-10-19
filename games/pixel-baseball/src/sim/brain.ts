@@ -134,6 +134,9 @@ export function pitcherMind(m: Match, t: TeamState, now: PitcherNow, r: Rng): Mi
   return { opts: picked.map((c, i) => ({ type: c.o.type, x: c.x, y: c.y, w: ws[i] / tot })) };
 }
 
+/** 打者眼里的热区图有多不准：落点偏多少（err0 + err1 ×（1 - 准确度））、糊多少、多看出假热点的机会 */
+export const VIEW_K = { err0: 0.03, err1: 0.16, blur: 0.22, decoyAcc: 0.5, decoyP: 0.6, decoyW: 0.25 };
+
 /** 打者读投手的准确度 0..1：看选球眼（「选球眼差」的人再打折） */
 export function eyeAccuracy(b: Player): number {
   const eye = b.a.eye - (has(b, 'eyeX') ? 10 : 0);
@@ -152,15 +155,16 @@ export function batterView(m: Match, seed: number, step: number): number[] | nul
   const b = m.batter();
   const acc = clamp(eyeAccuracy(b) + 0.06 * Math.min(3, m.timesFaced(b.id, m.pitcher().id)), 0, 1);
   const r = makeRng(hash32(seed, step, 7));
-  const err = 0.03 + 0.25 * (1 - acc);
+  const K = VIEW_K;
+  const err = K.err0 + K.err1 * (1 - acc);
   const n = mind.opts.length;
   const aims = mind.opts.map((o, i) => ({
     x: o.x + r.gauss(0, err),
     y: o.y + r.gauss(0, err),
     w: o.w * (0.4 + 0.6 * acc) + ((1 - acc) * 0.6) / n,
-    sp: { ...sp[i], s: sp[i].s * (1 + 0.35 * (1 - acc)) },
+    sp: { ...sp[i], s: sp[i].s * (1 + K.blur * (1 - acc)) },
   }));
-  if (acc < 0.5 && r.rand() < 0.7 - acc) aims.push({ x: r.gauss(0, 0.55), y: r.gauss(0, 0.55), w: 0.25 * (1 - acc), sp: { ...sp[0], s: sp[0].s * 1.15 } });
+  if (acc < K.decoyAcc && r.rand() < K.decoyP - acc) aims.push({ x: r.gauss(0, 0.55), y: r.gauss(0, 0.55), w: K.decoyW * (1 - acc), sp: { ...sp[0], s: sp[0].s * 1.15 } });
   return density(aims, hash32(seed, step, 5));
 }
 
@@ -228,7 +232,7 @@ export function batterHunt(m: Match, t: TeamState, mind: Mind | null, spreads: S
     }
   }
   // 看不透投手（对手是玩家、教练，只能猜）：参考这场比赛学到的这个投手的落点，越有把握越照着猜
-  const lz = mind && mind === m.mind ? null : m.learnedZones(p.id, b);
+  const lz = mind && (mind === m.mind || mind === m.coachMind) ? null : m.learnedZones(p.id, b);
   if (lz) {
     const tot = arrive.reduce((a, c) => a + c, 0) || 1;
     for (let zn = 0; zn < 9; zn++) arrive[zn] = (1 - lz.L) * (arrive[zn] / tot) + lz.L * lz.z[zn];
@@ -274,10 +278,10 @@ export function coachRun(m: Match, t: TeamState, r: Rng): [boolean, boolean, boo
 }
 
 /** 教练替玩家决定这一球投什么、瞄哪里（用投手打算里权重最高的那个，偶尔用备选） */
-export function coachThrow(m: Match, t: TeamState, now: PitcherNow, r: Rng): { type: PitchType | 'FB'; x: number; y: number } {
+export function coachThrow(m: Match, t: TeamState, now: PitcherNow, r: Rng): { type: PitchType | 'FB'; x: number; y: number; mind: Mind } {
   const mind = pitcherMind(m, t, now, r);
   const o = pickOpt(mind, r);
-  return { type: o.type, x: o.x, y: o.y };
+  return { type: o.type, x: o.x, y: o.y, mind };
 }
 
 /** 教练替玩家决定这一球狙哪一格 */

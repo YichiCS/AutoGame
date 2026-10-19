@@ -229,9 +229,12 @@ export class Match {
   /** AI 守方这一球的打算（玩家打击时看到的热区图）与每个打算的散布 */
   mind: Mind | null = null;
   mindSp: Spread[] | null = null;
-  /** 玩家（或教练）投球时，AI 打者看不到真正的打算：按一般投手在这个局面会怎么配球去猜 */
+  /** 玩家亲手投球时，AI 打者看不到真正的打算：按一般投手在这个局面会怎么配球去猜 */
   readMind: Mind | null = null;
   readSp: Spread[] | null = null;
+  /** 教练替玩家投这一球：AI 打者读得到教练的打算（和 AI 对 AI 一样，交给教练还是五五开） */
+  coachMind: Mind | null = null;
+  coachSp: Spread[] | null = null;
   /** AI 攻方这一球各垒跑者的离垒（玩家投球时看到的离垒警告）和真正要跑的跑者 */
   leads: ('big' | 'normal' | null)[] = [null, null, null];
   goAI: boolean[] = [false, false, false];
@@ -317,6 +320,13 @@ export class Match {
     }
     if (!this.over && !this.needPA && !this.needHalf) this.prepPitch();
     return this.flush();
+  }
+
+  /** 教练替玩家投的这一球的打算（AI 打者读得到） */
+  coachRead(mind: Mind): void {
+    const dfn = this.dfn;
+    this.coachMind = mind;
+    this.coachSp = mindSpreads(mind, dfn.get(dfn.pitcher), this.pitcherNow(), dfn.fatigueRatio(dfn.pitcher));
   }
 
   /** 申告敬远（玩家）：不投球，直接保送打者 */
@@ -1208,7 +1218,12 @@ export class Match {
     }
 
     // 打者狙哪一格：投出之前就定好（看不到这一球的实际落点）
-    const hunt = human ? human.z : batterHunt(this, off, this.mind ?? this.readMind, this.mindSp ?? this.readSp, RNG);
+    // AI 打者：AI 投手、教练投球时读得到打算；玩家亲手投球时只能猜
+    const readable = this.mind ?? this.coachMind;
+    const readSp = this.mind ? this.mindSp : this.coachSp;
+    const hunt = human ? human.z : batterHunt(this, off, readable ?? this.readMind, readable ? readSp : this.readSp, RNG);
+    this.coachMind = null;
+    this.coachSp = null;
 
     // 球种质量与落点
     const f = dfn.fatigueRatio(p.id);
@@ -1277,7 +1292,7 @@ export class Match {
         hunt,
         force: hitRun,
         commit: !!human?.commit,
-        blind: !human && !this.mind && !!this.readMind,
+        blind: !human && !readable && !!this.readMind,
         balls: this.balls,
         at: human?.commit && human.c ? rangeCenter(human.c) : undefined,
         x: info.x,
