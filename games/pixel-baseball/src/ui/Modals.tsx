@@ -14,7 +14,7 @@ import { TRAITS } from '../data/traits';
 import { Btn, Cond, Fatigue, Lv, Morale, Ovr, Paras, Portrait } from './components/common';
 import { openPlayer, refresh, toast, ui } from './store';
 import { settings, saveSettings } from './settings';
-import { setSoundEnabled, sfx } from './sound';
+import { setSoundEnabled } from './sound';
 import { applyZoom } from './zoom';
 
 // ---------- 选项的潜在结果 ----------
@@ -107,7 +107,6 @@ export function EventModal() {
             class="choice"
             disabled={c.disabled}
             onClick={() => {
-              sfx('click');
               resolve(item, i);
               ui.queueMin = false;
               refresh();

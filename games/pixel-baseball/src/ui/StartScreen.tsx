@@ -60,7 +60,6 @@ export function StartScreen() {
   };
   const cont = () => {
     if (loadGame()) {
-      sfx('click');
       resumeGame();
     } else toast('读档失败', 'bad');
   };

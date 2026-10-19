@@ -99,14 +99,14 @@ export function generatePlayer(o: GenOpts): Player {
     (x) => x[1],
   )[0];
 
-  // 变化球：数量看素质，球种看投球姿势和亲缘
+  // 变化球：数量看素质（一般的高中投手会两种，好的三四种），球种看投球姿势和亲缘；第三种以后等级低一些（偶尔拿来变化）
   const pitches: PitchSkill[] = [];
   if (pitcher) {
-    const n = q < 28 ? 1 : q < 45 ? randInt(1, 2) : q < 60 ? randInt(2, 3) : randInt(3, 4);
+    const n = q < 28 ? 1 : q < 45 ? 2 : q < 60 ? randInt(2, 3) : randInt(3, 4);
     for (let i = 0; i < n; i++) {
       const t = pickNewPitch(pitches.map((x) => x.type), delivery, q >= 55 ? 3 : 2);
       if (!t) break;
-      pitches.push({ type: t, lv: clamp(Math.round((q - 18) / 16 + g(0.7)), 1, 4) });
+      pitches.push({ type: t, lv: clamp(Math.round((q - 18) / 16 + g(0.7)) - (i >= 2 ? 1 : 0), 1, 4) });
     }
   } else if (chance(clamp((pq - 30) / 60, 0, 0.6))) {
     // 野手型也有人会投一种变化球

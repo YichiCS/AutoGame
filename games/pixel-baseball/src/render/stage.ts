@@ -43,11 +43,24 @@ export interface Hud {
   hot: number[] | null;
   /** 投球：瞄准点（好球带坐标） */
   aim: { x: number; y: number } | null;
-  /** 打击：狙哪一格（-1 不挥棒，null 还没选） */
-  hunt: number | null;
+  /** 打击：挥棒范围（好球带 9×9 里的 3×3）的中心（好球带坐标）；null 还没选 */
+  hunt: { x: number; y: number } | null;
+  /** 打击：这一球不挥棒 */
+  take: boolean;
   /** 网格能不能点 */
   active: boolean;
 }
+
+/** 演出到了某个时刻（出手、挥棒、碰到球、进手套、触身），让外面配上声音 */
+export type StageCue =
+  | { k: 'release'; kmh: number; dur: number; toward: boolean }
+  | { k: 'swing' }
+  | { k: 'contact'; q: 'hard' | 'solid' | 'weak' | 'foul' | 'bunt' }
+  | { k: 'mitt'; kmh: number }
+  | { k: 'hbp' };
+
+/** 打击时热区图的颜色：洋红，和草地、红土、看台都分得开 */
+export const HEAT_BAT = '#f45bd0';
 
 interface Track {
   t: number;
@@ -62,9 +75,45 @@ interface Marker {
   y: number;
   n: number;
   col: string;
+  shape: PitchShape;
 }
 
-const EMPTY_HUD: Hud = { heat: null, heatCol: PAL.orange, hot: null, aim: null, hunt: null, active: false };
+/** 落点标记的形状（按球种）：● 直球系、▲ 横向的滑球系、▼ 下坠的曲球 / 指叉、■ 变速球、◆ 下沉 / 螺旋、★ 蝴蝶球 / 陀螺球 */
+export type PitchShape = 'o' | 'up' | 'down' | 'sq' | 'dia' | 'star';
+export const SHAPE_GLYPH: Record<PitchShape, string> = { o: '●', up: '▲', down: '▼', sq: '■', dia: '◆', star: '★' };
+
+export function pitchShape(t: PitchType | 'FB'): PitchShape {
+  if (t === 'FB') return 'o';
+  switch (PITCH_DEFS[t].family) {
+    case 'fast':
+      return 'o';
+    case 'slide':
+      return 'up';
+    case 'drop':
+      return 'down';
+    case 'off':
+      return 'sq';
+    case 'reverse':
+      return 'dia';
+    default:
+      return 'star';
+  }
+}
+
+/** 落点标记的颜色和测速栏的字：按实际的判定（不是按落在好球带的哪里——好坏球边缘要看主审） */
+const RES_MARK: Record<string, [string, string]> = {
+  called: [PAL.yellow, '好球'],
+  ball: [PAL.lime, '坏球'],
+  pitchout: [PAL.lime, '坏球'],
+  swinging: [PAL.orange, '挥空'],
+  bunt_miss: [PAL.orange, '触击落空'],
+  foul: [PAL.silver, '界外'],
+  bunt_foul: [PAL.silver, '触击界外'],
+  hbp: [PAL.red, '触身球'],
+  inplay: [PAL.sky, '击中'],
+};
+
+const EMPTY_HUD: Hud = { heat: null, heatCol: HEAT_BAT, hot: null, aim: null, hunt: null, take: false, active: false };
 
 // 球场的颜色（略微压暗、偏冷，让人物和网格更显眼）
 const DIRT = '#a8774c';
@@ -101,6 +150,44 @@ function breakOf(t: PitchType | 'FB', lv: number, rnd: () => number): { dx: numb
   }
 }
 
+/** 画一个落点标记的形状（中心 x, y，半径 r） */
+function markShape(c: Ctx, x: number, y: number, s: PitchShape, r: number, col: string): void {
+  switch (s) {
+    case 'o':
+      disc(c, x, y, r - 0.5, col);
+      break;
+    case 'up':
+      poly(c, [[x, y - r * 1.15], [x + r * 1.1, y + r * 0.8], [x - r * 1.1, y + r * 0.8]], col);
+      break;
+    case 'down':
+      poly(c, [[x - r * 1.1, y - r * 0.8], [x + r * 1.1, y - r * 0.8], [x, y + r * 1.15]], col);
+      break;
+    case 'sq':
+      rect(c, x - r * 0.85, y - r * 0.85, r * 1.7, r * 1.7, col);
+      break;
+    case 'dia':
+      poly(c, [[x, y - r * 1.15], [x + r * 1.15, y], [x, y + r * 1.15], [x - r * 1.15, y]], col);
+      break;
+    default: {
+      const pts: [number, number][] = [];
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const rr = i % 2 ? r * 0.55 : r * 1.2;
+        pts.push([x + Math.cos(a) * rr, y + Math.sin(a) * rr]);
+      }
+      poly(c, pts, col);
+    }
+  }
+}
+
+/** 打中时的声音分量：本垒打、打得又远又平的是「强」，平飞球或打到外野深处是「实」，其余是软弱的「弱」 */
+function contactQ(bip: BipInfo | null): 'hard' | 'solid' | 'weak' {
+  if (!bip) return 'solid';
+  if (bip.res === 'HR' || ((bip.kind === 'LD' || bip.kind === 'FB') && bip.dist >= 85)) return 'hard';
+  if (bip.kind === 'LD' || bip.dist >= 55 || bip.res === '2B' || bip.res === '3B') return 'solid';
+  return 'weak';
+}
+
 /** 颜色往灰蓝里压（观众、应援团用：不要太花） */
 function mute(hex: string, k: number): string {
   const a = parseInt(hex.slice(1), 16);
@@ -129,7 +216,7 @@ export class MatchStage {
   private trail: { x: number; y: number; r: number }[] = [];
   private markers: Marker[] = [];
   private flash: { text: string; sub: string; col: string; t: number } | null = null;
-  private radar: { kmh: number; name: string; q: number | null; t: number } | null = null;
+  private radar: { kmh: number; name: string; q: number | null; res: string; col: string; shape: PitchShape; t: number } | null = null;
   private pop: { x: number; y: number; t: number } | null = null;
   /** 演出中这一球的瞄准点（看投手投得准不准） */
   private aimShow: { x: number; y: number } | null = null;
@@ -141,6 +228,8 @@ export class MatchStage {
   /** 上次画的时间；有变化要马上重画 */
   private drawnAt = -1;
   private dirty = true;
+  /** 演出到了出手、挥棒、碰到球、进手套的那一刻（跳过时不通知） */
+  onCue: ((c: StageCue) => void) | null = null;
 
   constructor(cv: HTMLCanvasElement, o: { koshien: boolean; home: TeamColors; away: TeamColors }) {
     this.cv = cv;
@@ -260,7 +349,7 @@ export class MatchStage {
 
   private pitcherFeet(): [number, number, number] {
     const s = this.scene!;
-    if (s.mode === 'bat') return [180, 138, 112];
+    if (s.mode === 'bat') return [180, 152, 112];
     // 机位偏向一边，投手不挡住打者：打者站右边（右打）投手就在左边，反之亦然
     return [s.batter.side === 'R' ? 58 : 302, 480, 330];
   }
@@ -360,6 +449,10 @@ export class MatchStage {
     return this.run(sec, () => {});
   }
 
+  private cue(c: StageCue): void {
+    if (!this.skipping) this.onCue?.(c);
+  }
+
   /** 大字提示（安打！三振！） */
   banner(text: string, col: string = PAL.yellow, sub = '', secs = 1.1): Promise<void> {
     this.flash = { text, sub, col, t: secs };
@@ -420,7 +513,15 @@ export class MatchStage {
     const swings = swing === 'miss' || swing === 'foul' || swing === 'hit';
     const followKeys: [number, F.Pose][] = batView ? [[0, pf(F.PF_RELEASE)], [1, pf(F.PF_FOLLOW)]] : [[0, pf(F.PB_RELEASE)], [1, pf(F.PB_FOLLOW)]];
     const m0: [number, number] = [...this.mitt];
+    // 出手的那一刻：出手声（打击视角里球朝镜头飞来，带一点风声，到本垒时最响）
+    this.cue({ k: 'release', kmh: info.kmh, dur: flight / Math.max(0.1, this.speed), toward: batView });
+    let swung = false;
     await this.run(flight, (u) => {
+      // 挥棒开始（跨步之后）：挥棒的风声
+      if (swings && !swung && u >= 0.72) {
+        swung = true;
+        this.cue({ k: 'swing' });
+      }
       this.pPose = F.track(followKeys, Math.min(1, u * 1.6));
       const k = batView ? u * u * 0.35 + u * 0.65 : 1 - (1 - u) * (1 - u) * 0.35 - (1 - u) * 0.65 * (1 - u);
       const [ox, oy] = brk(u);
@@ -439,9 +540,10 @@ export class MatchStage {
         else this.bPose = F.mix(bk(strideP), bk(contactP), ease(sw));
       } else this.bPose = F.mix(bk(load), bk(strideP), ease(Math.min(1, u / 0.72)));
     });
-    // 3. 结果
+    // 3. 结果（球到本垒的这一刻：碰到球棒 / 打到身上 / 进手套）
     const hitPt = { x: tx, y: ty };
     if (swing === 'hit' || swing === 'foul' || swing === 'bunt' || swing === 'buntFoul') {
+      this.cue({ k: 'contact', q: swing === 'bunt' || swing === 'buntFoul' ? 'bunt' : swing === 'foul' ? 'foul' : contactQ(bip) });
       this.pop = { x: hitPt.x, y: hitPt.y, t: 1 };
       this.trail = [];
       const isBunt = swing === 'bunt' || swing === 'buntFoul';
@@ -463,6 +565,7 @@ export class MatchStage {
         },
       );
     } else if (swing === 'hbp') {
+      this.cue({ k: 'hbp' });
       const [fx, fy, h] = this.batterFeet();
       this.ball = { x: fx + (s.batter.side === 'R' ? 1 : -1) * (batView ? 30 : -10) * (batView ? 1 : g.mx), y: fy - h * 0.55, r: 3 };
       this.flinch = 1;
@@ -471,6 +574,7 @@ export class MatchStage {
       this.ball = null;
     } else {
       // 进了捕手手套
+      this.cue({ k: 'mitt', kmh: info.kmh });
       if (swing === 'miss') this.bPose = bk(contactP);
       this.pop = { x: tx, y: ty, t: 0.8 };
       await this.run(0.3, (k) => {
@@ -478,11 +582,11 @@ export class MatchStage {
       });
       this.ball = null;
     }
-    // 落点标记
-    const inz = Math.abs(info.x) <= 1 && Math.abs(info.y) <= 1;
-    const col = swing === 'take' ? (inz ? PAL.yellow : PAL.lime) : swing === 'miss' || swing === 'buntMiss' ? PAL.orange : swing === 'foul' || swing === 'buntFoul' ? PAL.silver : swing === 'hbp' ? PAL.red : PAL.sky;
-    this.markers.push({ x: info.x, y: info.y, n, col });
-    this.radar = { kmh: info.kmh, name: info.sig ? `「${info.sig}」` : info.type === 'FB' ? '直球' : PITCH_DEFS[info.type as PitchType].name, q: info.q ?? null, t: 4 };
+    // 落点标记：颜色是实际的判定，形状是球种
+    const [col, resText] = RES_MARK[info.res] ?? [PAL.white, ''];
+    const shape = pitchShape(info.type);
+    this.markers.push({ x: info.x, y: info.y, n, col, shape });
+    this.radar = { kmh: info.kmh, name: info.sig ? `「${info.sig}」` : info.type === 'FB' ? '直球' : PITCH_DEFS[info.type as PitchType].name, q: info.q ?? null, res: resText, col, shape, t: 4 };
     // 回到预备姿势，网格回来
     await this.run(0.35, (k) => {
       this.bPose = F.mix(this.bPose, idle, ease(k));
@@ -498,7 +602,7 @@ export class MatchStage {
     const side = from.x < 180 ? -1 : 1;
     if (swing === 'bunt' || swing === 'buntFoul') {
       const dx = swing === 'buntFoul' ? side * 110 : (bip ? bip.angle : 0) * 2.6;
-      return batView ? { x: from.x + dx, y: 214, arc: 4, r0: 3, r1: 2.4 } : { x: from.x - dx * 0.6, y: 236, arc: 3, r0: 1.8, r1: 2.4 };
+      return batView ? { x: from.x + dx, y: 250, arc: 4, r0: 3, r1: 2.4 } : { x: from.x - dx * 0.6, y: 236, arc: 3, r0: 1.8, r1: 2.4 };
     }
     if (swing === 'foul') {
       return batView ? { x: from.x + side * 170, y: -20, arc: 0, r0: 4, r1: 5 } : { x: from.x + side * 90, y: 40, arc: 30, r0: 1.8, r1: 1 };
@@ -506,11 +610,11 @@ export class MatchStage {
     const ang = bip ? bip.angle : 0;
     const kind = bip?.kind ?? 'LD';
     if (batView) {
-      // 打向外野：越远越小；滚地球贴着地面往内野滚
-      if (kind === 'GB') return { x: 180 + ang * 3.2, y: 112, arc: 3, r0: 4, r1: 1.6 };
-      if (kind === 'PU') return { x: 180 + ang * 1.2, y: 30, arc: 70, r0: 4, r1: 1.4 };
-      if (kind === 'LD') return { x: 180 + ang * 3.8, y: 74, arc: 8, r0: 4, r1: 1.2 };
-      return { x: 180 + ang * 3.8, y: 48, arc: 60, r0: 4, r1: 0.9 };
+      // 打向外野：越远越小；滚地球贴着地面往内野滚（机位压低：内野、外野都挤在地平线附近）
+      if (kind === 'GB') return { x: 180 + ang * 3.2, y: 146, arc: 2, r0: 4, r1: 1.6 };
+      if (kind === 'PU') return { x: 180 + ang * 1.2, y: 22, arc: 70, r0: 4, r1: 1.4 };
+      if (kind === 'LD') return { x: 180 + ang * 3.8, y: 98, arc: 6, r0: 4, r1: 1.2 };
+      return { x: 180 + ang * 3.8, y: 56, arc: 54, r0: 4, r1: 0.9 };
     }
     // 投手视角：球朝镜头这边飞来
     if (kind === 'GB') return { x: 180 - ang * 3.5, y: 300, arc: 4, r0: 1.8, r1: 4 };
@@ -533,26 +637,26 @@ export class MatchStage {
 
   private drawBat(s: StageScene): void {
     const c = this.c;
-    // 远处的野手（长焦：比较大）
+    // 远处的野手（长焦、机位低：都挤在地平线附近，比较大）
     const fl = s.fielder;
-    const inf = s.align === 'infieldIn' ? 6 : s.align === 'buntShift' ? 9 : 0;
+    const inf = s.align === 'infieldIn' ? 6 : s.align === 'buntShift' || s.align === 'close' ? 9 : 0;
     const deep = s.align === 'noDoubles' ? -4 : 0;
-    const dp = s.align === 'dp' ? 6 : 0;
+    const dp = s.align === 'dp' || s.align === 'close' ? 6 : 0;
     const fp: [number, number, number][] = [
-      [40, 74 + deep, 16],
-      [180, 70 + deep, 16],
-      [320, 74 + deep, 16],
-      [118 + dp, 110 + inf * 0.4, 26],
-      [242 - dp, 110 + inf * 0.4, 26],
-      [34 + inf, 130 + inf * 0.4, 30],
-      [326 - inf, 130 + inf * 0.4, 30],
+      [40, 106 + deep * 0.5, 13],
+      [180, 104 + deep * 0.5, 13],
+      [320, 106 + deep * 0.5, 13],
+      [118 + dp, 128 + inf * 0.3, 22],
+      [242 - dp, 128 + inf * 0.3, 22],
+      [34 + inf, 145 + inf * 0.3, 26],
+      [326 - inf, 145 + inf * 0.3, 26],
     ];
     for (const [x, y, h] of fp) F.drawFigure(c, x, y, h, F.FIELDER, fl, 'front');
     // 跑者
     const bp: [number, number, number][] = [
-      [340, 134, 30],
-      [198, 104, 24],
-      [20, 134, 30],
+      [344, 148, 26],
+      [198, 127, 20],
+      [16, 148, 26],
     ];
     s.bases.forEach((on, i) => {
       if (!on) return;
@@ -563,12 +667,7 @@ export class MatchStage {
     // 投手
     const [px, py, ph] = this.pitcherFeet();
     F.drawFigure(c, px, py, ph, this.pPose, s.pitcher.look, 'front');
-    // 捕手（背面，画面下方）：手套跟着目标 / 落点
-    const catL: F.Look = { ...s.fielder, gear: 'catcher', glove: 'b' };
-    const k = this.grid().cs / CELL / 1.9;
-    const cp = { ...F.CATCHER, ha: [F.CATCHER.ha[0], [F.CATCHER.ha[1][0] + this.mitt[0] * k, F.CATCHER.ha[1][1] - this.mitt[1] * k]] as [[number, number], [number, number]] };
-    F.drawFigure(c, 180, 420, 170, cp, catL, 'back');
-    // 打者（最近，背面）
+    // 打者（最近，背面；捕手在镜头后面，不画）
     const [bx, by, bh] = this.batterFeet();
     const fl2 = this.flinch * (s.batter.side === 'R' ? -8 : 8);
     F.drawFigure(c, bx + fl2, by, bh, this.bPose, s.batter.look, 'back');
@@ -613,11 +712,12 @@ export class MatchStage {
       const si = g.mx === 1 ? i : n - 1 - i;
       return [x0 + si * g.cs, y0 + j * g.cs];
     };
-    // 底：淡淡一层，热区看得清
-    c.globalAlpha = 0.16 * A;
+    // 底：压暗一层，热区看得清（打击时背后是草皮和红土，压得更暗）
+    const bat = this.scene?.mode === 'bat';
+    c.globalAlpha = (bat ? 0.42 : 0.16) * A;
     rect(c, x0, y0, g.cs * n, g.cs * n, PAL.ink);
-    // 九宫格打击率：热的偏红、冷的偏蓝
-    if (h.hot) {
+    // 九宫格打击率：投球时热的格子上淡红色（打击时只看数字的颜色，免得和洋红的热区混在一起）
+    if (h.hot && !bat) {
       for (let zn = 0; zn < 9; zn++) {
         const v = h.hot[zn];
         const col = zn % 3;
@@ -685,20 +785,20 @@ export class MatchStage {
       c.globalAlpha = 1;
       c.textAlign = 'left';
     }
-    // 狙的九宫格
-    if (h.hunt !== null && h.hunt >= 0) {
-      const col = h.hunt % 3;
-      const row = Math.floor(h.hunt / 3);
-      const [zx, zy] = cellXY(1 + col * 3, 1 + row * 3);
-      const left = g.mx === 1 ? zx : zx - 2 * g.cs;
-      c.globalAlpha = 0.25 * A;
-      rect(c, left, zy, g.cs * 3, g.cs * 3, PAL.yellow);
-      c.globalAlpha = A;
+    // 挥棒范围（好球带 9×9 里的 3×3），中心一点是挥棒点
+    if (h.hunt) {
+      const [hx, hy] = this.zoneXY(h.hunt.x, h.hunt.y);
       const w = g.cs * 3;
-      rect(c, left - 1, zy - 1, w + 2, 3, PAL.yellow);
-      rect(c, left - 1, zy + w - 2, w + 2, 3, PAL.yellow);
-      rect(c, left - 1, zy - 1, 3, w + 2, PAL.yellow);
-      rect(c, left + w - 2, zy - 1, 3, w + 2, PAL.yellow);
+      const left = Math.round(hx - w / 2);
+      const top = Math.round(hy - w / 2);
+      c.globalAlpha = 0.2 * A;
+      rect(c, left, top, w, w, PAL.yellow);
+      c.globalAlpha = A;
+      rect(c, left - 1, top - 1, w + 2, 3, PAL.yellow);
+      rect(c, left - 1, top + w - 2, w + 2, 3, PAL.yellow);
+      rect(c, left - 1, top - 1, 3, w + 2, PAL.yellow);
+      rect(c, left + w - 2, top - 1, 3, w + 2, PAL.yellow);
+      rect(c, hx - 1.5, hy - 1.5, 3, 3, PAL.yellow);
       c.globalAlpha = 1;
     }
     // 瞄准点（投球）
@@ -723,14 +823,14 @@ export class MatchStage {
     c.textBaseline = 'middle';
     for (const m of this.markers) {
       const [x, y] = this.zoneXY(m.x, m.y);
-      disc(c, x, y, 5.5, PAL.ink);
-      disc(c, x, y, 4.5, m.col);
+      markShape(c, x, y, m.shape, 6.5, PAL.ink);
+      markShape(c, x, y, m.shape, 5.2, m.col);
       c.fillStyle = PAL.ink;
-      c.fillText(String(m.n), x, y + 1);
+      c.fillText(String(m.n), x, y + (m.shape === 'up' ? 2 : m.shape === 'down' ? 0 : 1));
     }
     c.textAlign = 'left';
     // 「不挥棒」
-    if (h.hunt === -1) {
+    if (h.take) {
       c.font = '12px FusionPixel, monospace';
       c.textBaseline = 'top';
       const t = '不挥棒';
@@ -773,15 +873,22 @@ export class MatchStage {
     if (this.radar && this.radar.t > 0) {
       c.font = '12px FusionPixel, monospace';
       c.textBaseline = 'top';
-      const txt = `${this.radar.kmh}km/h ${this.radar.name}${this.radar.q !== null ? ` 质量 ${this.radar.q}` : ''}`;
-      const w = Math.ceil(c.measureText(txt).width) + 8;
+      // 测速：球速、球种、质量，后面是这一球的判定（颜色和落点标记一样）
+      const r = this.radar;
+      const txt = `${r.kmh}km/h ${r.name}${r.q !== null ? ` 质量 ${r.q}` : ''}`;
+      const res = r.res ? ` · ${r.res}` : '';
+      const w1 = Math.ceil(c.measureText(txt).width);
+      const w = 14 + w1 + Math.ceil(c.measureText(res).width) + 8;
       const x = SW - w - 4;
       const y = 4;
       c.globalAlpha = 0.82;
       rect(c, x, y, w, 15, PAL.ink);
       c.globalAlpha = 1;
+      markShape(c, x + 8, y + 7.5, r.shape, 4.5, r.col);
       c.fillStyle = PAL.yellow;
-      c.fillText(txt, x + 4, y + 2);
+      c.fillText(txt, x + 14, y + 2);
+      c.fillStyle = r.col;
+      c.fillText(res, x + 14 + w1, y + 2);
     }
     if (this.flash) {
       const f = this.flash;
@@ -828,41 +935,45 @@ function stands(c: Ctx, x0: number, y0: number, w: number, y1: number, seed: num
 function drawBatBg(koshien: boolean, home: TeamColors, away: TeamColors): HTMLCanvasElement {
   const cv = makeCanvas(SW, SH);
   const c = cv.getContext('2d')!;
-  // 天空（一点渐变）
-  for (let y = 0; y < 18; y++) rect(c, 0, y, SW, 1, y < 9 ? SKY_T : SKY_B);
-  stands(c, 0, 16, SW, 52, 11, home, away, koshien);
-  // 中外野的背景墙（打者看球用的深色板）
-  rect(c, 128, 22, 104, 30, '#1f3a32');
-  rect(c, 128, 22, 104, 1, '#2d5246');
+  // 机位压低（接近平视）：看台占上面四分之一，外野、内野挤在地平线附近，下面是本垒前的草皮
+  for (let y = 0; y < 10; y++) rect(c, 0, y, SW, 1, y < 5 ? SKY_T : SKY_B);
+  stands(c, 0, 8, SW, 92, 11, home, away, koshien);
+  // 看台中段的通道，让一大片看台不那么花
+  rect(c, 0, 48, SW, 2, '#1f2539');
+  // 中外野的背景墙（打者看球用的深色板）：在投手正后方
+  rect(c, 124, 30, 112, 62, '#1f3a32');
+  rect(c, 124, 30, 112, 1, '#2d5246');
   // 外野围墙
-  rect(c, 0, 52, SW, 10, WALL);
-  rect(c, 0, 52, SW, 1, PAL.yellow);
-  for (let x = 4; x < SW; x += 40) rect(c, x, 55, 18, 4, '#28503f');
-  // 外野草皮（长焦：条纹窄、变化小）
-  let y = 62;
+  rect(c, 0, 92, SW, 10, WALL);
+  rect(c, 0, 92, SW, 1, PAL.yellow);
+  for (let x = 4; x < SW; x += 40) rect(c, x, 95, 18, 4, '#28503f');
+  // 草皮：远处压得很扁，越往镜头越宽
+  let y = 102;
   let k = 0;
   while (y < SH) {
-    const hgt = 4 + k * 0.6;
+    const hgt = 2 + k * 0.9;
     rect(c, 0, y, SW, Math.ceil(hgt), k % 2 ? GRASS : GRASS_L);
     y += hgt;
     k++;
   }
-  // 内野泥土（长焦：扁）
-  ellipse(c, 180, 168, 236, 64, DIRT);
-  poly(c, [[180, 108], [316, 138], [180, 170], [44, 138]], GRASS);
-  poly(c, [[180, 112], [302, 138], [180, 166], [58, 138]], GRASS_D);
+  // 内野：一二三垒后面那一圈泥土（扁），里面一小块草皮
+  ellipse(c, 180, 141, 320, 32, DIRT);
+  poly(c, [[180, 130], [298, 143], [180, 156], [62, 143]], GRASS_D);
+  // 跑垒道：一垒、三垒往本垒（镜头这边）
+  line(c, 326, 144, 214, 360, 3, DIRT);
+  line(c, 34, 144, 146, 360, 3, DIRT);
   // 投手丘
-  ellipse(c, 180, 138, 32, 8, DIRT);
-  ellipse(c, 180, 137, 24, 6, DIRT_L);
-  rect(c, 171, 136, 18, 1, PAL.white);
+  ellipse(c, 180, 152, 36, 8, DIRT);
+  ellipse(c, 180, 151, 26, 6, DIRT_L);
+  rect(c, 171, 150, 18, 1, PAL.white);
   // 垒包
-  for (const [x, yy] of [[326, 138], [180, 106], [34, 138]] as [number, number][]) poly(c, [[x, yy - 3], [x + 6, yy], [x, yy + 3], [x - 6, yy]], PAL.white);
-  // 本垒附近
-  ellipse(c, 180, 360, 160, 76, DIRT_D);
-  ellipse(c, 180, 360, 150, 68, DIRT);
-  // 边线
-  line(c, 180, 360, -70, 170, 1, PAL.white);
-  line(c, 180, 360, 430, 170, 1, PAL.white);
+  for (const [x, yy] of [[330, 143], [180, 125], [30, 143]] as [number, number][]) poly(c, [[x, yy - 2], [x + 6, yy], [x, yy + 2], [x - 6, yy]], PAL.white);
+  // 本垒周围的泥土（离镜头近，画面最下面）
+  ellipse(c, 180, 384, 250, 74, DIRT_D);
+  ellipse(c, 180, 384, 238, 66, DIRT);
+  // 边线：从本垒经过一垒、三垒伸向外野
+  line(c, 180, 430, 352, 102, 1, PAL.white);
+  line(c, 180, 430, 8, 102, 1, PAL.white);
   return cv;
 }
 
@@ -900,8 +1011,8 @@ function drawPitchBg(koshien: boolean, home: TeamColors, away: TeamColors): HTML
 /** 观众的小动作：少量像素慢慢地亮一下 */
 function crowdShimmer(c: Ctx, mode: ViewMode, time: number): void {
   const rnd = prng(Math.floor(time * 2.5) + (mode === 'bat' ? 1 : 2));
-  const y0 = mode === 'bat' ? 18 : 2;
-  const y1 = mode === 'bat' ? 50 : 110;
+  const y0 = mode === 'bat' ? 10 : 2;
+  const y1 = mode === 'bat' ? 90 : 110;
   for (let i = 0; i < 12; i++) {
     const x = Math.floor(rnd() * SW);
     const y = y0 + Math.floor(rnd() * ((y1 - y0) / 4)) * 4;

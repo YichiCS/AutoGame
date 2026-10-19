@@ -15,7 +15,8 @@ export type OffTactic =
   | 'doubleSteal'; // 双盗垒
 
 export type PitchApproach = 'normal' | 'max' | 'contact' | 'careful';
-export type Alignment = 'normal' | 'infieldIn' | 'dp' | 'noDoubles' | 'buntShift';
+/** 守备阵型；close = 趋近（一三垒手前压防触击、二游站双杀位置，玩家用），noDoubles = 防长打（外野后退） */
+export type Alignment = 'normal' | 'infieldIn' | 'dp' | 'noDoubles' | 'buntShift' | 'close';
 
 // ---------- 打席指令（一个打席有效） ----------
 /** 打法 */
@@ -90,6 +91,19 @@ export interface PitchUse {
   /** 两好球时用的球种 */
   two: Record<string, number>;
   twoN: number;
+  /** 各球种用了几球 */
+  tn: Record<string, number>;
+  /** 最近的配球（越近分量越重）：各球种、九宫格（落点最近的那一格）的分量，tw 是总分量 */
+  rt: Record<string, number>;
+  rz: number[];
+  tw: number;
+}
+
+/** 某个打者看过这个投手的配球（越近分量越重） */
+export interface SeenPitches {
+  rt: Record<string, number>;
+  rz: number[];
+  tw: number;
 }
 
 /** AI（或教练）对这个打席的打算，以及理由（给玩家的情报） */
