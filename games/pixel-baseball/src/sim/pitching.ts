@@ -364,8 +364,11 @@ export const SWING_K = {
   /** 界外球 */
   foul0: 0.36,
   foulFit: 0.24,
-  /** AI 打者看不透投手时，好球带里不是狙的位置的球出棒的基准 */
-  blind0: 0.5,
+  /** AI 打者看不透投手（玩家亲手投）时：好球带里不是狙的位置的球出棒的基准、这样出棒的「合」 */
+  blind0: 0.4,
+  blindFit: 0.48,
+  /** 玩家一定挥、球在挥棒范围里（合 ≥ 0.85）：等到了想要的球，打得更扎实 */
+  cSit: 0.1,
   /** 玩家「一定挥」：出了挥棒范围以后，左右差一点还能靠球棒长短补，上下差一点就挥空（衰减距离；打击能力好的更宽）；范围里越靠中心越好 */
   cFitH: 1.05,
   cFitV: 0.78,
@@ -374,7 +377,7 @@ export const SWING_K = {
   /** 一定挥：打中的概率、界外、击球质量随「合」变化 */
   cCon0: 0.15,
   cConFit: 0.83,
-  cFoul0: 0.18,
+  cFoul0: 0.16,
   cFoulFit: 0.42,
   cSolidFit: 0.4,
 };
@@ -420,7 +423,7 @@ export function swingOutcome(o: SwingIn, r: Rng): SwingOut {
       // 看不透投手：不是狙的位置，进了好球带也出棒（合得差一些）
       swing = true;
       const [nx, ny] = zoneCenter(nearZone(o.x, o.y));
-      m = 0.6 * fitOf(Math.hypot(o.x - nx, o.y - ny));
+      m = K.blindFit * fitOf(Math.hypot(o.x - nx, o.y - ny));
     } else if (o.strikes === 2 && strike && r.rand() < 0.5 + 0.25 * (1 - o.eye / 100)) {
       // 两好球：不是狙的球也得碰一碰
       swing = true;
@@ -490,7 +493,7 @@ function committedSwing(o: SwingIn, r: Rng, strike: boolean, qz: number): SwingO
   const pf = clamp(K.cFoul0 + K.cFoulFit * (1 - m) + (strike ? 0 : 0.06) - (o.hang ? 0.08 : 0), 0.12, 0.8);
   if (r.rand() < pf) return { res: 'foul', swing: true, m, solid: 0 };
   const ba = hotAt(o.hot, o.x, o.y);
-  const solid = clamp(K.solid0 + 1.9 * (ba - 0.29) + K.cSolidFit * (m - 0.75) - 0.13 * qz + (o.hang ? 0.12 : 0) + r.gauss(0, 0.17), 0.01, 0.99);
+  const solid = clamp(K.solid0 + 1.9 * (ba - 0.29) + K.cSolidFit * (m - 0.75) + (m >= 0.85 ? K.cSit : 0) - 0.13 * qz + (o.hang ? 0.12 : 0) + r.gauss(0, 0.17), 0.01, 0.99);
   return { res: 'inplay', swing: true, m, solid, lift: clamp(dy / 0.67, -1, 1) };
 }
 
