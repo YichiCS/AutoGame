@@ -1,12 +1,15 @@
-// 比赛画面：进攻时从打者（捕手）身后看，防守时从投手身后看。一球一球地演出投球、挥棒与球的变化
+// 比赛画面（长焦机位）：投球时从投手背后看，打击时从捕手背后看。
+// 长焦把投手、打者、捕手「压」在一起；画面中间是放大的瞄准网格（11×11：好球带 9×9 + 外圈坏球区），
+// 决定这一球时在网格上看热区、点目标；演出时球飞进网格里的落点。
 import type { PitchType, TeamColors } from '../core/types';
 import type { Alignment, BipInfo, PitchInfo } from '../sim/types';
 import { PITCH_DEFS } from '../data/pitches';
+import { CELL, GRID, HALF, cellCenter, zoneCenter } from '../sim/pitching';
 import { PAL, disc, ease, ellipse, line, makeCanvas, poly, prng, rect, shade, type Ctx } from './pix';
 import * as F from './figure';
 
 export const SW = 360;
-export const SH = 240;
+export const SH = 360;
 
 export type ViewMode = 'bat' | 'pitch';
 /** 这一球打者的反应 */
@@ -31,6 +34,21 @@ export interface StageScene {
   bunting: boolean;
 }
 
+/** 网格上画的东西（每一球之前由比赛界面设定） */
+export interface Hud {
+  /** 热区图：网格 121 格的概率（打击时是投手这一球的打算，投球时是瞄准点的散布预览） */
+  heat: number[] | null;
+  heatCol: string;
+  /** 九宫格打击率（9 个，捕手视角左上 → 右下） */
+  hot: number[] | null;
+  /** 投球：瞄准点（好球带坐标） */
+  aim: { x: number; y: number } | null;
+  /** 打击：狙哪一格（-1 不挥棒，null 还没选） */
+  hunt: number | null;
+  /** 网格能不能点 */
+  active: boolean;
+}
+
 interface Track {
   t: number;
   dur: number;
@@ -46,12 +64,18 @@ interface Marker {
   col: string;
 }
 
-const DIRT = '#b9804e';
-const DIRT_D = '#9c6a3f';
-const GRASS = '#3f9a4a';
-const GRASS_D = '#358a41';
-const GRASS_L = '#4aa955';
-const SKIN = '#e8b48a';
+const EMPTY_HUD: Hud = { heat: null, heatCol: PAL.orange, hot: null, aim: null, hunt: null, active: false };
+
+// 球场的颜色（略微压暗、偏冷，让人物和网格更显眼）
+const DIRT = '#a8774c';
+const DIRT_D = '#8e6340';
+const DIRT_L = '#b98757';
+const GRASS = '#3c8a47';
+const GRASS_D = '#337a3e';
+const GRASS_L = '#46985a';
+const WALL = '#1d3b33';
+const SKY_T = '#5b8fc9';
+const SKY_B = '#9cc3e6';
 
 /** 球种的变化（米）：dx 以右投手、从捕手看向右为正；dy 向下为正 */
 function breakOf(t: PitchType | 'FB', lv: number, rnd: () => number): { dx: number; dy: number; wobble: boolean } {
@@ -77,11 +101,20 @@ function breakOf(t: PitchType | 'FB', lv: number, rnd: () => number): { dx: numb
   }
 }
 
+/** 颜色往灰蓝里压（观众、应援团用：不要太花） */
+function mute(hex: string, k: number): string {
+  const a = parseInt(hex.slice(1), 16);
+  const b = parseInt('5a6378', 16);
+  const mix = (sh: number) => Math.round(((a >> sh) & 255) * (1 - k) + ((b >> sh) & 255) * k);
+  return `#${((1 << 24) | (mix(16) << 16) | (mix(8) << 8) | mix(0)).toString(16).slice(1)}`;
+}
+
 export class MatchStage {
   readonly cv: HTMLCanvasElement;
   private c: Ctx;
   private bg: Record<ViewMode, HTMLCanvasElement>;
   private scene: StageScene | null = null;
+  private hud: Hud = EMPTY_HUD;
   speed = 1;
   /** 立即完成所有动画（跳过） */
   private skipping = false;
@@ -96,17 +129,15 @@ export class MatchStage {
   private trail: { x: number; y: number; r: number }[] = [];
   private markers: Marker[] = [];
   private flash: { text: string; sub: string; col: string; t: number } | null = null;
-  private radar: { kmh: number; name: string; t: number } | null = null;
-  private mitt: { x: number; y: number } | null = null;
+  private radar: { kmh: number; name: string; q: number | null; t: number } | null = null;
   private pop: { x: number; y: number; t: number } | null = null;
+  /** 演出中这一球的瞄准点（看投手投得准不准） */
+  private aimShow: { x: number; y: number } | null = null;
   private flinch = 0;
-  private catcherMitt: [number, number] = [0, 0];
-  private sb: { away: string; home: string; score: [number, number]; balls: number; strikes: number; outs: number } | null = null;
-
-  /** 中外野记分牌上的比分与球数灯 */
-  setBoard(b: { away: string; home: string; score: [number, number]; balls: number; strikes: number; outs: number }): void {
-    this.sb = b;
-  }
+  /** 捕手的手套（好球带坐标） */
+  private mitt: [number, number] = [0, 0];
+  /** 网格的透明度（演出时淡出） */
+  private gridA = 1;
 
   constructor(cv: HTMLCanvasElement, o: { koshien: boolean; home: TeamColors; away: TeamColors }) {
     this.cv = cv;
@@ -117,19 +148,36 @@ export class MatchStage {
     this.draw();
   }
 
-  /** 新的打席：设定双方人物、跑者、守备阵型 */
+  /** 旧接口：比分改由页面上方显示 */
+  setBoard(_b: unknown): void {}
+
+  /** 新的打席：设定双方人物、跑者 */
   setScene(s: StageScene): void {
+    const sameBatter = this.scene && this.scene.mode === s.mode && this.scene.batter.look === s.batter.look;
     this.scene = s;
-    this.markers = [];
+    if (!sameBatter) this.markers = [];
     this.ball = null;
     this.trail = [];
     this.flash = null;
-    this.mitt = null;
     this.pop = null;
     this.flinch = 0;
+    this.aimShow = null;
+    this.gridA = 1;
     this.pPose = s.mode === 'bat' ? this.pf(F.PF_SET) : this.pb(F.PB_SET);
     this.bPose = this.batterIdle();
-    this.catcherMitt = [0, 0];
+    this.mitt = [0, 0];
+    this.kick();
+  }
+
+  /** 新打席开始：清掉上一个打席的落点 */
+  clearMarkers(): void {
+    this.markers = [];
+    this.kick();
+  }
+
+  setHud(h: Hud): void {
+    this.hud = h;
+    if (h.aim) this.mitt = [h.aim.x, h.aim.y];
     this.kick();
   }
 
@@ -155,42 +203,66 @@ export class MatchStage {
     return this.scene?.pitcher.side === 'L' ? F.mirror(p) : p;
   }
 
-  /** 打者姿势：打者视角里右打者站左边面向右；投手视角里右打者站右边面向左（姿势数据都按右打者画） */
+  /** 打者姿势（姿势数据都按右打者画，左打者镜像） */
   private bside(p: F.Pose): F.Pose {
     return this.scene?.batter.side === 'L' ? F.mirror(p) : p;
   }
 
   // ---------------- 几何 ----------------
-  private zoneRect(): { cx: number; cy: number; hw: number; hh: number } {
-    return this.scene?.mode === 'pitch' ? { cx: 180, cy: 113, hw: 6, hh: 8 } : { cx: 180, cy: 165, hw: 19, hh: 26 };
+  /** 网格的位置：中心、每格像素、左右是否镜像（投手视角里一垒侧在画面左边） */
+  private grid(): { cx: number; cy: number; cs: number; mx: 1 | -1 } {
+    return this.scene?.mode === 'pitch' ? { cx: 180, cy: 168, cs: 19, mx: -1 } : { cx: 180, cy: 170, cs: 20, mx: 1 };
   }
 
-  /** 好球带坐标 → 画面坐标（投手视角左右相反） */
-  private zoneXY(x: number, y: number): [number, number] {
-    const z = this.zoneRect();
-    const sx = this.scene?.mode === 'pitch' ? -x : x;
-    return [z.cx + sx * z.hw, z.cy - y * z.hh];
+  /** 好球带坐标 → 画面坐标 */
+  zoneXY(x: number, y: number): [number, number] {
+    const g = this.grid();
+    const k = g.cs / CELL;
+    return [g.cx + g.mx * x * k, g.cy - y * k];
   }
 
-  private batterFeet(): [number, number] {
+  /** 画面坐标 → 好球带坐标 */
+  private screenToZone(px: number, py: number): [number, number] {
+    const g = this.grid();
+    const k = g.cs / CELL;
+    return [((px - g.cx) / k) * g.mx, (g.cy - py) / k];
+  }
+
+  /** 点到网格的哪一格（返回那一格中心的好球带坐标）；网格外返回 null */
+  cellAtPoint(px: number, py: number): { x: number; y: number } | null {
+    const [x, y] = this.screenToZone(px, py);
+    if (Math.abs(x) > HALF || Math.abs(y) > HALF) return null;
+    const i = Math.min(GRID - 1, Math.floor((x + HALF) / CELL));
+    const j = Math.min(GRID - 1, Math.floor((HALF - y) / CELL));
+    const [cx, cy] = cellCenter(i, j);
+    return { x: cx, y: cy };
+  }
+
+  /** 点到九宫格的哪一格（好球带外圈也算到最近的那一格）；网格外返回 -1 */
+  zoneAtPoint(px: number, py: number): number {
+    const [x, y] = this.screenToZone(px, py);
+    if (Math.abs(x) > HALF || Math.abs(y) > HALF) return -1;
+    const cx = Math.max(-0.999, Math.min(0.999, x));
+    const cy = Math.max(-0.999, Math.min(0.999, y));
+    const col = cx < -1 / 3 ? 0 : cx > 1 / 3 ? 2 : 1;
+    const row = cy > 1 / 3 ? 0 : cy < -1 / 3 ? 2 : 1;
+    return row * 3 + col;
+  }
+
+  private batterFeet(): [number, number, number] {
     const s = this.scene!;
-    if (s.mode === 'bat') return [s.batter.side === 'R' ? 120 : 240, 237];
-    return [s.batter.side === 'R' ? 196 : 164, 132];
+    if (s.mode === 'bat') return [s.batter.side === 'R' ? 36 : 324, 430, 290];
+    return [s.batter.side === 'R' ? 314 : 46, 300, 158];
   }
 
-  private pitcherFeet(): [number, number] {
+  private pitcherFeet(): [number, number, number] {
     const s = this.scene!;
-    if (s.mode === 'bat') return [180, 131];
-    return [s.pitcher.side === 'R' ? 134 : 226, 266];
-  }
-
-  private pitcherH(): number {
-    return this.scene?.mode === 'bat' ? 34 : 124;
+    if (s.mode === 'bat') return [180, 138, 112];
+    return [s.pitcher.side === 'R' ? 58 : 302, 480, 330];
   }
 
   private releasePoint(): [number, number] {
-    const [fx, fy] = this.pitcherFeet();
-    const h = this.pitcherH();
+    const [fx, fy, h] = this.pitcherFeet();
     const s = h / 100;
     const pose = this.scene!.mode === 'bat' ? this.pf(F.PF_RELEASE) : this.pb(F.PB_RELEASE);
     // 投球的手：打者视角里右投手是 a（画面左），投手视角里是 b（画面右）
@@ -223,13 +295,13 @@ export class MatchStage {
     }
     if (this.flash) this.flash.t -= dt * (this.skipping ? 1000 : this.speed);
     if (this.flash && this.flash.t <= 0) this.flash = null;
+    if (this.radar) this.radar.t -= dt;
     if (this.pop) {
       this.pop.t -= dt * 3;
       if (this.pop.t <= 0) this.pop = null;
     }
     if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt * 3);
     this.draw();
-    // 观众的晃动需要一直画；没有动画时降低频率
     this.raf = requestAnimationFrame(this.frame);
   };
 
@@ -291,41 +363,31 @@ export class MatchStage {
     const rnd = prng(Math.round(info.x * 1000) * 31 + Math.round(info.y * 1000) + n * 7);
     const br = breakOf(info.type, lv, rnd);
     const lefty = s.pitcher.side === 'L';
-    const bx = (lefty ? -br.dx : br.dx) * (batView ? 1 : -1);
-    const by = br.dy;
+    const g = this.grid();
     const [tx, ty] = this.zoneXY(info.x, info.y);
     const [rx, ry] = this.releasePoint();
-    const z = this.zoneRect();
-    const pxm = z.hw / 0.216; // 每米多少像素（在本垒处）
-    const Z0 = batView ? 20.5 : 3;
-    const Z1 = batView ? 3 : 20.5;
-    const w = (u: number) => {
-      const Zu = Z0 + (Z1 - Z0) * u;
-      return (1 / Zu - 1 / Z0) / (1 / Z1 - 1 / Z0);
-    };
-    const scaleAt = (u: number) => Z1 / (Z0 + (Z1 - Z0) * u); // 相对本垒处的大小
+    // 长焦下变化看起来更夸张，收一点
+    const pxm = (g.cs / CELL / 0.216) * 0.55;
+    const bx = (lefty ? -br.dx : br.dx) * g.mx;
+    const by = br.dy;
     const brk = (u: number): [number, number] => {
       // 晚变：大部分变化发生在后半程
       const k = u * u * u;
-      const sc = scaleAt(u);
-      let ox = bx * pxm * k * sc;
-      const oy = by * pxm * k * sc;
-      if (br.wobble) ox += Math.sin(u * 14 + rnd() * 6) * 2.5 * u * sc;
+      let ox = bx * pxm * k;
+      const oy = by * pxm * k;
+      if (br.wobble) ox += Math.sin(u * 14 + rnd() * 6) * 3 * u;
       return [ox, oy];
     };
     const [fbx, fby] = brk(1);
     const sx = tx - fbx;
     const sy = ty - fby;
-    const ballR = (u: number) => {
-      const r = batView ? 0.6 + 2.6 * Math.pow(w(u), 1.6) : 4 - 3.1 * w(u);
-      return Math.max(0.6, r);
-    };
+    // 长焦：远近的大小差别小
+    const ballR = (u: number) => (batView ? 1.4 + 3.4 * u * u : 4.2 - 2.4 * u);
     const flight = Math.min(1.25, Math.max(0.5, (18.4 / (info.kmh / 3.6)) * 1.55));
-    this.mitt = { x: tx, y: ty };
-    this.catcherMitt = [info.x, info.y];
+    this.aimShow = info.tx !== undefined && info.ty !== undefined ? { x: info.tx, y: info.ty } : null;
     this.ball = null;
     this.trail = [];
-    // 1. 投球动作
+    // 1. 投球动作（网格淡出，看清投手）
     const pf = (p: F.Pose) => (batView ? this.pf(p) : this.pb(p));
     const keysP: [number, F.Pose][] = batView
       ? [[0, pf(F.PF_SET)], [0.4, pf(F.PF_LIFT)], [0.75, pf(F.PF_STRIDE)], [1, pf(F.PF_RELEASE)]]
@@ -336,21 +398,20 @@ export class MatchStage {
     const load = batView ? (bunt ? F.BAT_BUNT : F.BAT_LOAD) : bunt ? F.BF_BUNT : F.BF_STANCE;
     await this.run(0.95, (k) => {
       this.pPose = F.track(keysP, k);
-      // 打者在投手抬腿时引棒
+      this.gridA = 1 - 0.55 * ease(k);
       const kb = Math.max(0, (k - 0.45) / 0.55);
       this.bPose = F.mix(idle, bk(load), ease(kb));
     });
-    // 2. 球飞行，同时投手送球、打者跨步与挥棒
+    // 2. 球飞行，同时投手送球、打者跨步与挥棒；捕手的手套移到落点
     const strideP = batView ? (bunt ? F.BAT_BUNT : F.BAT_STRIDE) : bunt ? F.BF_BUNT : F.BF_STANCE;
     const contactP = batView ? F.BAT_CONTACT : F.BF_SWING;
     const followP = batView ? F.BAT_FOLLOW : F.BF_FOLLOW;
     const swings = swing === 'miss' || swing === 'foul' || swing === 'hit';
-    const followKeys: [number, F.Pose][] = batView
-      ? [[0, pf(F.PF_RELEASE)], [1, pf(F.PF_FOLLOW)]]
-      : [[0, pf(F.PB_RELEASE)], [1, pf(F.PB_FOLLOW)]];
+    const followKeys: [number, F.Pose][] = batView ? [[0, pf(F.PF_RELEASE)], [1, pf(F.PF_FOLLOW)]] : [[0, pf(F.PB_RELEASE)], [1, pf(F.PB_FOLLOW)]];
+    const m0: [number, number] = [...this.mitt];
     await this.run(flight, (u) => {
       this.pPose = F.track(followKeys, Math.min(1, u * 1.6));
-      const k = w(u);
+      const k = batView ? u * u * 0.35 + u * 0.65 : 1 - (1 - u) * (1 - u) * 0.35 - (1 - u) * 0.65 * (1 - u);
       const [ox, oy] = brk(u);
       const x = rx + (sx - rx) * k + ox;
       const y = ry + (sy - ry) * k + oy;
@@ -360,7 +421,7 @@ export class MatchStage {
         if (this.trail.length > 4) this.trail.shift();
       }
       this.ball = { x, y, r };
-      // 打者：跨步，挥棒在球到本垒前一点开始
+      this.mitt = [m0[0] + (info.x - m0[0]) * ease(u * 1.3), m0[1] + (info.y - m0[1]) * ease(u * 1.3)];
       if (swings) {
         const sw = (u - 0.72) / 0.28;
         if (sw < 0) this.bPose = F.mix(bk(load), bk(strideP), ease(u / 0.72));
@@ -391,8 +452,8 @@ export class MatchStage {
         },
       );
     } else if (swing === 'hbp') {
-      const [fx, fy] = this.batterFeet();
-      this.ball = { x: fx + (batView ? (s.batter.side === 'R' ? 8 : -8) : 0), y: fy - (batView ? 70 : 26), r: batView ? 3 : 1.5 };
+      const [fx, fy, h] = this.batterFeet();
+      this.ball = { x: fx + (s.batter.side === 'R' ? 1 : -1) * (batView ? 30 : -10) * (batView ? 1 : g.mx), y: fy - h * 0.55, r: 3 };
       this.flinch = 1;
       this.pop = { x: this.ball.x, y: this.ball.y, t: 1 };
       await this.wait(0.35);
@@ -407,41 +468,43 @@ export class MatchStage {
       this.ball = null;
     }
     // 落点标记
-    const col = swing === 'take' ? (Math.abs(info.x) <= 1 && Math.abs(info.y) <= 1 ? PAL.yellow : PAL.lime) : swing === 'miss' || swing === 'buntMiss' ? PAL.orange : swing === 'foul' || swing === 'buntFoul' ? PAL.silver : swing === 'hbp' ? PAL.red : PAL.sky;
+    const inz = Math.abs(info.x) <= 1 && Math.abs(info.y) <= 1;
+    const col = swing === 'take' ? (inz ? PAL.yellow : PAL.lime) : swing === 'miss' || swing === 'buntMiss' ? PAL.orange : swing === 'foul' || swing === 'buntFoul' ? PAL.silver : swing === 'hbp' ? PAL.red : PAL.sky;
     this.markers.push({ x: info.x, y: info.y, n, col });
-    this.radar = { kmh: info.kmh, name: info.sig ?? (info.type === 'FB' ? '直球' : PITCH_DEFS[info.type as PitchType].name), t: 3 };
-    // 回到预备姿势
+    this.radar = { kmh: info.kmh, name: info.sig ? `「${info.sig}」` : info.type === 'FB' ? '直球' : PITCH_DEFS[info.type as PitchType].name, q: info.q ?? null, t: 4 };
+    // 回到预备姿势，网格回来
     await this.run(0.35, (k) => {
       this.bPose = F.mix(this.bPose, idle, ease(k));
       this.pPose = F.mix(this.pPose, batView ? this.pf(F.PF_SET) : this.pb(F.PB_SET), ease(k));
+      this.gridA = 0.45 + 0.55 * ease(k);
     });
+    this.aimShow = null;
   }
 
   /** 击中后球飞向哪里（画面坐标） */
   private hitTarget(swing: Swing, bip: BipInfo | null, from: { x: number; y: number }): { x: number; y: number; arc: number; r0: number; r1: number } {
     const batView = this.scene!.mode === 'bat';
+    const side = from.x < 180 ? -1 : 1;
     if (swing === 'bunt' || swing === 'buntFoul') {
-      const side = swing === 'buntFoul' ? (from.x < 180 ? -1 : 1) * 90 : (bip ? bip.angle : 0) * 2.4;
-      return batView ? { x: from.x + side, y: 214, arc: 4, r0: 2.6, r1: 2 } : { x: from.x - side * 0.6, y: 168, arc: 2, r0: 1.2, r1: 2.4 };
+      const dx = swing === 'buntFoul' ? side * 110 : (bip ? bip.angle : 0) * 2.6;
+      return batView ? { x: from.x + dx, y: 214, arc: 4, r0: 3, r1: 2.4 } : { x: from.x - dx * 0.6, y: 236, arc: 3, r0: 1.8, r1: 2.4 };
     }
     if (swing === 'foul') {
-      return batView ? { x: from.x + (from.x < 180 ? -150 : 150), y: -20, arc: 0, r0: 3, r1: 5 } : { x: from.x + (from.x < 180 ? -60 : 60), y: -10, arc: 0, r0: 1.2, r1: 3 };
+      return batView ? { x: from.x + side * 170, y: -20, arc: 0, r0: 4, r1: 5 } : { x: from.x + side * 90, y: 40, arc: 30, r0: 1.8, r1: 1 };
     }
     const ang = bip ? bip.angle : 0;
     const kind = bip?.kind ?? 'LD';
     if (batView) {
       // 打向外野：越远越小；滚地球贴着地面往内野滚
-      const x = 180 + ang * 3.6;
-      if (kind === 'GB') return { x: 180 + ang * 3.2, y: 128, arc: 3, r0: 3, r1: 1.4 };
-      if (kind === 'PU') return { x: 180 + ang * 1.2, y: 60, arc: 60, r0: 3, r1: 1.6 };
-      if (kind === 'LD') return { x, y: 98, arc: 8, r0: 3, r1: 1 };
-      return { x, y: 70, arc: 50, r0: 3, r1: 0.8 };
+      if (kind === 'GB') return { x: 180 + ang * 3.2, y: 112, arc: 3, r0: 4, r1: 1.6 };
+      if (kind === 'PU') return { x: 180 + ang * 1.2, y: 30, arc: 70, r0: 4, r1: 1.4 };
+      if (kind === 'LD') return { x: 180 + ang * 3.8, y: 74, arc: 8, r0: 4, r1: 1.2 };
+      return { x: 180 + ang * 3.8, y: 48, arc: 60, r0: 4, r1: 0.9 };
     }
     // 投手视角：球朝镜头这边飞来
-    const x = 180 - ang * 4;
-    if (kind === 'GB') return { x: 180 - ang * 3.5, y: 236, arc: 4, r0: 1.2, r1: 3.5 };
-    if (kind === 'PU') return { x: 180 - ang, y: 30, arc: 40, r0: 1.2, r1: 2.5 };
-    return { x, y: -10, arc: kind === 'LD' ? 6 : 40, r0: 1.2, r1: 4.5 };
+    if (kind === 'GB') return { x: 180 - ang * 3.5, y: 300, arc: 4, r0: 1.8, r1: 4 };
+    if (kind === 'PU') return { x: 180 - ang, y: 30, arc: 50, r0: 1.8, r1: 2.6 };
+    return { x: 180 - ang * 4.2, y: -16, arc: kind === 'LD' ? 6 : 46, r0: 1.8, r1: 5 };
   }
 
   // ---------------- 绘制 ----------------
@@ -459,100 +522,212 @@ export class MatchStage {
 
   private drawBat(s: StageScene): void {
     const c = this.c;
-    // 野手
+    // 远处的野手（长焦：比较大）
     const fl = s.fielder;
-    const inf = s.align === 'infieldIn' ? 10 : s.align === 'buntShift' ? 14 : 0;
-    const deep = s.align === 'noDoubles' ? -6 : 0;
+    const inf = s.align === 'infieldIn' ? 6 : s.align === 'buntShift' ? 9 : 0;
+    const deep = s.align === 'noDoubles' ? -4 : 0;
     const dp = s.align === 'dp' ? 6 : 0;
     const fp: [number, number, number][] = [
-      [84, 93 + deep, 11],
-      [180, 89 + deep, 11],
-      [276, 93 + deep, 11],
-      [128 + dp, 117 + inf * 0.6, 15],
-      [232 - dp, 117 + inf * 0.6, 15],
-      [64 + inf, 157 + inf * 0.5, 17],
-      [296 - inf, 157 + inf * 0.5, 17],
+      [40, 74 + deep, 16],
+      [180, 70 + deep, 16],
+      [320, 74 + deep, 16],
+      [118 + dp, 110 + inf * 0.4, 26],
+      [242 - dp, 110 + inf * 0.4, 26],
+      [34 + inf, 130 + inf * 0.4, 30],
+      [326 - inf, 130 + inf * 0.4, 30],
     ];
     for (const [x, y, h] of fp) F.drawFigure(c, x, y, h, F.FIELDER, fl, 'front');
     // 跑者
-    const bp: [number, number][] = [[318, 152], [180, 107], [42, 152]];
+    const bp: [number, number, number][] = [
+      [340, 134, 30],
+      [198, 104, 24],
+      [20, 134, 30],
+    ];
     s.bases.forEach((on, i) => {
       if (!on) return;
-      const [x, y] = bp[i];
-      F.drawFigure(c, x + (i === 0 ? -8 : i === 2 ? 8 : -6), y + 1, i === 1 ? 14 : 17, i === 2 ? F.mirror(F.RUNNER) : F.RUNNER, s.runner, 'front');
+      const [x, y, h] = bp[i];
+      F.drawFigure(c, x, y, h, i === 2 ? F.mirror(F.RUNNER) : F.RUNNER, s.runner, 'front');
     });
     // 投手
-    const [px, py] = this.pitcherFeet();
-    F.drawFigure(c, px, py, this.pitcherH(), this.pPose, s.pitcher.look, 'front');
-    // 好球带
-    this.drawZone();
-    // 球
+    const [px, py, ph] = this.pitcherFeet();
+    F.drawFigure(c, px, py, ph, this.pPose, s.pitcher.look, 'front');
+    // 捕手（背面，画面下方）：手套跟着目标 / 落点
+    const catL: F.Look = { ...s.fielder, gear: 'catcher', glove: 'b' };
+    const k = this.grid().cs / CELL / 1.9;
+    const cp = { ...F.CATCHER, ha: [F.CATCHER.ha[0], [F.CATCHER.ha[1][0] + this.mitt[0] * k, F.CATCHER.ha[1][1] - this.mitt[1] * k]] as [[number, number], [number, number]] };
+    F.drawFigure(c, 180, 420, 170, cp, catL, 'back');
+    // 打者（最近，背面）
+    const [bx, by, bh] = this.batterFeet();
+    const fl2 = this.flinch * (s.batter.side === 'R' ? -8 : 8);
+    F.drawFigure(c, bx + fl2, by, bh, this.bPose, s.batter.look, 'back');
+    // 网格在人物上面，热区、打击率不会被挡住；球在最上面
+    this.drawGrid();
     this.drawBall();
-    // 打者（最近）
-    const [bx, by] = this.batterFeet();
-    const fl2 = this.flinch * (s.batter.side === 'R' ? -6 : 6);
-    F.drawFigureOutlined(c, bx + fl2, by, 118, this.bPose, s.batter.look, 'back');
-    // 击中 / 进手套的闪光
     this.drawPop();
   }
 
   private drawPitch(s: StageScene): void {
     const c = this.c;
-    // 主审、捕手、打者
+    // 主审、捕手（手套跟着目标 / 落点）、打者
     const umpL: F.Look = { ...s.fielder, gear: 'ump', glove: null };
-    F.drawFigure(c, 180, 121, 38, F.UMP, umpL, 'front');
+    F.drawFigure(c, 180, 286, 106, F.UMP, umpL, 'front');
     const catL: F.Look = { ...s.fielder, gear: 'catcher', glove: 'b' };
-    const cp = { ...F.CATCHER, ha: [F.CATCHER.ha[0], [F.CATCHER.ha[1][0] - this.catcherMitt[0] * 9, F.CATCHER.ha[1][1] - this.catcherMitt[1] * 9]] as [[number, number], [number, number]] };
-    F.drawFigure(c, 180, 127, 30, cp, catL, 'front');
-    const [bx, by] = this.batterFeet();
-    const fl2 = this.flinch * (s.batter.side === 'R' ? 3 : -3);
-    // 投手视角里右打者站右边、面向左：姿势数据按「右打者站右边」画，左打者镜像
-    F.drawFigure(c, bx + fl2, by, 46, this.bPose, s.batter.look, 'front');
-    this.drawZone();
+    const k = this.grid().cs / CELL / 1.25;
+    const cp = { ...F.CATCHER, ha: [F.CATCHER.ha[0], [F.CATCHER.ha[1][0] - this.mitt[0] * k, F.CATCHER.ha[1][1] - this.mitt[1] * k]] as [[number, number], [number, number]] };
+    F.drawFigure(c, 180, 296, 80, cp, catL, 'front');
+    const [bx, by, bh] = this.batterFeet();
+    const fl2 = this.flinch * (s.batter.side === 'R' ? 4 : -4);
+    F.drawFigure(c, bx + fl2, by, bh, this.bPose, s.batter.look, 'front');
+    // 投手（最近，背面，下半身在画面外）
+    const [px, py, ph] = this.pitcherFeet();
+    F.drawFigure(c, px, py, ph, this.pPose, s.pitcher.look, 'back');
+    // 网格在人物上面；球在最上面
+    this.drawGrid();
     this.drawBall();
     this.drawPop();
-    // 投手（最近，背面）
-    const [px, py] = this.pitcherFeet();
-    F.drawFigureOutlined(c, px, py, this.pitcherH(), this.pPose, s.pitcher.look, 'back');
   }
 
-  private drawZone(): void {
+  /** 瞄准网格：好球带 9×9 + 外圈坏球区、九宫格打击率、热区、瞄准点 / 狙的格、这个打席每一球的落点 */
+  private drawGrid(): void {
     const c = this.c;
-    const z = this.zoneRect();
-    const x0 = Math.round(z.cx - z.hw);
-    const y0 = Math.round(z.cy - z.hh);
-    const w = Math.round(z.hw * 2);
-    const h = Math.round(z.hh * 2);
-    if (this.scene?.mode === 'pitch') {
-      // 远处的小好球带：先描一圈深色，看得清楚些
-      c.globalAlpha = 0.6;
-      rect(c, x0 - 1, y0 - 1, w + 3, 1, PAL.ink);
-      rect(c, x0 - 1, y0 + h + 1, w + 3, 1, PAL.ink);
-      rect(c, x0 - 1, y0 - 1, 1, h + 3, PAL.ink);
-      rect(c, x0 + w + 1, y0 - 1, 1, h + 3, PAL.ink);
-      c.globalAlpha = 0.9;
-    } else c.globalAlpha = 0.55;
-    rect(c, x0, y0, w, 1, PAL.white);
-    rect(c, x0, y0 + h, w + 1, 1, PAL.white);
-    rect(c, x0, y0, 1, h, PAL.white);
-    rect(c, x0 + w, y0, 1, h, PAL.white);
-    if (this.scene?.mode === 'bat') {
-      c.globalAlpha = 0.22;
-      for (let i = 1; i < 3; i++) {
-        rect(c, x0 + Math.round((w * i) / 3), y0 + 1, 1, h - 1, PAL.white);
-        rect(c, x0 + 1, y0 + Math.round((h * i) / 3), w - 1, 1, PAL.white);
+    const g = this.grid();
+    const h = this.hud;
+    const A = this.gridA;
+    const n = GRID;
+    const x0 = g.cx - (g.cs * n) / 2;
+    const y0 = g.cy - (g.cs * n) / 2;
+    const cellXY = (i: number, j: number): [number, number] => {
+      // 第 i 列（好球带坐标从左到右）在画面上的位置：投手视角左右相反
+      const si = g.mx === 1 ? i : n - 1 - i;
+      return [x0 + si * g.cs, y0 + j * g.cs];
+    };
+    // 底：淡淡一层，热区看得清
+    c.globalAlpha = 0.16 * A;
+    rect(c, x0, y0, g.cs * n, g.cs * n, PAL.ink);
+    // 九宫格打击率：热的偏红、冷的偏蓝
+    if (h.hot) {
+      for (let zn = 0; zn < 9; zn++) {
+        const v = h.hot[zn];
+        const col = zn % 3;
+        const row = Math.floor(zn / 3);
+        // 只给热区上淡红色；冷区不上色（数字是蓝的），免得和投球的散布预览混在一起
+        const tint = v >= 0.31 ? PAL.red : null;
+        if (!tint) continue;
+        const [zx, zy] = cellXY(1 + col * 3, 1 + row * 3);
+        const left = g.mx === 1 ? zx : zx - 2 * g.cs;
+        c.globalAlpha = Math.min(0.34, 0.1 + (v - 0.28) * 4) * A;
+        rect(c, left, zy, g.cs * 3, g.cs * 3, tint);
       }
     }
+    // 热区（概率）
+    if (h.heat) {
+      let mx = 0;
+      for (const v of h.heat) mx = Math.max(mx, v);
+      if (mx > 0) {
+        for (let j = 0; j < n; j++) {
+          for (let i = 0; i < n; i++) {
+            const v = h.heat[j * n + i] / mx;
+            if (v < 0.04) continue;
+            const [x, y] = cellXY(i, j);
+            c.globalAlpha = Math.min(0.9, 0.2 + v * 0.7) * A;
+            rect(c, x + 1, y + 1, g.cs - 1, g.cs - 1, v > 0.66 ? shade(h.heatCol, 0.25) : h.heatCol);
+          }
+        }
+      }
+    }
+    // 细线：外圈很淡，好球带里 9×9 淡、3×3 明显、边框最亮
+    c.globalAlpha = 0.1 * A;
+    for (let k = 0; k <= n; k++) {
+      rect(c, x0 + k * g.cs, y0, 1, g.cs * n, PAL.white);
+      rect(c, x0, y0 + k * g.cs, g.cs * n, 1, PAL.white);
+    }
+    const zx0 = x0 + g.cs;
+    const zy0 = y0 + g.cs;
+    const zw = g.cs * 9;
+    c.globalAlpha = 0.45 * A;
+    for (let k = 1; k < 3; k++) {
+      rect(c, zx0 + k * g.cs * 3, zy0, 1, zw, PAL.white);
+      rect(c, zx0, zy0 + k * g.cs * 3, zw, 1, PAL.white);
+    }
+    c.globalAlpha = 0.95 * A;
+    rect(c, zx0 - 1, zy0 - 1, zw + 2, 2, PAL.white);
+    rect(c, zx0 - 1, zy0 + zw - 1, zw + 2, 2, PAL.white);
+    rect(c, zx0 - 1, zy0 - 1, 2, zw + 2, PAL.white);
+    rect(c, zx0 + zw - 1, zy0 - 1, 2, zw + 2, PAL.white);
     c.globalAlpha = 1;
+    // 打击率数字
+    if (h.hot) {
+      c.font = '12px FusionPixel, monospace';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      for (let zn = 0; zn < 9; zn++) {
+        const [zx, zy] = zoneCenter(zn);
+        const [sx, sy] = this.zoneXY(zx, zy);
+        const t = h.hot[zn].toFixed(3).slice(1);
+        c.globalAlpha = 0.9 * A;
+        c.fillStyle = PAL.ink;
+        c.fillText(t, sx + 1, sy + 1);
+        c.fillStyle = h.hot[zn] >= 0.31 ? '#ffb4a8' : h.hot[zn] <= 0.25 ? '#b4d2ff' : PAL.white;
+        c.fillText(t, sx, sy);
+      }
+      c.globalAlpha = 1;
+      c.textAlign = 'left';
+    }
+    // 狙的九宫格
+    if (h.hunt !== null && h.hunt >= 0) {
+      const col = h.hunt % 3;
+      const row = Math.floor(h.hunt / 3);
+      const [zx, zy] = cellXY(1 + col * 3, 1 + row * 3);
+      const left = g.mx === 1 ? zx : zx - 2 * g.cs;
+      c.globalAlpha = 0.25 * A;
+      rect(c, left, zy, g.cs * 3, g.cs * 3, PAL.yellow);
+      c.globalAlpha = A;
+      const w = g.cs * 3;
+      rect(c, left - 1, zy - 1, w + 2, 3, PAL.yellow);
+      rect(c, left - 1, zy + w - 2, w + 2, 3, PAL.yellow);
+      rect(c, left - 1, zy - 1, 3, w + 2, PAL.yellow);
+      rect(c, left + w - 2, zy - 1, 3, w + 2, PAL.yellow);
+      c.globalAlpha = 1;
+    }
+    // 瞄准点（投球）
+    const aim = this.aimShow ?? h.aim;
+    if (aim) {
+      const [ax, ay] = this.zoneXY(aim.x, aim.y);
+      const r = g.cs * 0.55;
+      c.globalAlpha = this.aimShow ? 0.75 : 1;
+      for (let a = 0; a < 16; a++) {
+        const t = (a / 16) * Math.PI * 2;
+        rect(c, ax + Math.cos(t) * r - 0.5, ay + Math.sin(t) * r - 0.5, 1.5, 1.5, PAL.cyan);
+      }
+      rect(c, ax - r - 3, ay, r - 1, 1, PAL.cyan);
+      rect(c, ax + 4, ay, r - 1, 1, PAL.cyan);
+      rect(c, ax, ay - r - 3, 1, r - 1, PAL.cyan);
+      rect(c, ax, ay + 4, 1, r - 1, PAL.cyan);
+      c.globalAlpha = 1;
+    }
     // 这个打席每一球的落点
+    c.font = '12px FusionPixel, monospace';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
     for (const m of this.markers) {
       const [x, y] = this.zoneXY(m.x, m.y);
-      if (this.scene?.mode === 'bat') {
-        disc(this.c, x, y, 3.5, PAL.ink);
-        disc(this.c, x, y, 2.6, m.col);
-      } else {
-        rect(this.c, x - 1, y - 1, 2, 2, m.col);
-      }
+      disc(c, x, y, 5.5, PAL.ink);
+      disc(c, x, y, 4.5, m.col);
+      c.fillStyle = PAL.ink;
+      c.fillText(String(m.n), x, y + 1);
+    }
+    c.textAlign = 'left';
+    // 「不挥棒」
+    if (h.hunt === -1) {
+      c.font = '12px FusionPixel, monospace';
+      c.textBaseline = 'top';
+      const t = '不挥棒';
+      const w = Math.ceil(c.measureText(t).width) + 8;
+      c.globalAlpha = 0.85;
+      rect(c, g.cx - w / 2, y0 - 18, w, 15, PAL.ink);
+      c.globalAlpha = 1;
+      c.fillStyle = PAL.lime;
+      c.fillText(t, g.cx - w / 2 + 4, y0 - 16);
     }
   }
 
@@ -563,7 +738,7 @@ export class MatchStage {
     for (const t of this.trail) disc(c, t.x, t.y, Math.max(0.5, t.r * 0.8), PAL.white);
     c.globalAlpha = 1;
     const b = this.ball;
-    if (b.r >= 2) disc(c, b.x, b.y, b.r + 0.6, PAL.ink);
+    if (b.r >= 1.6) disc(c, b.x, b.y, b.r + 0.8, PAL.ink);
     disc(c, b.x, b.y, b.r, PAL.white);
     if (b.r >= 2.5) rect(c, b.x - 1, b.y - 1, 1, 2, PAL.red);
   }
@@ -572,7 +747,7 @@ export class MatchStage {
     if (!this.pop) return;
     const c = this.c;
     const { x, y, t } = this.pop;
-    const r = 3 + (1 - t) * 8;
+    const r = 4 + (1 - t) * 10;
     c.globalAlpha = Math.max(0, t);
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2;
@@ -583,32 +758,14 @@ export class MatchStage {
 
   private drawHud(): void {
     const c = this.c;
-    if (this.sb && this.scene?.mode === 'bat') {
-      const b = this.sb;
-      c.font = '12px FusionPixel, monospace';
-      c.textBaseline = 'top';
-      c.fillStyle = PAL.white;
-      const nm = (s: string) => s.slice(0, 3);
-      c.fillText(nm(b.away), 144, 6);
-      c.fillText(nm(b.home), 144, 20);
-      c.fillStyle = PAL.yellow;
-      c.textAlign = 'right';
-      c.fillText(String(b.score[0]), 192, 6);
-      c.fillText(String(b.score[1]), 192, 20);
-      c.textAlign = 'left';
-      const lights: [number, number, string][] = [[b.balls, 3, PAL.lime], [b.strikes, 2, PAL.yellow], [b.outs, 2, PAL.red]];
-      lights.forEach(([n, max, col], row) => {
-        for (let i = 0; i < max; i++) rect(c, 198 + i * 6, 8 + row * 8, 4, 4, i < n ? col : '#2b4a3a');
-      });
-    }
     if (this.radar && this.radar.t > 0) {
       c.font = '12px FusionPixel, monospace';
       c.textBaseline = 'top';
-      const txt = `${this.radar.kmh}km/h ${this.radar.name}`;
+      const txt = `${this.radar.kmh}km/h ${this.radar.name}${this.radar.q !== null ? ` 质量 ${this.radar.q}` : ''}`;
       const w = Math.ceil(c.measureText(txt).width) + 8;
-      const x = this.scene?.mode === 'bat' ? SW - w - 4 : 4;
-      const y = this.scene?.mode === 'bat' ? 44 : 4;
-      c.globalAlpha = 0.8;
+      const x = SW - w - 4;
+      const y = 4;
+      c.globalAlpha = 0.82;
       rect(c, x, y, w, 15, PAL.ink);
       c.globalAlpha = 1;
       c.fillStyle = PAL.yellow;
@@ -619,7 +776,7 @@ export class MatchStage {
       c.font = '24px FusionPixel, monospace';
       c.textBaseline = 'middle';
       c.textAlign = 'center';
-      const y = this.scene?.mode === 'bat' ? 60 : 168;
+      const y = 40;
       c.fillStyle = PAL.ink;
       for (const [dx, dy] of [[-2, 0], [2, 0], [0, -2], [0, 2], [2, 2]]) c.fillText(f.text, SW / 2 + dx, y + dy);
       c.fillStyle = f.col;
@@ -637,20 +794,21 @@ export class MatchStage {
 }
 
 // ======================= 背景 =======================
-function stands(c: Ctx, y0: number, y1: number, seed: number, home: TeamColors, away: TeamColors, koshien: boolean): void {
+/** 看台：颜色压在灰蓝里，只在甲子园的阿尔卑斯看台用两队的颜色（也压暗） */
+function stands(c: Ctx, x0: number, y0: number, w: number, y1: number, seed: number, home: TeamColors, away: TeamColors, koshien: boolean): void {
   const rnd = prng(seed);
-  rect(c, 0, y0, SW, y1 - y0, '#2b3350');
+  rect(c, x0, y0, w, y1 - y0, '#262d44');
+  const crowd = ['#3b4563', '#46506e', '#525c78', '#34405c', '#5f6782', '#4b4e68'];
   for (let y = y0 + 2; y < y1; y += 4) {
-    rect(c, 0, y + 3, SW, 1, '#22283f');
-    for (let x = (y / 4) % 2 ? 1 : 3; x < SW; x += 3 + Math.floor(rnd() * 2)) {
-      if (rnd() < 0.18) continue;
-      // 阿尔卑斯看台：两边是两队的应援团颜色
-      let col: string;
+    rect(c, x0, y + 3, w, 1, '#1f2539');
+    for (let x = x0 + ((y / 4) % 2 ? 1 : 3); x < x0 + w; x += 3 + Math.floor(rnd() * 2)) {
+      if (rnd() < 0.22) continue;
       const side = x < SW * 0.3 ? 0 : x > SW * 0.7 ? 1 : -1;
-      if (koshien && side >= 0 && rnd() < 0.75) col = side === 0 ? away.primary : home.primary;
-      else col = [PAL.white, PAL.silver, PAL.slate, PAL.yellow, PAL.sky, PAL.red, PAL.green][Math.floor(rnd() * 7)];
+      let col: string;
+      if (koshien && side >= 0 && rnd() < 0.7) col = mute(side === 0 ? away.primary : home.primary, 0.45);
+      else col = crowd[Math.floor(rnd() * crowd.length)];
       rect(c, x, y, 2, 2, col);
-      rect(c, x, y - 1, 2, 1, SKIN);
+      rect(c, x, y - 1, 2, 1, '#a88a78');
     }
   }
 }
@@ -658,97 +816,83 @@ function stands(c: Ctx, y0: number, y1: number, seed: number, home: TeamColors, 
 function drawBatBg(koshien: boolean, home: TeamColors, away: TeamColors): HTMLCanvasElement {
   const cv = makeCanvas(SW, SH);
   const c = cv.getContext('2d')!;
-  // 天空
-  for (let y = 0; y < 26; y++) rect(c, 0, y, SW, 1, shade('#5fa6e8', y / 60));
-  stands(c, 22, 72, 11, home, away, koshien);
-  // 记分牌
-  rect(c, 138, 2, 84, 34, PAL.ink);
-  rect(c, 140, 4, 80, 30, '#1f4a33');
-  rect(c, 140, 4, 80, 1, PAL.slate);
+  // 天空（一点渐变）
+  for (let y = 0; y < 18; y++) rect(c, 0, y, SW, 1, y < 9 ? SKY_T : SKY_B);
+  stands(c, 0, 16, SW, 52, 11, home, away, koshien);
+  // 中外野的背景墙（打者看球用的深色板）
+  rect(c, 128, 22, 104, 30, '#1f3a32');
+  rect(c, 128, 22, 104, 1, '#2d5246');
   // 外野围墙
-  rect(c, 0, 72, SW, 10, '#1f5a35');
-  rect(c, 0, 72, SW, 2, PAL.yellow);
-  for (let x = 6; x < SW; x += 46) rect(c, x, 75, 20, 4, '#2a6e43');
-  // 外野草皮（远处窄、近处宽的条纹）
-  let y = 82;
+  rect(c, 0, 52, SW, 10, WALL);
+  rect(c, 0, 52, SW, 1, PAL.yellow);
+  for (let x = 4; x < SW; x += 40) rect(c, x, 55, 18, 4, '#28503f');
+  // 外野草皮（长焦：条纹窄、变化小）
+  let y = 62;
   let k = 0;
   while (y < SH) {
-    const hgt = 3 + k * 1.3;
+    const hgt = 4 + k * 0.6;
     rect(c, 0, y, SW, Math.ceil(hgt), k % 2 ? GRASS : GRASS_L);
     y += hgt;
     k++;
   }
-  // 内野泥土
-  ellipse(c, 180, 246, 196, 150, DIRT);
-  // 内野草皮
-  poly(c, [[180, 116], [300, 158], [180, 206], [60, 158]], GRASS);
-  poly(c, [[180, 122], [286, 158], [180, 198], [74, 158]], GRASS_D);
+  // 内野泥土（长焦：扁）
+  ellipse(c, 180, 168, 236, 64, DIRT);
+  poly(c, [[180, 108], [316, 138], [180, 170], [44, 138]], GRASS);
+  poly(c, [[180, 112], [302, 138], [180, 166], [58, 138]], GRASS_D);
   // 投手丘
-  ellipse(c, 180, 131, 16, 5, DIRT);
-  ellipse(c, 180, 130, 12, 3.5, shade(DIRT, 0.1));
-  rect(c, 176, 129, 8, 1, PAL.white);
+  ellipse(c, 180, 138, 32, 8, DIRT);
+  ellipse(c, 180, 137, 24, 6, DIRT_L);
+  rect(c, 171, 136, 18, 1, PAL.white);
   // 垒包
-  for (const [x, yy] of [[316, 152], [180, 106], [44, 152]] as [number, number][]) {
-    poly(c, [[x, yy - 3], [x + 5, yy], [x, yy + 3], [x - 5, yy]], PAL.white);
-  }
+  for (const [x, yy] of [[326, 138], [180, 106], [34, 138]] as [number, number][]) poly(c, [[x, yy - 3], [x + 6, yy], [x, yy + 3], [x - 6, yy]], PAL.white);
   // 本垒附近
-  ellipse(c, 180, 232, 80, 22, DIRT_D);
-  ellipse(c, 180, 232, 72, 18, DIRT);
+  ellipse(c, 180, 360, 160, 76, DIRT_D);
+  ellipse(c, 180, 360, 150, 68, DIRT);
   // 边线
-  line(c, 180, 225, -40, 109, 1, PAL.white);
-  line(c, 180, 225, 400, 109, 1, PAL.white);
-  // 打击区
-  for (const x0 of [124, 196]) {
-    rect(c, x0, 212, 40, 1, PAL.white);
-    rect(c, x0, 212, 1, 28, PAL.white);
-    rect(c, x0 + 40, 212, 1, 28, PAL.white);
-  }
-  // 本垒板
-  poly(c, [[169, 220], [191, 220], [193, 225], [180, 231], [167, 225]], PAL.white);
+  line(c, 180, 360, -70, 170, 1, PAL.white);
+  line(c, 180, 360, 430, 170, 1, PAL.white);
   return cv;
 }
 
 function drawPitchBg(koshien: boolean, home: TeamColors, away: TeamColors): HTMLCanvasElement {
   const cv = makeCanvas(SW, SH);
   const c = cv.getContext('2d')!;
-  stands(c, 0, 66, 23, home, away, koshien);
-  // 本垒后方的挡网
-  rect(c, 0, 62, SW, 34, '#20333a');
-  for (let x = 0; x < SW; x += 4) rect(c, x, 62, 1, 34, '#2c464f');
-  for (let y = 64; y < 96; y += 4) rect(c, 0, y, SW, 1, '#2c464f');
-  rect(c, 0, 94, SW, 6, PAL.navy);
-  rect(c, 0, 94, SW, 1, PAL.sky);
+  stands(c, 0, 0, SW, 112, 23, home, away, koshien);
+  // 本垒后方的挡网与围墙
+  rect(c, 0, 112, SW, 64, '#1d2c34');
+  for (let x = 0; x < SW; x += 5) rect(c, x, 112, 1, 64, '#273b45');
+  for (let y = 114; y < 176; y += 5) rect(c, 0, y, SW, 1, '#273b45');
+  rect(c, 0, 174, SW, 8, PAL.navy);
+  rect(c, 0, 174, SW, 1, '#5577aa');
   // 草皮
-  for (let y = 100; y < SH; y += 6) rect(c, 0, y, SW, 6, (y / 6) % 2 ? GRASS : GRASS_L);
-  // 本垒周围的泥土
-  ellipse(c, 180, 128, 98, 26, DIRT);
+  for (let y = 182; y < SH; y += 7) rect(c, 0, y, SW, 7, (y / 7) % 2 ? GRASS : GRASS_L);
+  // 本垒周围的泥土（长焦：大而扁）
+  ellipse(c, 180, 290, 176, 44, DIRT);
+  ellipse(c, 180, 290, 164, 37, DIRT_L);
   // 边线（一垒在画面左边）
-  line(c, 180, 128, -30, 210, 1, PAL.white);
-  line(c, 180, 128, 390, 210, 1, PAL.white);
+  line(c, 180, 292, -40, 356, 1, PAL.white);
+  line(c, 180, 292, 400, 356, 1, PAL.white);
   // 打击区与本垒板
-  for (const x0 of [160, 189]) {
-    rect(c, x0, 123, 11, 1, PAL.white);
-    rect(c, x0, 123, 1, 10, PAL.white);
-    rect(c, x0 + 11, 123, 1, 10, PAL.white);
+  for (const x0 of [136, 196]) {
+    rect(c, x0, 282, 28, 1, PAL.white);
+    rect(c, x0, 282, 1, 17, PAL.white);
+    rect(c, x0 + 28, 282, 1, 17, PAL.white);
   }
-  poly(c, [[175, 128], [185, 128], [186, 130], [180, 132], [174, 130]], PAL.white);
-  // 投手丘（近处）
-  ellipse(c, 180, 262, 150, 52, DIRT);
-  ellipse(c, 180, 262, 120, 40, shade(DIRT, 0.08));
-  rect(c, 160, 226, 40, 3, PAL.white);
+  poly(c, [[169, 290], [191, 290], [193, 294], [180, 299], [167, 294]], PAL.white);
+  // 近处的投手丘
+  ellipse(c, 180, 400, 240, 76, DIRT);
+  ellipse(c, 180, 400, 200, 60, DIRT_L);
   return cv;
 }
 
-/** 观众的小动作：随机几个像素闪一下 */
+/** 观众的小动作：少量像素慢慢地亮一下 */
 function crowdShimmer(c: Ctx, mode: ViewMode, time: number): void {
-  const rnd = prng(Math.floor(time * 6) + (mode === 'bat' ? 1 : 2));
-  const y0 = mode === 'bat' ? 24 : 2;
-  const y1 = mode === 'bat' ? 70 : 60;
-  for (let i = 0; i < 26; i++) {
+  const rnd = prng(Math.floor(time * 2.5) + (mode === 'bat' ? 1 : 2));
+  const y0 = mode === 'bat' ? 18 : 2;
+  const y1 = mode === 'bat' ? 50 : 110;
+  for (let i = 0; i < 12; i++) {
     const x = Math.floor(rnd() * SW);
     const y = y0 + Math.floor(rnd() * ((y1 - y0) / 4)) * 4;
-    rect(c, x, y - 2, 2, 1, SKIN);
+    rect(c, x, y, 2, 2, '#6d7591');
   }
 }
-
-export { SKIN };

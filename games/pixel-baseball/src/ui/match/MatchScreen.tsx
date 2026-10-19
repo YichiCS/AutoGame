@@ -1,11 +1,13 @@
-// 亲自指挥的比赛画面：以打席为单位下指令，打者视角 / 投手视角演出
+// 亲自指挥的比赛画面：一球一球地下指令。
+// 投球：选球种（质量 0-100），在网格上点要投的位置；对方跑者离垒太大时可以牵制。
+// 打击：看投手这一球的热区图，点要打的那一格（或不挥棒），决定垒上的跑者要不要提前跑。
+// 手机上一屏操作：上面比分，中间画面和网格，下面这一球的选择和开始按钮。
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Player, Pos } from '../../core/types';
 import { POS_NAME, POS_SHORT } from '../../core/types';
-import type { Alignment, BatCmd, PitchPlan, Zone } from '../../sim/types';
 import { G } from '../../core/state';
-import { batterOffense, fieldAt, fullName, has, isPitcher, pitcherOverall, posRating, traitList, velScore } from '../../core/attrs';
+import { batterOffense, fieldAt, fullName, has, posRating } from '../../core/attrs';
 import { PITCH_DEFS } from '../../data/pitches';
 import { mySetupFull, oppSetup, rulesFor, tourOf } from '../../core/matchday';
 import { schoolById } from '../../core/world';
@@ -13,14 +15,18 @@ import { strengthOf, strengthLetter } from '../../core/team';
 import { todayStarter } from '../../core/lineup';
 import { available } from '../../core/player';
 import { myPlayers } from '../../core/state';
-import { FAM_NAME, RES_NAME, ZONE_NAME, isHit, pitchName } from '../../sim/adapt';
-import { Btn, Emblem, Fatigue, Num, Portrait } from '../components/common';
+import { HOT_NAME, hotType } from '../../sim/pitching';
+import { Btn, Emblem, Num, Portrait } from '../components/common';
 import { refresh, ui, useStore } from '../store';
 import { sfx } from '../sound';
 import { AUTO_NAME, type AutoMode, type MatchSession } from './session';
 import { LineupEditor } from '../tabs/Lineup';
+import { SW, SH } from '../../render/stage';
 
 type Dlg = { kind: 'ph' } | { kind: 'pr' } | { kind: 'pc' } | { kind: 'ds' } | null;
+
+const ZONE_TEXT = ['左上', '正上', '右上', '左中', '正中', '右中', '左下', '正下', '右下'];
+const BASE = ['一垒', '二垒', '三垒'];
 
 export function MatchScreen() {
   useStore();
@@ -47,6 +53,7 @@ function Pregame(p: { S: MatchSession }) {
   const myStr = strengthOf(mine.setup.players, rules.dh);
   const opStr = strengthOf(theirs.players, rules.dh);
   const avail = myPlayers().filter(available);
+  // 谁都可以先发：按投手评价排
   const pitchers = avail.slice().sort((a, b) => posRating(b, 'P') - posRating(a, 'P'));
   const auto = todayStarter(avail, rules.pitchLimit, null);
   const starter = mine.setup.defense.P;
@@ -56,7 +63,7 @@ function Pregame(p: { S: MatchSession }) {
   const oppAce = theirs.players.find((x) => x.id === theirs.defense.P);
   const oppTop = theirs.order.map((id) => theirs.players.find((x) => x.id === id)!).filter(Boolean).sort((a, b) => batterOffense(b) - batterOffense(a)).slice(0, 2);
   return (
-    <div class="match pre">
+    <div class="mscreen pre">
       <div class="pre-box">
         <div class="pre-head">
           <div class="pre-title">{pm.label}</div>
@@ -72,7 +79,7 @@ function Pregame(p: { S: MatchSession }) {
           </div>
           <div class="small dim">
             对手情报：王牌 {oppAce ? `${fullName(oppAce)}（${Math.round(oppAce.a.velocity)}km/h，${oppAce.pitches.map((x) => PITCH_DEFS[x.type].short).join(' ') || '只有直球'}）` : '?'}
-            {oppTop.length ? ` · 强打者 ${oppTop.map((x) => `${fullName(x)}（力 ${Math.round(x.a.power)}）`).join('、')}` : ''}
+            {oppTop.length ? ` · 强打者 ${oppTop.map((x) => `${fullName(x)}（力量 ${Math.round(x.a.power)}）`).join('、')}` : ''}
           </div>
         </div>
         {edit ? (
@@ -86,23 +93,31 @@ function Pregame(p: { S: MatchSession }) {
           <div class="pre-cols">
             <div>
               <div class="sect">今天的打线</div>
-              <ol class="pre-order">
+              <div class="pre-order">
+                <div class="po-row po-head">
+                  <span>棒</span>
+                  <span>位置</span>
+                  <span>姓名</span>
+                  <span class="r">击球</span>
+                  <span class="r">力量</span>
+                  <span class="r">跑速</span>
+                </div>
                 {mine.setup.order.map((id, i) => {
                   const x = byId.get(id);
                   if (!x) return null;
                   const pos = posOf.get(id);
                   return (
-                    <li key={id}>
+                    <div key={id} class="po-row">
                       <span class="ord">{i + 1}</span>
                       <span class="pos">{pos ? POS_SHORT[pos] : '指'}</span>
-                      <b>{fullName(x)}</b>
-                      <span class="dim small">
-                        击 <Num v={x.a.contact} /> 力 <Num v={x.a.power} /> 速 <Num v={x.a.speed} />
-                      </span>
-                    </li>
+                      <b class="nm">{fullName(x)}</b>
+                      <span class="r"><Num v={x.a.contact} /></span>
+                      <span class="r"><Num v={x.a.power} /></span>
+                      <span class="r"><Num v={x.a.speed} /></span>
+                    </div>
                   );
                 })}
-              </ol>
+              </div>
               {mine.notes.length > 0 && (
                 <div class="notes">
                   {mine.notes.map((n, i) => (
@@ -119,6 +134,15 @@ function Pregame(p: { S: MatchSession }) {
             <div>
               <div class="sect">先发投手</div>
               <div class="pre-pitchers">
+                <div class="pp pp-head">
+                  <span>姓名</span>
+                  <span class="r">投手评价</span>
+                  <span class="r">球速</span>
+                  <span class="r">控球</span>
+                  <span class="r">球威</span>
+                  <span class="r">本周</span>
+                  <span class="r">疲劳</span>
+                </div>
                 {pitchers.map((x) => (
                   <button
                     type="button"
@@ -129,18 +153,19 @@ function Pregame(p: { S: MatchSession }) {
                       refresh();
                     }}
                   >
-                    <b>{fullName(x)}</b>
-                    {x.id === auto?.id && <span class="tag">推荐</span>}
-                    <span class="small dim">
-                      {Math.round(x.a.velocity)}km · 控 <Num v={x.a.control} /> · 威 <Num v={x.a.stuff} /> · 本周 {x.pitchesWeek} 球
-                    </span>
-                    <Fatigue v={x.fatigue} w={60} />
+                    <b class="nm">{fullName(x)}</b>
+                    <span class="r"><Num v={posRating(x, 'P')} /></span>
+                    <span class="r">{Math.round(x.a.velocity)}</span>
+                    <span class="r"><Num v={x.a.control} /></span>
+                    <span class="r"><Num v={x.a.stuff} /></span>
+                    <span class="r">{x.pitchesWeek}</span>
+                    <span class={`r ${x.fatigue >= 70 ? 'bad' : x.fatigue >= 45 ? 'orange' : 'good'}`}>{Math.round(x.fatigue)}</span>
                   </button>
                 ))}
               </div>
-              <div class="sect">打席自动化</div>
+              <div class="sect">自动指挥</div>
               <AutoSelect S={S} />
-              <div class="small dim mt4">比赛中随时可以改。「关键时刻才问我」：得点圈有人、后半段比分接近、满垒时才停下来等你下指令，其余交给教练。</div>
+              <div class="small dim mt4">比赛中随时可以改。「关键时刻才问我」：得点圈有人、后半段比分接近、满垒时才停下来等你，其余每一球由教练决定。</div>
             </div>
           </div>
         )}
@@ -176,6 +201,7 @@ function MatchView(p: { S: MatchSession }) {
   const stageRef = useRef<HTMLCanvasElement>(null);
   const fieldRef = useRef<HTMLCanvasElement>(null);
   const [dlg, setDlg] = useState<Dlg>(null);
+  const [menu, setMenu] = useState(false);
   useEffect(() => {
     if (stageRef.current && fieldRef.current) S.attach(stageRef.current, fieldRef.current);
     return () => S.detach();
@@ -183,40 +209,41 @@ function MatchView(p: { S: MatchSession }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || dlg) return;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || dlg || menu) return;
       if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
         if (S.state === 'playing') S.skip();
-        else if (S.state === 'ready' && !S.coaching) S.go();
-      } else if (e.code === 'Digit1') S.setSpeed(1);
-      else if (e.code === 'Digit2') S.setSpeed(2);
-      else if (e.code === 'Digit3') S.setSpeed(4);
+        else S.go();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [S, dlg]);
-  const ph = S.muView()?.phase ?? L.phase();
+  }, [S, dlg, menu]);
+  const onTap = (e: PointerEvent) => {
+    const cv = stageRef.current;
+    if (!cv) return;
+    const r = cv.getBoundingClientRect();
+    S.tap(((e.clientX - r.left) * SW) / r.width, ((e.clientY - r.top) * SH) / r.height);
+  };
+  const ph = S.muView()?.phase ?? (L.phase() === 'over' ? null : L.phase());
   return (
-    <div class="match">
-      <Scoreboard S={S} />
+    <div class="mscreen">
+      <Scorebar S={S} onMenu={() => setMenu(true)} />
       <div class="mgrid">
         <div class="mleft">
           <div class="mcanvas">
-            <canvas ref={stageRef} class={S.view === 'stage' ? '' : 'hide'} />
-            <canvas ref={fieldRef} class={S.view === 'field' ? '' : 'hide'} />
-            <Situation S={S} />
+            <canvas ref={stageRef} class={`stage ${S.view === 'stage' ? '' : 'hide'} ${S.state === 'ready' && !S.coaching ? 'tappable' : ''}`} onPointerDown={onTap} />
+            <canvas ref={fieldRef} class={`field ${S.view === 'field' ? '' : 'hide'}`} />
             {S.state === 'playing' && (
               <button type="button" class="mskip" onClick={() => S.skip()}>
                 跳过 ▶▶
               </button>
             )}
-          </div>
-          <div class="mstrip">
-            <PitchList S={S} />
+            {S.lastRes && S.state !== 'playing' && <div class="msit">上一打席：{S.lastRes}</div>}
           </div>
           <div class="mlog">
             {S.lines
-              .slice(-14)
+              .slice(-8)
               .reverse()
               .map((l, i) => (
                 <div key={i} class={`ml ${l.big ? 'big' : ''} ${l.side === L.mySide ? 'mine' : ''}`}>
@@ -231,105 +258,107 @@ function MatchView(p: { S: MatchSession }) {
           ) : (
             <>
               <Matchup S={S} />
-              <Intel S={S} />
-              {ph === 'bat' ? <BatPanel S={S} setDlg={setDlg} /> : <PitchPanel S={S} setDlg={setDlg} />}
+              {ph === 'pitch' ? <PitchControls S={S} setDlg={setDlg} /> : <BatControls S={S} setDlg={setDlg} />}
+              <div class="mlog">
+                {S.lines
+                  .slice(-3)
+                  .reverse()
+                  .map((l, i) => (
+                    <div key={i} class={`ml ${l.big ? 'big' : ''} ${l.side === L.mySide ? 'mine' : ''}`}>
+                      {l.t}
+                    </div>
+                  ))}
+              </div>
             </>
           )}
         </aside>
       </div>
+      {menu && <MatchMenu S={S} close={() => setMenu(false)} setDlg={(d) => { setMenu(false); setDlg(d); }} />}
       {dlg && <SubDialog S={S} dlg={dlg} close={() => setDlg(null)} />}
     </div>
   );
 }
 
-function Scoreboard(p: { S: MatchSession }) {
+function Dots(p: { n: number; max: number; cls: string }) {
+  return (
+    <span class={`dots ${p.cls}`}>
+      {Array.from({ length: p.max }, (_, i) => (
+        <i key={i} class={i < p.n ? 'on' : ''} />
+      ))}
+    </span>
+  );
+}
+
+function Scorebar(p: { S: MatchSession; onMenu: () => void }) {
   const S = p.S;
   const L = S.live!;
   const d = S.disp;
   if (!d) return null;
-  const inn = Math.max(9, d.line[0].length, d.line[1].length);
-  const names = [L.away.short, L.home.short];
   const sn = d.snap;
-  const dots = (n: number, max: number, cls: string) => (
-    <span class={`dots ${cls}`}>
-      {Array.from({ length: max }, (_, i) => (
-        <i key={i} class={i < n ? 'on' : ''} />
-      ))}
-    </span>
-  );
+  const names = [L.away.short, L.home.short];
   return (
     <header class="mtop">
-      <table class="sb">
-        <thead>
-          <tr>
-            <th />
-            {Array.from({ length: inn }, (_, i) => (
-              <th key={i} class={sn.inning === i + 1 ? 'cur' : ''}>
-                {i + 1}
-              </th>
-            ))}
-            <th>R</th>
-            <th>H</th>
-            <th>E</th>
-          </tr>
-        </thead>
-        <tbody>
-          {[0, 1].map((side) => (
-            <tr key={side} class={side === L.mySide ? 'mine' : ''}>
-              <td class="tn">{names[side]}</td>
-              {Array.from({ length: inn }, (_, i) => (
-                <td key={i}>{d.line[side][i] ?? ''}</td>
-              ))}
-              <td class="r">{d.runs[side]}</td>
-              <td>{d.hits[side]}</td>
-              <td>{d.err[side]}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div class="mstate">
-        <div class="minn">
-          {sn.inning}局{sn.half ? '下' : '上'} <span class="dim small">{L.m.half === L.mySide ? '进攻' : '防守'}</span>
-        </div>
-        <div class="bso2">
-          <span>B {dots(sn.balls, 3, 'b')}</span>
-          <span>S {dots(sn.strikes, 2, 's')}</span>
-          <span>O {dots(sn.outs, 2, 'o')}</span>
-        </div>
-        <Diamond bases={sn.bases.map((x) => x !== null)} />
+      <div class="sbmini">
+        {[0, 1].map((side) => (
+          <span key={side} class={`sbt ${side === L.mySide ? 'mine' : ''} ${sn.half === side ? 'atbat' : ''}`}>
+            <span class="tn">{names[side]}</span>
+            <b>{d.runs[side]}</b>
+          </span>
+        ))}
       </div>
-      <div class="mctl">
-        <div class="row gap4">
-          <span class="dim small">演出</span>
-          {[1, 2, 4].map((v) => (
-            <button type="button" key={v} class={`chip ${S.speed === v ? 'on' : ''}`} onClick={() => S.setSpeed(v)}>
-              {v}x
-            </button>
-          ))}
-        </div>
-        <div class="row gap4">
-          <select
-            value={S.auto}
-            onChange={(e) => S.setAuto((e.target as HTMLSelectElement).value as AutoMode)}
-            title="打席自动化：哪些打席交给教练"
-          >
-            {(Object.keys(AUTO_NAME) as AutoMode[]).map((k) => (
-              <option key={k} value={k}>
-                {AUTO_NAME[k]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div class="row gap4">
-          <Btn small disabled={S.state !== 'ready'} onClick={() => S.autoHalf()} title="这个半局剩下的打席交给教练">
-            本局交给教练
-          </Btn>
-          <Btn small disabled={S.state === 'playing' || S.state === 'over'} onClick={() => S.toEnd()} title="不看过程，交给教练打到比赛结束">
-            打完
-          </Btn>
-        </div>
+      <LineScore S={S} cls="sb-wide" />
+      <div class="minn">
+        {sn.inning}局{sn.half ? '下' : '上'}
+        <span class="dim small">{L.m.over ? '' : sn.half === L.mySide ? '进攻' : '防守'}</span>
       </div>
+      <div class="bso2">
+        <span>B <Dots n={sn.balls} max={3} cls="b" /></span>
+        <span>S <Dots n={sn.strikes} max={2} cls="s" /></span>
+        <span>O <Dots n={sn.outs} max={2} cls="o" /></span>
+      </div>
+      <Diamond bases={sn.bases.map((x) => x !== null)} />
+      <button type="button" class="mmenu-btn" onClick={p.onMenu} aria-label="比赛菜单">
+        ⋯
+      </button>
     </header>
+  );
+}
+
+function LineScore(p: { S: MatchSession; cls?: string }) {
+  const S = p.S;
+  const L = S.live!;
+  const d = S.disp!;
+  const inn = Math.max(9, d.line[0].length, d.line[1].length);
+  const names = [L.away.short, L.home.short];
+  return (
+    <table class={`sb ${p.cls ?? ''}`}>
+      <thead>
+        <tr>
+          <th />
+          {Array.from({ length: inn }, (_, i) => (
+            <th key={i} class={d.snap.inning === i + 1 ? 'cur' : ''}>
+              {i + 1}
+            </th>
+          ))}
+          <th>R</th>
+          <th>H</th>
+          <th>E</th>
+        </tr>
+      </thead>
+      <tbody>
+        {[0, 1].map((side) => (
+          <tr key={side} class={side === L.mySide ? 'mine' : ''}>
+            <td class="tn">{names[side]}</td>
+            {Array.from({ length: inn }, (_, i) => (
+              <td key={i}>{d.line[side][i] ?? ''}</td>
+            ))}
+            <td class="r">{d.runs[side]}</td>
+            <td>{d.hits[side]}</td>
+            <td>{d.err[side]}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -344,403 +373,224 @@ function Diamond(p: { bases: boolean[] }) {
   );
 }
 
-function Situation(p: { S: MatchSession }) {
-  const S = p.S;
-  if (!S.lastRes || S.state === 'playing') return null;
-  return <div class="msit">上一打席：{S.lastRes}</div>;
-}
-
-function PitchList(p: { S: MatchSession }) {
-  const S = p.S;
-  if (!S.pitches.length) return <div class="dim small">{S.state === 'playing' ? '投球中…' : '这个打席还没投球'}</div>;
-  return (
-    <div class="plist">
-      {S.pitches.map((x) => (
-        <span key={x.n} class="pl">
-          <i style={{ background: x.col }}>{x.n}</i>
-          {x.text}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 // ---------------- 对决 ----------------
 function Matchup(p: { S: MatchSession }) {
   const S = p.S;
   const v = S.muView();
   if (!v) return null;
-  const { b, pt, energy, slot, pos, vs } = v;
-  const pb = { np: v.np, outs: v.outs, r: v.r, so: v.so };
-  const todayB = v.bseq.length ? v.bseq.join('、') : '还没打';
+  const { b, pt } = v;
   return (
-    <section class="panel mu">
-      <div class="mu-row">
-        <div class="mu-card">
-          <div class="mu-h">
-            <Portrait player={b} size="sm" />
-            <div>
-              <div>
-                <span class="dim small">{slot}棒 {pos ? (pos === 'DH' ? '指' : POS_SHORT[pos]) : ''} #{S.numOf(b.id)}</span>
-              </div>
-              <b>{fullName(b)}</b> <span class="dim small">{b.bats === 'L' ? '左打' : b.bats === 'S' ? '左右开弓' : '右打'}</span>
-            </div>
-          </div>
-          <div class="mu-a">
-            <span>击球 <Num v={b.a.contact} /></span>
-            <span>力量 <Num v={b.a.power} /></span>
-            <span>选球 <Num v={b.a.eye} /></span>
-            <span>跑速 <Num v={b.a.speed} /></span>
-          </div>
-          <div class="small dim">今天：{todayB}</div>
-          <Traits pl={b} />
-        </div>
-        <div class="mu-card">
-          <div class="mu-h">
-            <Portrait player={pt} size="sm" />
-            <div>
-              <div>
-                <span class="dim small">投手 #{S.numOf(pt.id)} {pt.throws === 'L' ? '左投' : '右投'}</span>
-              </div>
-              <b>{fullName(pt)}</b>
-            </div>
-          </div>
-          <div class="mu-a">
-            <span>球速 <Num v={velScore(pt.a.velocity)} /> <span class="dim small">{Math.round(pt.a.velocity)}km</span></span>
-            <span>控球 <Num v={pt.a.control} /></span>
-            <span>球威 <Num v={pt.a.stuff} /></span>
-            <span>
-              体力 <span class={`stam ${energy > 0.85 ? 'bad' : energy > 0.6 ? 'mid' : ''}`}>{Math.max(0, Math.round((1 - energy) * 100))}%</span>
-            </span>
-          </div>
-          <div class="small dim">
-            {pb.np} 球 · {Math.floor(pb.outs / 3)}{pb.outs % 3 ? `.${pb.outs % 3}` : ''} 局 · 失 {pb.r} · 三振 {pb.so}
-          </div>
-          <div class="small">{pt.pitches.length ? pt.pitches.map((x) => `${x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].short}${x.lv}`).join(' ') : '只有直球'}</div>
-        </div>
-      </div>
-      {vs.length > 0 && (
-        <div class="small mu-vs">
-          本场对决：
-          {vs.map((x, i) => (
-            <span key={i} class={isHit(x.res) ? 'good' : x.res === 'K' ? 'bad' : ''}>
-              {i ? '、' : ''}
-              {RES_NAME[x.res]}
-              {x.last ? `（${pitchName(x.last.t)}）` : ''}
-            </span>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function Traits(p: { pl: Player }) {
-  const t = traitList(p.pl).slice(0, 4);
-  if (!t.length) return null;
-  return (
-    <div class="mu-t">
-      {t.map((x) => (
-        <span key={x.id} class={`tag ${x.good ? '' : 'bad'}`}>
-          {x.name}
+    <section class="mu2">
+      <div class="mu2-row">
+        <Portrait player={b} size="sm" />
+        <span class="mu2-tag">打者</span>
+        <b class="nm">{fullName(b)}</b>
+        <span class="dim">
+          {v.slot}棒 {v.pos ? (v.pos === 'DH' ? '指' : POS_SHORT[v.pos]) : ''} · {v.side === 'L' ? '左打' : '右打'} · {HOT_NAME[hotType(b)]}
         </span>
-      ))}
-    </div>
-  );
-}
-
-// ---------------- 情报与教练 ----------------
-function Intel(p: { S: MatchSession }) {
-  const S = p.S;
-  const L = S.live!;
-  const v = S.muView();
-  if (!v) return null;
-  const it = v.intel;
-  const bat = v.phase === 'bat';
-  const adv = S.state === 'playing' ? { cmd: null, why: v.advice } : bat ? L.adviceBat() : L.advicePitch();
-  return (
-    <section class="panel intel">
-      <div class="it-h">
-        <b>{bat ? '对方投手的打算' : '对方打者的打算'}</b>
-        <span class="dim small">（慧眼 {Math.round(G.mgr.skills.insight)}{G.facilities.analysis ? ` · 影像分析室 ${G.facilities.analysis} 级` : ''}）</span>
+        <span class="mu2-r">今天 {v.bseq.length ? v.bseq.join(' ') : '—'}</span>
       </div>
-      {it.seen ? (
-        it.why.length ? (
-          <ul class="it-l">
-            {it.why.map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        ) : (
-          <div class="small dim">看起来没有特别的打算。</div>
-        )
-      ) : (
-        <div class="small dim">看不透对方这个打席的意图。</div>
-      )}
-      <div class="it-h mt4">
-        <b>教练建议</b>
-        {!S.coaching && S.state === 'ready' && (
-          <button
-            type="button"
-            class="chip"
-            onClick={() => {
-              if (!adv.cmd) return;
-              if (bat) S.bat = { ...(adv.cmd as BatCmd) };
-              else S.plan = { ...(adv.cmd as PitchPlan) };
-              refresh();
-            }}
-          >
-            采用建议
-          </button>
-        )}
+      <div class="mu2-row">
+        <Portrait player={pt} size="sm" />
+        <span class="mu2-tag">投手</span>
+        <b class="nm">{fullName(pt)}</b>
+        <span class="dim">
+          {pt.throws === 'L' ? '左投' : '右投'} · {Math.round(pt.a.velocity)}km/h · 牵制 {v.pickoff}
+        </span>
+        <span class="mu2-r">
+          {v.np} 球 · 体力 <span class={v.stamina < 0.15 ? 'bad' : v.stamina < 0.4 ? 'orange' : 'good'}>{Math.round(v.stamina * 100)}%</span>
+        </span>
       </div>
-      <ul class="it-l adv">
-        {adv.why.map((w, i) => (
-          <li key={i}>{w}</li>
-        ))}
-      </ul>
     </section>
   );
 }
 
-// ---------------- 指令 ----------------
-function Opt<T extends string | number>(p: { label: string; value: T; opts: [T, string, string?, boolean?][]; set: (v: T) => void }) {
-  return (
-    <div class="opt">
-      <span class="opt-l">{p.label}</span>
-      <span class="row wrap gap4">
-        {p.opts.map(([v, name, tip, disabled]) => (
-          <button type="button" key={String(v)} class={`chip ${p.value === v ? 'on' : ''}`} title={tip} disabled={disabled} onClick={() => p.set(v)}>
-            {name}
-          </button>
-        ))}
-      </span>
-    </div>
-  );
-}
-
-function GoBar(p: { S: MatchSession; children?: ComponentChildren }) {
-  const S = p.S;
-  if (S.coaching) {
-    return (
-      <div class="gobar">
-        <span class="dim small">教练指挥中…</span>
-        <span class="grow" />
-        <Btn
-          small
-          onClick={() => {
-            S.halfAuto = null;
-            if (S.auto !== 'off') S.setAuto('off');
-          }}
-        >
-          我来指挥
-        </Btn>
-      </div>
-    );
-  }
+// ---------------- 这一球的选择 ----------------
+function CoachBar(p: { S: MatchSession }) {
   return (
     <div class="gobar">
-      {p.children}
+      <span class="dim">教练指挥中…</span>
       <span class="grow" />
-      <Btn kind="primary" disabled={S.state !== 'ready'} onClick={() => S.go()} title="空格键">
-        {S.state === 'playing' ? '比赛进行中…' : '▶ 开始打席'}
-      </Btn>
+      <Btn onClick={() => p.S.takeOver()}>我来指挥</Btn>
     </div>
   );
 }
 
-function BatPanel(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
+function PitchControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
   const S = p.S;
-  const m = S.live!.m;
-  const c = S.bat;
-  const set = <K extends keyof BatCmd>(k: K, v: BatCmd[K]) => {
-    S.bat = { ...S.bat, [k]: v };
-    refresh();
-  };
-  const [r1, r2, r3] = m.bases.map(Boolean);
-  const anyR = r1 || r2 || r3;
-  const b = S.muView()?.b ?? m.batter();
+  const L = S.live!;
+  const m = L.m;
+  const v = S.muView();
+  const ready = S.state === 'ready' && !S.coaching;
+  const left = m.pickoffsLeft();
   return (
-    <section class="panel cmd">
-      <div class="ptitle">
-        <span>进攻指令 · {fullName(b)}</span>
+    <section class="ctl">
+      <div class="ctl-h">
+        <span>球种</span>
+        <span class="dim small">数字是质量（0-100，累了会下降）</span>
       </div>
-      <Opt
-        label="打法"
-        value={c.app}
-        set={(v) => set('app', v)}
-        opts={[
-          ['normal', '普通', '照平常打'],
-          ['power', '强振', '大棒一挥：长打更多，但更容易三振'],
-          ['contact', '轻打', '缩短挥棒：更容易碰到球，长打变少'],
-          ['aggressive', '积极', '早早出棒，不让投手抢好球数'],
-          ['wait', '选球', '两好球前多等：多保送、多消耗对方球数，也会多被看着好球'],
-          ['bunt', '牺牲触击', '把跑者送上去（两好球后改为轻打）', !anyR],
-          ['buntHit', '触击安打', '突袭触击，脚快才有机会'],
-          ['squeeze', '抢分', '三垒跑者起跑、打者触击（被识破就很惨）', !r3],
-        ]}
-      />
-      <Opt
-        label="狙球种"
-        value={c.sit}
-        set={(v) => set('sit', v)}
-        opts={[
-          ['none', '不狙'],
-          ['FB', '直球', '直球系（四缝线、二缝线、卡特、伸卡、内飘）来了更好打，变化球来了会被骗'],
-          ['BR', '变化球', '变化球来了更好打，直球来了会慢半拍'],
-        ]}
-      />
-      <Opt
-        label="狙路线"
-        value={c.zone}
-        set={(v) => set('zone', v as Zone | 'none')}
-        opts={[
-          ['none', '不狙'],
-          ['in', '内角', '内角来了更好打，其他位置的球两好球前多半不出棒'],
-          ['out', '外角'],
-          ['high', '高球'],
-          ['low', '低球'],
-        ]}
-      />
-      {anyR && (
-        <>
-          <Opt
-            label="跑垒"
-            value={c.agg}
-            set={(v) => set('agg', v)}
-            opts={[
-              [-1, '稳健', '小离垒、不冒险多跑'],
-              [0, '普通'],
-              [1, '积极', '大离垒、安打时多抢一个垒、高飞球敢冲本垒（边缘情况容易出局，也更容易被牵制）'],
-            ]}
-          />
-          <Opt
-            label="跑者"
-            value={c.run}
-            set={(v) => set('run', v)}
-            opts={[
-              ['none', '不动'],
-              ['steal', '盗垒', '第一球起跑（领先的跑者）', !(r1 && !r2) && !(r2 && !r3)],
-              ['hitRun', '打带跑', '一垒跑者起跑，打者无论如何都要出棒', !(r1 && !r2)],
-              ['doubleSteal', '双盗', '一、二垒跑者同时起跑', !(r1 && r2 && !r3)],
-            ]}
-          />
-        </>
+      <div class="ptypes">
+        {v?.ars.map((o) => (
+          <button type="button" key={o.type} class={`ptype ${S.ptype === o.type ? 'on' : ''}`} disabled={!ready} onClick={() => S.setPitchType(o.type)}>
+            <span class="pn">{o.sig ? `「${o.sig}」` : o.type === 'FB' ? '直球' : PITCH_DEFS[o.type].name}</span>
+            <Num v={o.q} />
+          </button>
+        ))}
+      </div>
+      {m.bases.some(Boolean) && (
+        <div class="runners">
+          {m.bases.map((r, i) =>
+            r ? (
+              <div key={i} class={`runner ${m.leads[i] === 'big' ? 'warn' : ''}`}>
+                <span class="rb">{BASE[i]}</span>
+                <span class="rn">{fullName(m.off.get(r.pid))}</span>
+                <span class="rl">{m.leads[i] === 'big' ? '⚠ 离垒很大' : i === 2 ? '' : '离垒正常'}</span>
+                <button type="button" class="chip" disabled={!ready || left <= 0} onClick={() => S.act({ k: 'po', base: i })}>
+                  牵制
+                </button>
+              </div>
+            ) : null,
+          )}
+          <div class="dim small">还能牵制 {left} 次 · 离垒大、想跑的人容易抓到</div>
+        </div>
       )}
-      <GoBar S={S}>
-        <Btn small disabled={S.state !== 'ready'} onClick={() => p.setDlg({ kind: 'ph' })}>
-          代打
-        </Btn>
-        {anyR && (
-          <Btn small disabled={S.state !== 'ready'} onClick={() => p.setDlg({ kind: 'pr' })}>
-            代跑
+      {S.coaching ? (
+        <CoachBar S={S} />
+      ) : (
+        <div class="gobar">
+          <Btn disabled={!ready} onClick={() => p.setDlg({ kind: 'pc' })}>
+            换投
           </Btn>
-        )}
-      </GoBar>
+          <span class="hint">{S.aim ? '再点同一格也能直接投' : '在网格上点要投的位置'}</span>
+          <Btn kind="primary" big disabled={!S.canGo()} onClick={() => S.go()}>
+            {S.state === 'playing' ? '投球中…' : '▶ 投球'}
+          </Btn>
+        </div>
+      )}
     </section>
   );
 }
 
-function PitchPanel(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
+function BatControls(p: { S: MatchSession; setDlg: (d: Dlg) => void }) {
   const S = p.S;
-  const m = S.live!.m;
-  const c = S.plan;
-  const set = <K extends keyof PitchPlan>(k: K, v: PitchPlan[K]) => {
-    S.plan = { ...S.plan, [k]: v };
-    refresh();
-  };
-  const pt = m.pitcher();
-  const anyR = m.bases.some(Boolean);
-  const fin: [string, string, string?][] = [['', '自动'], ['FB', '直球']];
-  for (const x of pt.pitches) fin.push([x.type, `${x.sig ? `「${x.sig}」` : PITCH_DEFS[x.type].name}${x.lv}`, PITCH_DEFS[x.type].desc]);
-  const left = m.pickoffsLeft();
+  const L = S.live!;
+  const m = L.m;
+  const ready = S.state === 'ready' && !S.coaching;
+  const occupied = m.bases.map(Boolean);
+  // 一垒跑者要跑，前面（二垒）得空着或者也跑
+  const canRun = (i: number) => occupied[i] && (i === 2 || !occupied[i + 1] || S.run[i + 1]);
   return (
-    <section class="panel cmd">
-      <div class="ptitle">
-        <span>防守指令 · {fullName(S.muView()?.b ?? m.batter())}</span>
+    <section class="ctl">
+      <div class="ctl-h">
+        <span>这一球</span>
+        <span class="dim small">橙色：投手可能投的位置 · 数字：打击率</span>
       </div>
-      <Opt
-        label="配球"
-        value={c.mix}
-        set={(v) => set('mix', v)}
-        opts={[
-          ['auto', '交给捕手'],
-          ['FB', '直球为主', '直球（含二缝线、卡特等直球系）多投'],
-          ['BR', '变化球为主', '变化球多投'],
-        ]}
-      />
-      <Opt label="决胜球" value={c.finisher ?? ''} set={(v) => set('finisher', (v || null) as PitchPlan['finisher'])} opts={fin} />
-      <Opt
-        label="攻击区域"
-        value={c.focus}
-        set={(v) => set('focus', v as Zone | 'auto')}
-        opts={[
-          ['auto', '自动'],
-          ['in', '内角', '塞内角：被打中也不容易打扎实，但容易触身'],
-          ['out', '外角', '外角：不容易被打远'],
-          ['high', '高球', '高的直球容易挥空，但被打中容易飞远'],
-          ['low', '低球', '低球多滚地球，适合双杀'],
-        ]}
-      />
-      <Opt
-        label="投球方针"
-        value={c.ibb ? 'ibb' : c.approach}
-        set={(v) => {
-          if (v === 'ibb') S.plan = { ...S.plan, ibb: true };
-          else S.plan = { ...S.plan, ibb: false, approach: v as PitchPlan['approach'] };
-          refresh();
-        }}
-        opts={[
-          ['normal', '普通'],
-          ['max', '全力投球', '球速球威上升，体力消耗大'],
-          ['contact', '抢好球数', '多投好球带，少保送，但容易被打'],
-          ['careful', '慎重', '攻边角、不给好打的球，保送会变多'],
-          ['ibb', '敬远', '申告敬远，直接保送'],
-        ]}
-      />
-      <Opt
-        label="守备阵型"
-        value={c.align}
-        set={(v) => set('align', v as Alignment)}
-        opts={[
-          ['normal', '普通'],
-          ['infieldIn', '前进守备', '内野上前，阻止三垒跑者回本垒（但滚地球更容易穿过）'],
-          ['dp', '防双杀', '二游靠近二垒'],
-          ['noDoubles', '长打防守', '外野后退，防长打'],
-          ['buntShift', '防触击', '一三垒手前冲'],
-        ]}
-      />
-      {anyR && (
-        <div class="opt">
-          <span class="opt-l">跑者</span>
-          <span class="row wrap gap4">
-            <button type="button" class={`chip ${c.hold ? 'on' : ''}`} title="快速投球：盗垒更难，但球质略降" onClick={() => set('hold', !c.hold)}>
-              注意跑者
-            </button>
-            <button type="button" class={`chip ${c.pitchout ? 'on' : ''}`} title="第一球投外角吊球，专门对付盗垒和抢分" onClick={() => set('pitchout', !c.pitchout)}>
-              外角吊球
-            </button>
-            <button
-              type="button"
-              class="chip"
-              disabled={left <= 0 || S.state !== 'ready'}
-              title="牵制：偶尔能抓到离垒太大的跑者，也让跑者不敢乱跑；每个打席最多 3 次"
-              onClick={() => S.act({ k: 'po' })}
-            >
-              牵制（还能 {left} 次）
-            </button>
-          </span>
+      <div class="huntrow">
+        <span class={`hunt ${S.hunt !== null && S.hunt >= 0 ? 'on' : ''}`}>{S.hunt === null ? '点网格选要打的一格' : S.hunt >= 0 ? `狙${ZONE_TEXT[S.hunt]}：球来到附近就挥` : '这一球不挥棒'}</span>
+        <button type="button" class={`chip big ${S.hunt === -1 ? 'on' : ''}`} disabled={!ready} onClick={() => S.setTake()}>
+          不挥棒
+        </button>
+      </div>
+      {occupied.some(Boolean) && (
+        <div class="runners">
+          {m.bases.map((r, i) =>
+            r ? (
+              <div key={i} class="runner">
+                <span class="rb">{BASE[i]}</span>
+                <span class="rn">{fullName(m.off.get(r.pid))}</span>
+                <span class="rl">跑速 <Num v={m.off.get(r.pid).a.speed} /></span>
+                <button type="button" class={`chip ${S.run[i] ? 'on' : ''}`} disabled={!ready || !canRun(i)} onClick={() => S.toggleRun(i)}>
+                  {S.run[i] ? '提前跑 ✓' : '提前跑'}
+                </button>
+              </div>
+            ) : null,
+          )}
+          <div class="dim small">提前跑：没打中就盗垒，打中多跑一个垒；可能被牵制。</div>
         </div>
       )}
-      <GoBar S={S}>
-        <Btn small disabled={S.state !== 'ready'} onClick={() => p.setDlg({ kind: 'pc' })}>
-          换投
-        </Btn>
-        <Btn small disabled={S.state !== 'ready'} onClick={() => p.setDlg({ kind: 'ds' })}>
-          守备替换
-        </Btn>
-      </GoBar>
+      {S.coaching ? (
+        <CoachBar S={S} />
+      ) : (
+        <div class="gobar">
+          <Btn disabled={!ready} onClick={() => p.setDlg({ kind: 'ph' })}>
+            代打
+          </Btn>
+          {occupied.some(Boolean) && (
+            <Btn disabled={!ready} onClick={() => p.setDlg({ kind: 'pr' })}>
+              代跑
+            </Btn>
+          )}
+          <span class="grow" />
+          <Btn kind="primary" big disabled={!S.canGo()} onClick={() => S.go()}>
+            {S.state === 'playing' ? '比赛进行中…' : '▶ 开始'}
+          </Btn>
+        </div>
+      )}
     </section>
+  );
+}
+
+// ---------------- 菜单（演出速度、自动指挥、交给教练、换人、比分） ----------------
+function MatchMenu(p: { S: MatchSession; close: () => void; setDlg: (d: Dlg) => void }) {
+  const S = p.S;
+  const L = S.live!;
+  const ph = L.phase();
+  const ready = S.state === 'ready';
+  return (
+    <div class="overlay" onClick={p.close}>
+      <div class="modal sheet" onClick={(e) => e.stopPropagation()}>
+        <div class="mtitle">
+          <span>比赛</span>
+          <button type="button" class="x" onClick={p.close} aria-label="关闭">
+            ×
+          </button>
+        </div>
+        <div class="mbody2">
+          <LineScore S={S} cls="sb-full" />
+          <div class="opt">
+            <span class="opt-l">演出速度</span>
+            <span class="row wrap gap4">
+              {[1, 2, 4].map((v) => (
+                <button type="button" key={v} class={`chip ${S.speed === v ? 'on' : ''}`} onClick={() => S.setSpeed(v)}>
+                  {v}x
+                </button>
+              ))}
+            </span>
+          </div>
+          <div class="opt">
+            <span class="opt-l">自动指挥</span>
+            <AutoSelect S={S} />
+          </div>
+          <div class="opt">
+            <span class="opt-l">换人</span>
+            <span class="row wrap gap4">
+              {ph === 'bat' ? (
+                <>
+                  <Btn small disabled={!ready} onClick={() => p.setDlg({ kind: 'ph' })}>代打</Btn>
+                  <Btn small disabled={!ready || !L.m.bases.some(Boolean)} onClick={() => p.setDlg({ kind: 'pr' })}>代跑</Btn>
+                </>
+              ) : ph === 'pitch' ? (
+                <>
+                  <Btn small disabled={!ready} onClick={() => p.setDlg({ kind: 'pc' })}>换投</Btn>
+                  <Btn small disabled={!ready} onClick={() => p.setDlg({ kind: 'ds' })}>守备替换</Btn>
+                </>
+              ) : null}
+            </span>
+          </div>
+          <div class="opt">
+            <span class="opt-l">交给教练</span>
+            <span class="row wrap gap4">
+              <Btn small disabled={!ready || S.state === 'over'} onClick={() => { S.autoHalf(); p.close(); }}>
+                这个半局
+              </Btn>
+              <Btn small disabled={S.state === 'playing' || S.state === 'over'} onClick={() => { S.toEnd(); p.close(); }}>
+                直接打完整场
+              </Btn>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -754,16 +604,28 @@ function SubDialog(p: { S: MatchSession; dlg: NonNullable<Dlg>; close: () => voi
   const [pos, setPos] = useState<Pos>('C');
   const [base, setBase] = useState(m.bases.findIndex(Boolean));
   let title = '';
-  let rows: { p: Player; info: ComponentChildren; disabled?: boolean }[] = [];
+  let head: ComponentChildren = null;
+  let rows: { p: Player; cols: ComponentChildren; disabled?: boolean }[] = [];
   let doIt: (pid: number) => void = () => {};
   switch (p.dlg.kind) {
     case 'ph':
       title = `代打：替换 ${fullName(m.batter())}`;
-      rows = bench.filter((x) => !isPitcher(x) || batterOffense(x) >= 45).sort((a, b) => batterOffense(b) - batterOffense(a)).map((x) => ({
+      head = (
+        <>
+          <span>击球</span>
+          <span>力量</span>
+          <span>选球</span>
+          <span>跑速</span>
+        </>
+      );
+      rows = bench.slice().sort((a, b) => batterOffense(b) - batterOffense(a)).map((x) => ({
         p: x,
-        info: (
+        cols: (
           <>
-            {x.bats === 'L' ? '左打' : x.bats === 'S' ? '左右' : '右打'} · 击 <Num v={x.a.contact} /> 力 <Num v={x.a.power} /> 眼 <Num v={x.a.eye} /> 速 <Num v={x.a.speed} />
+            <Num v={x.a.contact} />
+            <Num v={x.a.power} />
+            <Num v={x.a.eye} />
+            <Num v={x.a.speed} />
           </>
         ),
       }));
@@ -771,12 +633,22 @@ function SubDialog(p: { S: MatchSession; dlg: NonNullable<Dlg>; close: () => voi
       break;
     case 'pr':
       title = '代跑';
-      rows = bench.filter((x) => !isPitcher(x)).sort((a, b) => b.a.speed - a.a.speed).map((x) => ({
+      head = (
+        <>
+          <span>跑速</span>
+          <span>跑垒</span>
+          <span />
+          <span />
+        </>
+      );
+      rows = bench.slice().sort((a, b) => b.a.speed - a.a.speed).map((x) => ({
         p: x,
-        info: (
+        cols: (
           <>
-            跑速 <Num v={x.a.speed} /> 跑垒 <Num v={x.a.baserun} />
-            {has(x, 'steal') ? ' · 盗垒○' : ''}
+            <Num v={x.a.speed} />
+            <Num v={x.a.baserun} />
+            <span>{has(x, 'steal') ? '盗垒○' : ''}</span>
+            <span />
           </>
         ),
       }));
@@ -784,15 +656,25 @@ function SubDialog(p: { S: MatchSession; dlg: NonNullable<Dlg>; close: () => voi
       break;
     case 'pc':
       title = `换投：替换 ${fullName(m.pitcher())}`;
+      head = (
+        <>
+          <span>投手评价</span>
+          <span>球速</span>
+          <span>控球</span>
+          <span>疲劳</span>
+        </>
+      );
       rows = bench.slice().sort((a, b) => posRating(b, 'P') - posRating(a, 'P')).map((x) => {
         const left = m.rules.pitchLimit - m.weeklyPitches(t, x.id);
         return {
           p: x,
           disabled: left <= 10,
-          info: (
+          cols: (
             <>
-              {x.throws === 'L' ? '左投' : '右投'} · {Math.round(x.a.velocity)}km 控 <Num v={x.a.control} /> 威 <Num v={x.a.stuff} /> 耐 <Num v={x.a.stamina} /> · {x.pitches.map((k) => PITCH_DEFS[k.type].short + k.lv).join(' ') || '只有直球'}
-              <Fatigue v={x.fatigue} w={40} />
+              <Num v={posRating(x, 'P')} />
+              <span>{Math.round(x.a.velocity)}</span>
+              <Num v={x.a.control} />
+              <span class={x.fatigue >= 70 ? 'bad' : x.fatigue >= 45 ? 'orange' : 'good'}>{Math.round(x.fatigue)}</span>
             </>
           ),
         };
@@ -801,30 +683,46 @@ function SubDialog(p: { S: MatchSession; dlg: NonNullable<Dlg>; close: () => voi
       break;
     case 'ds':
       title = '守备替换';
-      rows = bench.map((x) => ({
-        p: x,
-        info: (
-          <>
-            {POS_NAME[pos]}守备 <Num v={fieldAt(x, pos)} /> · 肩 <Num v={x.a.arm} /> 速 <Num v={x.a.speed} />
-          </>
-        ),
-      })).sort((a, b) => fieldAt(b.p, pos) - fieldAt(a.p, pos));
+      head = (
+        <>
+          <span>{POS_NAME[pos]}评价</span>
+          <span>守备</span>
+          <span>肩力</span>
+          <span>跑速</span>
+        </>
+      );
+      rows = bench
+        .map((x) => ({
+          p: x,
+          cols: (
+            <>
+              <Num v={posRating(x, pos)} />
+              <Num v={fieldAt(x, pos)} />
+              <Num v={x.a.arm} />
+              <Num v={x.a.speed} />
+            </>
+          ),
+        }))
+        .sort((a, b) => posRating(b.p, pos) - posRating(a.p, pos));
       doIt = (pid) => S.act({ k: 'ds', pos, pid });
       break;
   }
   return (
     <div class="overlay" onClick={p.close}>
-      <div class="modal sub" onClick={(e) => e.stopPropagation()}>
+      <div class="modal sheet sub" onClick={(e) => e.stopPropagation()}>
         <div class="mtitle">
           <span>{title}</span>
+          <button type="button" class="x" onClick={p.close} aria-label="关闭">
+            ×
+          </button>
         </div>
         <div class="mbody2">
           {p.dlg.kind === 'pr' && (
-            <div class="row gap4 mb6">
+            <div class="row wrap gap4 mb6">
               {m.bases.map((r, i) =>
                 r ? (
                   <button type="button" key={i} class={`chip ${base === i ? 'on' : ''}`} onClick={() => setBase(i)}>
-                    {['一', '二', '三'][i]}垒 {fullName(t.get(r.pid))}
+                    {BASE[i]} {fullName(t.get(r.pid))}
                   </button>
                 ) : null,
               )}
@@ -840,30 +738,34 @@ function SubDialog(p: { S: MatchSession; dlg: NonNullable<Dlg>; close: () => voi
             </div>
           )}
           {rows.length ? (
-            rows.map((r) => (
-              <button
-                type="button"
-                key={r.p.id}
-                class="subrow"
-                disabled={r.disabled}
-                onClick={() => {
-                  doIt(r.p.id);
-                  p.close();
-                }}
-              >
-                <Portrait player={r.p} size="sm" />
-                <span>
-                  <b>{fullName(r.p)}</b> <span class="dim small">{r.p.grade}年</span>
-                  <div class="small dim">{r.info}</div>
-                </span>
-              </button>
-            ))
+            <div class="subtable">
+              <div class="subrow subhead">
+                <span />
+                <span>姓名</span>
+                {head}
+              </div>
+              {rows.map((r) => (
+                <button
+                  type="button"
+                  key={r.p.id}
+                  class="subrow"
+                  disabled={r.disabled}
+                  onClick={() => {
+                    doIt(r.p.id);
+                    p.close();
+                  }}
+                >
+                  <Portrait player={r.p} size="sm" />
+                  <span class="nm">
+                    <b>{fullName(r.p)}</b> <span class="dim small">{r.p.grade}年</span>
+                  </span>
+                  {r.cols}
+                </button>
+              ))}
+            </div>
           ) : (
-            <div class="dim">板凳上没有合适的人。</div>
+            <div class="dim">板凳上没有人了。</div>
           )}
-        </div>
-        <div class="mfoot">
-          <Btn onClick={p.close}>取消</Btn>
         </div>
       </div>
     </div>
@@ -887,28 +789,24 @@ function Postgame(p: { S: MatchSession }) {
         {sum.called ? '（提前结束）' : sum.innings > 9 ? `（延长 ${sum.innings} 局）` : ''}
       </div>
       {mvp && <div class="gold">MVP：{fullName(mvp)}</div>}
-      <table class="box small">
-        <thead>
-          <tr>
-            <th>打者</th>
-            <th>打数</th>
-            <th>安打</th>
-            <th>打点</th>
-            <th>结果</th>
-          </tr>
-        </thead>
-        <tbody>
-          {bat.map((b) => (
-            <tr key={b.pid}>
-              <td>{fullName(L.myTeam.get(b.pid))}</td>
-              <td>{b.ab}</td>
-              <td>{b.h}</td>
-              <td>{b.rbi}</td>
-              <td class="dim">{b.seq.join(' ')}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div class="box">
+        <div class="bx bx-head">
+          <span>打者</span>
+          <span class="r">打数</span>
+          <span class="r">安打</span>
+          <span class="r">打点</span>
+          <span>结果</span>
+        </div>
+        {bat.map((b) => (
+          <div key={b.pid} class="bx">
+            <span class="nm">{fullName(L.myTeam.get(b.pid))}</span>
+            <span class="r">{b.ab}</span>
+            <span class="r">{b.h}</span>
+            <span class="r">{b.rbi}</span>
+            <span class="dim seq">{b.seq.join(' ')}</span>
+          </div>
+        ))}
+      </div>
       {sum.highlights.length > 0 && (
         <ul class="small it-l">
           {sum.highlights.slice(0, 5).map((h, i) => (
@@ -922,5 +820,3 @@ function Postgame(p: { S: MatchSession }) {
     </section>
   );
 }
-
-export { FAM_NAME, ZONE_NAME };

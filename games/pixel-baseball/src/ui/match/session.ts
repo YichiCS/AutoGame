@@ -1,14 +1,17 @@
-// 亲自指挥的比赛（界面这一层）：开赛前确认阵容、每个打席的指令、托管、逐事件的演出
+// 亲自指挥的比赛（界面这一层）：开赛前确认阵容；之后一球一球地下指令——
+// 投球时选球种、在网格上点瞄准点；打击时看投手这一球的热区图，选狙哪一格（或不挥棒）、跑者要不要提前跑。
+// 也可以交给教练（整场、本局、或者只在关键时刻问我），逐事件演出。
 import type { LiveAct, PendingMatch, PitchType, Player, Pos } from '../../core/types';
 import { PITCH_DEFS } from '../../data/pitches';
-import type { BatCmd, BipInfo, PitchInfo, PitchPlan, PitchResult, PlayEvent, Snap } from '../../sim/types';
-import { LiveGame, type Intel } from '../../core/live';
-import type { PAMemo } from '../../sim/types';
+import type { BipInfo, PitchInfo, PitchResult, PlayEvent, Snap } from '../../sim/types';
+import { LiveGame } from '../../core/live';
 import { G } from '../../core/state';
 import { finishPending } from '../../core/sim';
 import { simulatePending } from '../../core/matchday';
-import { RES_NAME } from '../../sim/adapt';
-import { MatchStage, type StageScene, type Swing } from '../../render/stage';
+import { RES_NAME } from '../../sim/labels';
+import { arsenal, batSide, density, hotZones, pickoffSkill, spreadOf, type PitchOpt } from '../../sim/pitching';
+import { hash32 } from '../../core/rng';
+import { MatchStage, type Hud, type StageScene, type Swing } from '../../render/stage';
 import { FieldRenderer } from '../../render/field';
 import type { Look } from '../../render/figure';
 import { faceColors } from '../../render/portrait';
@@ -19,13 +22,10 @@ import { sfx } from '../sound';
 import { saveGame } from '../../core/save';
 
 export type MState = 'pregame' | 'ready' | 'playing' | 'over';
-/** 打席自动化：全部亲自 / 关键时刻才问我 / 只指挥进攻 / 只指挥防守 / 全部交给教练 */
+/** 自动指挥：每一球都亲自 / 关键时刻才问我 / 只指挥进攻 / 只指挥防守 / 全部交给教练 */
 export type AutoMode = 'off' | 'key' | 'bat' | 'pitch' | 'all';
 
-export const AUTO_NAME: Record<AutoMode, string> = { off: '每个打席都亲自指挥', key: '关键时刻才问我', bat: '只指挥进攻', pitch: '只指挥防守', all: '全部交给教练' };
-
-export const DEFAULT_BAT: BatCmd = { app: 'normal', sit: 'none', zone: 'none', run: 'none', agg: 0 };
-export const DEFAULT_PLAN: PitchPlan = { mix: 'auto', finisher: null, focus: 'auto', approach: 'normal', align: 'normal', ibb: false, hold: false, pitchout: false };
+export const AUTO_NAME: Record<AutoMode, string> = { off: '每一球都亲自指挥', key: '关键时刻才问我', bat: '只指挥进攻', pitch: '只指挥防守', all: '全部交给教练' };
 
 const POS_NUM: Record<Pos, number> = { P: 1, C: 2, '1B': 3, '2B': 4, '3B': 5, SS: 6, LF: 7, CF: 8, RF: 9 };
 const HITS = new Set(['1B', '2B', '3B', 'HR', 'IH']);
@@ -38,7 +38,7 @@ export interface Disp {
   err: [number, number];
 }
 
-/** 对决信息（演出中用打席开始时的快照，免得提前剧透结果） */
+/** 这一球的对决（演出中用这一球之前的快照，免得提前剧透） */
 export interface MuView {
   phase: 'bat' | 'pitch';
   b: Player;
@@ -47,14 +47,18 @@ export interface MuView {
   slot: number;
   pos: Pos | 'DH' | null;
   bseq: string[];
+  /** 打者面对这个投手站哪边 */
+  side: 'R' | 'L';
+  hot: number[];
   np: number;
   outs: number;
   r: number;
   so: number;
-  energy: number;
-  vs: PAMemo[];
-  intel: Intel;
-  advice: string[];
+  /** 投手剩下的体力 0..1 */
+  stamina: number;
+  /** 投手各球种此刻的质量 */
+  ars: PitchOpt[];
+  pickoff: number;
 }
 
 export interface PitchRow {
@@ -91,8 +95,6 @@ export class MatchSession {
   stage: MatchStage | null = null;
   field: FieldRenderer | null = null;
   view: 'stage' | 'field' = 'stage';
-  bat: BatCmd = { ...DEFAULT_BAT };
-  plan: PitchPlan = { ...DEFAULT_PLAN };
   /** 开赛前指定的先发 */
   starter: number | null = null;
   /** 本局交给教练：记下是哪个半局 */
@@ -102,13 +104,22 @@ export class MatchSession {
   disp: Disp | null = null;
   /** 上一个打席的结果（大字） */
   lastRes = '';
-  /** 这一打席教练已经替你下了指令（托管中） */
+  /** 这一球教练替你下指令（托管中） */
   coaching = false;
-  /** 演出中的打席快照 */
+  /** 演出中的快照 */
   mu: MuView | null = null;
+  // ---- 这一球的选择 ----
+  /** 投球：球种、瞄准点 */
+  ptype: PitchType | 'FB' = 'FB';
+  aim: { x: number; y: number } | null = null;
+  /** 打击：狙哪一格（-1 不挥棒，null 还没选）、各垒跑者提前跑 */
+  hunt: number | null = null;
+  run: [boolean, boolean, boolean] = [false, false, false];
   private skipPA = false;
   private autoTimer = 0;
   private nums = new Map<number, number>();
+  private paKey = '';
+  private heatCache: { key: string; heat: number[] } | null = null;
 
   constructor(pm: PendingMatch) {
     this.pm = pm;
@@ -146,7 +157,7 @@ export class MatchSession {
     this.state = this.live.phase() === 'over' ? 'over' : 'ready';
     this.syncDisp();
     for (const e of this.live.events.slice(-40)) this.pushLine(e);
-    this.prepareScene();
+    this.newPitch();
     saveGame();
     refresh();
     this.maybeAuto();
@@ -186,7 +197,9 @@ export class MatchSession {
     this.stage.speed = this.speed;
     this.field = new FieldRenderer(fieldCv, { koshien: L.rules.koshien, fence: L.rules.fence, homeColors: home, awayColors: away, seed: this.pm.seed });
     this.field.speed = this.speed;
+    this.paKey = '';
     this.prepareScene();
+    this.updateHud();
   }
 
   detach(): void {
@@ -208,14 +221,6 @@ export class MatchSession {
       hits: [T[0].hits, T[1].hits],
       err: [T[0].errors, T[1].errors],
     };
-    this.board();
-  }
-
-  private board(): void {
-    const d = this.disp;
-    const L = this.live;
-    if (!d || !L || !this.stage) return;
-    this.stage.setBoard({ away: L.away.short, home: L.home.short, score: [d.runs[0], d.runs[1]], balls: d.snap.balls, strikes: d.snap.strikes, outs: d.snap.outs });
   }
 
   private applyEvent(e: PlayEvent): void {
@@ -232,7 +237,6 @@ export class MatchSession {
     if (e.bip && HITS.has(e.bip.res)) d.hits[e.side]++;
     if (e.bip?.res === 'E') d.err[(1 - e.side) as 0 | 1]++;
     this.pushLine(e);
-    this.board();
   }
 
   private pushLine(e: PlayEvent): void {
@@ -289,10 +293,9 @@ export class MatchSession {
     const off = m.half;
     const dfn = (1 - off) as 0 | 1;
     const mode = L.phase() === 'bat' ? 'bat' : 'pitch';
-    const side: 'R' | 'L' = b.bats === 'S' ? (p.throws === 'R' ? 'L' : 'R') : (b.bats as 'R' | 'L');
+    const side = batSide(b, p.throws);
     const hand: 'R' | 'L' = p.throws === 'L' ? 'L' : 'R';
     const glove: 'a' | 'b' = mode === 'bat' ? (hand === 'R' ? 'b' : 'a') : hand === 'R' ? 'a' : 'b';
-    const offCmd = m.T[off].cmd ?? (L.phase() === 'bat' ? this.bat : null);
     const scene: StageScene = {
       mode,
       batter: { look: this.lookOf(b, off, 'bat'), side },
@@ -301,14 +304,18 @@ export class MatchSession {
       runner: this.lookOf(b, off, 'bat'),
       bases: [!!m.bases[0], !!m.bases[1], !!m.bases[2]],
       align: m.T[dfn].def.align,
-      bunting: !!offCmd && (offCmd.app === 'bunt' || offCmd.app === 'squeeze' || offCmd.app === 'buntHit'),
+      bunting: false,
     };
-    this.stage.setScene(scene);
-    this.board();
+    // 同一个打席的同一个对决就不重设（保留这个打席每一球的落点）
+    const key = `${m.inning}-${m.half}-${m.paNo}-${b.id}-${p.id}-${mode}`;
+    if (key !== this.paKey) {
+      this.paKey = key;
+      this.stage.setScene(scene);
+    } else this.stage.setBases(scene.bases);
     this.view = 'stage';
   }
 
-  /** 当前打席的对决信息 */
+  /** 这一球的对决信息 */
   captureMu(): MuView | null {
     const L = this.live;
     if (!L || L.phase() === 'over') return null;
@@ -318,33 +325,144 @@ export class MatchSession {
     const off = m.half;
     const dfn = (1 - off) as 0 | 1;
     const pb = m.T[dfn].pbox(pt.id);
-    const phase = L.phase() === 'bat' ? 'bat' : 'pitch';
+    const side = batSide(b, pt.throws);
     return {
-      phase,
+      phase: L.phase() === 'bat' ? 'bat' : 'pitch',
       b,
       pt,
       off,
       slot: m.T[off].batIdx + 1,
       pos: m.T[off].posOf(b.id),
       bseq: m.T[off].bbox(b.id).seq.slice(),
+      side,
+      hot: hotZones(b, side),
       np: pb.np,
       outs: pb.outs,
       r: pb.r,
       so: pb.so,
-      energy: m.T[dfn].fatigueRatio(pt.id),
-      vs: m.memo.filter((x) => x.bat === b.id && x.side === off),
-      intel: L.intel(),
-      advice: (phase === 'bat' ? L.adviceBat() : L.advicePitch()).why,
+      stamina: Math.max(0, 1 - m.T[dfn].fatigueRatio(pt.id)),
+      ars: arsenal(pt, m.pitcherNow()),
+      pickoff: Math.round(pickoffSkill(pt)),
     };
   }
 
-  /** 演出中用快照，否则用现在的 */
   muView(): MuView | null {
     return this.state === 'playing' && this.mu ? this.mu : this.captureMu();
   }
 
+  // ---------------- 这一球的选择与网格 ----------------
+  /** 新的一球：重设选择（新打席还要清掉落点、瞄准点），刷新画面 */
+  private newPitch(): void {
+    const L = this.live;
+    if (!L) return;
+    const m = L.m;
+    const prevKey = this.paKey;
+    this.prepareScene();
+    const newPA = this.paKey !== prevKey;
+    if (newPA) {
+      this.aim = null;
+      this.hunt = null;
+      this.pitches = [];
+    }
+    this.run = [false, false, false];
+    if (L.phase() === 'pitch') {
+      const p = m.pitcher();
+      if (this.ptype !== 'FB' && !p.pitches.some((x) => x.type === this.ptype)) this.ptype = 'FB';
+    }
+    this.updateHud();
+  }
+
+  /** 打击时：投手这一球的热区图（按比赛种子和第几球固定，同一球怎么看都一样） */
+  heat(): number[] | null {
+    const L = this.live;
+    if (!L || L.phase() !== 'bat' || !L.m.mind || !L.m.mindSp) return null;
+    const key = `${L.step}`;
+    if (this.heatCache?.key === key) return this.heatCache.heat;
+    const sp = L.m.mindSp;
+    const heat = density(L.m.mind.opts.map((o, i) => ({ x: o.x, y: o.y, w: o.w, sp: sp[i] })), hash32(this.pm.seed, L.step, 5));
+    this.heatCache = { key, heat };
+    return heat;
+  }
+
+  /** 投球时：瞄准点的散布预览 */
+  preview(): number[] | null {
+    const L = this.live;
+    if (!L || L.phase() !== 'pitch' || !this.aim) return null;
+    const m = L.m;
+    const p = m.pitcher();
+    const now = m.pitcherNow();
+    const q = arsenal(p, now).find((a) => a.type === this.ptype)?.q ?? 40;
+    const sp = spreadOf(this.ptype, p.throws, now.ctl, q, m.dfn.fatigueRatio(p.id));
+    return density([{ x: this.aim.x, y: this.aim.y, w: 1, sp }], hash32(this.pm.seed, L.step, 9), 900);
+  }
+
+  updateHud(): void {
+    const L = this.live;
+    if (!this.stage || !L) return;
+    const ph = L.phase();
+    const mu = this.captureMu();
+    const active = this.state === 'ready' && !this.coaching && ph !== 'over';
+    const hud: Hud =
+      ph === 'bat'
+        ? { heat: this.heat(), heatCol: PAL.orange, hot: mu?.hot ?? null, aim: null, hunt: this.hunt, active }
+        : ph === 'pitch'
+          ? { heat: this.preview(), heatCol: PAL.cyan, hot: mu?.hot ?? null, aim: this.aim, hunt: null, active }
+          : { heat: null, heatCol: PAL.orange, hot: null, aim: null, hunt: null, active: false };
+    this.stage.setHud(hud);
+  }
+
+  /** 点了画面上的某一点（画布坐标） */
+  tap(px: number, py: number): void {
+    const L = this.live;
+    if (!L || !this.stage || this.state !== 'ready' || this.coaching) return;
+    if (L.phase() === 'pitch') {
+      const c = this.stage.cellAtPoint(px, py);
+      if (!c) return;
+      // 点同一格两次：直接投
+      if (this.aim && Math.abs(this.aim.x - c.x) < 1e-6 && Math.abs(this.aim.y - c.y) < 1e-6) {
+        this.go();
+        return;
+      }
+      this.aim = c;
+    } else if (L.phase() === 'bat') {
+      const zn = this.stage.zoneAtPoint(px, py);
+      if (zn < 0) return;
+      if (this.hunt === zn) {
+        this.go();
+        return;
+      }
+      this.hunt = zn;
+    }
+    this.updateHud();
+    refresh();
+  }
+
+  setPitchType(t: PitchType | 'FB'): void {
+    this.ptype = t;
+    this.updateHud();
+    refresh();
+  }
+
+  setTake(): void {
+    this.hunt = this.hunt === -1 ? null : -1;
+    this.updateHud();
+    refresh();
+  }
+
+  toggleRun(i: number): void {
+    this.run[i] = !this.run[i];
+    refresh();
+  }
+
+  /** 这一球可以开始了吗（投球要有瞄准点；打击要选好狙哪一格或不挥棒） */
+  canGo(): boolean {
+    const L = this.live;
+    if (!L || this.state !== 'ready' || this.coaching) return false;
+    return L.phase() === 'pitch' ? !!this.aim : this.hunt !== null;
+  }
+
   // ---------------- 托管 ----------------
-  /** 这个打席要不要问玩家 */
+  /** 这一球要不要问玩家 */
   needsHuman(): boolean {
     const L = this.live;
     if (!L || L.phase() === 'over') return false;
@@ -366,30 +484,41 @@ export class MatchSession {
     }
   }
 
-  /** 交给教练的打席：稍等一下再自动开始（让玩家看清教练的指示，也可以随时接手） */
+  /** 交给教练的一球：稍等一下再自动开始（随时可以接手） */
   maybeAuto(): void {
     window.clearTimeout(this.autoTimer);
     if (this.state !== 'ready' || !this.live || this.live.phase() === 'over') return;
     if (this.needsHuman()) {
       this.coaching = false;
+      this.updateHud();
       refresh();
       return;
     }
     this.coaching = true;
+    this.updateHud();
     refresh();
     this.autoTimer = window.setTimeout(() => {
       if (this.state !== 'ready' || this.needsHuman()) {
         this.coaching = false;
+        this.updateHud();
         refresh();
         return;
       }
-      this.live!.coachTurn();
-      this.prepareScene();
-      void this.runPA();
-    }, Math.max(150, 900 / this.speed));
+      const ev = this.live!.coachTurn();
+      for (const e of ev) this.applyEvent(e);
+      this.newPitch();
+      void this.runPitch();
+    }, Math.max(120, 600 / this.speed));
   }
 
-  /** 本局剩下的打席交给教练 */
+  /** 我来指挥：停掉托管 */
+  takeOver(): void {
+    this.halfAuto = null;
+    if (this.auto !== 'off') this.setAuto('off');
+    else this.maybeAuto();
+  }
+
+  /** 本局剩下的交给教练 */
   autoHalf(): void {
     const L = this.live;
     if (!L) return;
@@ -416,55 +545,51 @@ export class MatchSession {
     const L = this.live;
     if (!L || this.state !== 'ready') return;
     const ev = L.act(a);
-    if (!ev.length && a.k !== 'bat' && a.k !== 'pitch') {
+    if (!ev.length) {
       toast('这个操作现在不行', 'bad');
       return;
     }
     for (const e of ev) this.applyEvent(e);
     if (a.k === 'po') {
-      const last = ev[ev.length - 1];
+      const last = ev.find((e) => e.k === 'pickoff') ?? ev[ev.length - 1];
       if (last) toast(last.text, last.big ? 'good' : 'info');
     }
     if (L.phase() === 'over') this.state = 'over';
     this.syncDisp();
-    this.prepareScene();
+    this.newPitch();
     saveGame();
     refresh();
+    this.maybeAuto();
   }
 
-  /** 玩家按下「开始打席」 */
+  /** 玩家下达这一球的指令并开始 */
   go(): void {
     const L = this.live;
-    if (!L || this.state !== 'ready') return;
+    if (!L || !this.canGo()) return;
     window.clearTimeout(this.autoTimer);
-    if (L.phase() === 'bat') L.act({ k: 'bat', c: { ...this.bat } });
-    else if (L.phase() === 'pitch') L.act({ k: 'pitch', c: { ...this.plan } });
-    // 一次性的指示用过就收回
-    this.bat.run = 'none';
-    this.plan.ibb = false;
-    this.plan.pitchout = false;
-    void this.runPA();
+    if (L.phase() === 'pitch' && this.aim) L.act({ k: 'throw', t: this.ptype, x: this.aim.x, y: this.aim.y });
+    else if (L.phase() === 'bat') L.act({ k: 'swing', z: this.hunt ?? -1, run: [...this.run] as [boolean, boolean, boolean] });
+    void this.runPitch();
   }
 
-  /** 跳过这个打席的动画 */
+  /** 跳过这一球的动画 */
   skip(): void {
     this.skipPA = true;
     this.stage?.skip();
     this.field?.stop();
   }
 
-  // ---------------- 打一个打席 ----------------
-  private async runPA(): Promise<void> {
+  // ---------------- 投一球 ----------------
+  private async runPitch(): Promise<void> {
     const L = this.live;
     if (!L || this.state !== 'ready') return;
     this.state = 'playing';
     this.coaching = false;
     const memoN = L.m.memo.length;
-    this.pitches = [];
     this.mu = this.captureMu();
-    this.prepareScene();
+    this.updateHud();
     refresh();
-    const events = L.play();
+    const events = L.pitch();
     try {
       await this.animate(events);
     } catch (e) {
@@ -473,16 +598,15 @@ export class MatchSession {
     this.skipPA = false;
     this.mu = null;
     this.stage?.resume();
-    // 打席结果
     const mm = L.m.memo.length > memoN ? L.m.memo[L.m.memo.length - 1] : null;
-    this.lastRes = mm ? RES_NAME[mm.res] : '';
+    if (mm) this.lastRes = RES_NAME[mm.res];
     this.syncDisp();
     this.state = L.phase() === 'over' ? 'over' : 'ready';
     if (this.state === 'over') {
       const win = L.m.winner === L.mySide;
       sfx(win ? 'win' : 'lose');
     }
-    this.prepareScene();
+    this.newPitch();
     saveGame();
     refresh();
     this.maybeAuto();
@@ -520,12 +644,14 @@ export class MatchSession {
         continue;
       }
       if ((e.k === 'steal' || e.k === 'wp' || e.k === 'pickoff' || e.k === 'play') && e.moves?.length) {
+        if (e.k === 'pickoff') await st.banner('牵制！', PAL.cyan, '', 0.5);
         await this.fieldMoves(e);
         this.applyEvent(e);
         refresh();
         continue;
       }
       this.applyEvent(e);
+      if (e.k === 'pickoff') await st.banner('牵制', PAL.cyan, e.text.includes('安全') ? '安全回垒' : '', 0.7);
       if (e.k === 'play' && !e.bip) {
         // 三振、四坏球等打席结果
         const t = e.text.includes('三振') ? '三振' : e.text.includes('四坏') ? '四坏球' : e.text.includes('触身') ? '触身球' : '';
@@ -594,12 +720,8 @@ export function isKey(L: LiveGame): boolean {
 }
 
 export function pitchText(p: PitchInfo): string {
-  const name = p.sig ?? (p.type === 'FB' ? '直球' : undefined);
-  return `${name ?? pitchNameOf(p.type)} ${p.kmh}km/h ${RES_TEXT[p.res] ?? ''}`;
-}
-
-function pitchNameOf(t: PitchType | 'FB'): string {
-  return t === 'FB' ? '直球' : PITCH_DEFS[t].name;
+  const name = p.sig ? `「${p.sig}」` : p.type === 'FB' ? '直球' : PITCH_DEFS[p.type].name;
+  return `${name} ${p.kmh}km/h ${RES_TEXT[p.res] ?? ''}`;
 }
 
 function sleep(ms: number): Promise<void> {
