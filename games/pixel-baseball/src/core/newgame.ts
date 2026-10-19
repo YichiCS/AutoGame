@@ -11,7 +11,8 @@ import { queue } from './queue';
 import { schoolBudget } from './economy';
 import './events';
 
-export const SAVE_VERSION = 3;
+/** 3 → 4（游戏 v2.2.0）：位置由能力决定、去掉守备适性，野手的投球能力补到正常水平 */
+export const SAVE_VERSION = 4;
 
 export interface NewGameOpts {
   mgrName: string;

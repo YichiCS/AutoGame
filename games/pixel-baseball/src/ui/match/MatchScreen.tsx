@@ -5,7 +5,7 @@ import type { Player, Pos } from '../../core/types';
 import { POS_NAME, POS_SHORT } from '../../core/types';
 import type { Alignment, BatCmd, PitchPlan, Zone } from '../../sim/types';
 import { G } from '../../core/state';
-import { batterOffense, fieldAt, fullName, has, isPitcher, pitcherOverall, traitList, velScore } from '../../core/attrs';
+import { batterOffense, fieldAt, fullName, has, isPitcher, pitcherOverall, posRating, traitList, velScore } from '../../core/attrs';
 import { PITCH_DEFS } from '../../data/pitches';
 import { mySetupFull, oppSetup, rulesFor, tourOf } from '../../core/matchday';
 import { schoolById } from '../../core/world';
@@ -47,7 +47,7 @@ function Pregame(p: { S: MatchSession }) {
   const myStr = strengthOf(mine.setup.players, rules.dh);
   const opStr = strengthOf(theirs.players, rules.dh);
   const avail = myPlayers().filter(available);
-  const pitchers = avail.filter((x) => isPitcher(x) || (x.apt.P ?? 0) >= 50).sort((a, b) => pitcherOverall(b) - pitcherOverall(a));
+  const pitchers = avail.slice().sort((a, b) => posRating(b, 'P') - posRating(a, 'P'));
   const auto = todayStarter(avail, rules.pitchLimit, null);
   const starter = mine.setup.defense.P;
   const byId = new Map(mine.setup.players.map((x) => [x.id, x]));
@@ -784,7 +784,7 @@ function SubDialog(p: { S: MatchSession; dlg: NonNullable<Dlg>; close: () => voi
       break;
     case 'pc':
       title = `换投：替换 ${fullName(m.pitcher())}`;
-      rows = bench.filter((x) => isPitcher(x) || (x.apt.P ?? 0) >= 50).sort((a, b) => pitcherOverall(b) - pitcherOverall(a)).map((x) => {
+      rows = bench.slice().sort((a, b) => posRating(b, 'P') - posRating(a, 'P')).map((x) => {
         const left = m.rules.pitchLimit - m.weeklyPitches(t, x.id);
         return {
           p: x,

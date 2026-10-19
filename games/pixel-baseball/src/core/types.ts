@@ -78,7 +78,6 @@ export interface Player {
   throws: Hand;
   bats: BatSide;
   pos: Pos;
-  apt: Partial<Record<Pos, number>>;
   a: Record<AttrKey, number>;
   caps: Record<AttrKey, number>;
   traj: number; // 弹道 1..4
@@ -98,6 +97,8 @@ export interface Player {
   academics: number;
   pop: number; // 人气
   exp: ExpPool;
+  /** 留给「另一边」的经验（投手练打击、野手练投球），见 growth.ts 的 autoSpend */
+  xo?: ExpPool;
   plan: DevPlan;
   /** 正在学的新球种 */
   learning: { pitch: PitchType; progress: number } | null;

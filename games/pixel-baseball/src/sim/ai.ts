@@ -2,7 +2,7 @@
 import type { Match, TeamState } from './match';
 import type { OffTactic } from './types';
 import type { Player, Pos } from '../core/types';
-import { batterOffense, fieldAt, aptOf, has, isPitcher, pitcherOverall } from '../core/attrs';
+import { batterOffense, fieldAt, aptOf, has, isPitcher, pitchable, pitcherOverall } from '../core/attrs';
 import { chance } from '../core/rng';
 
 const STYLE = {
@@ -17,9 +17,7 @@ function style(t: TeamState) {
   return STYLE[t.s.style] ?? STYLE.balanced;
 }
 
-function canPitch(p: Player): boolean {
-  return p.pos === 'P' || (p.apt.P ?? 0) >= 50;
-}
+const canPitch = pitchable;
 
 export function pickReliever(m: Match, t: TeamState): number | null {
   let cands = t.bench().filter(canPitch);

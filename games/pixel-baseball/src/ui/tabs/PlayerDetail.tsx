@@ -2,7 +2,7 @@ import type { AttrKey, DevPlan, Player, Pos } from '../../core/types';
 import { POSITIONS, POS_SHORT, POS_NAME, EXP_KINDS } from '../../core/types';
 import { G } from '../../core/state';
 import {
-  ATTR_DESC, ATTR_NAME, EXP_NAME, GROWTH_NAME, PERS_DESC, PERS_NAME, WISH_NAME, avgOf, eraOf, fullName, has, ipStr, isPitcher, obpOf, overall, slgOf, stars, velScore,
+  ATTR_DESC, ATTR_NAME, EXP_NAME, GROWTH_NAME, PERS_DESC, PERS_NAME, WISH_NAME, avgOf, eraOf, fullName, has, ipStr, isPitcher, obpOf, overall, slgOf, stars, velScore, posRating,
 } from '../../core/attrs';
 import { rate3 } from '../../core/util';
 import { learnNeed, maxPitchCount, maxPitchLv } from '../../core/growth';
@@ -122,13 +122,6 @@ export function PitchChart(p: { pl: Player }) {
 const PLAN_BAT: [DevPlan, string][] = [['auto', '自动'], ['balanced', '均衡'], ['contact', '巧打'], ['power', '长打'], ['speed', '速度'], ['defense', '守备']];
 const PLAN_PIT: [DevPlan, string][] = [['auto', '自动'], ['balanced', '均衡'], ['pit_velo', '球速'], ['pit_ctrl', '控球'], ['pit_brk', '变化球'], ['pit_stam', '耐力']];
 
-function aptMark(v: number | undefined): string {
-  if (!v || v < 25) return '—';
-  if (v >= 80) return '◎';
-  if (v >= 60) return '○';
-  if (v >= 40) return '△';
-  return '▽';
-}
 
 function StatTables(p: { pl: Player }) {
   const s = p.pl.stats;
@@ -236,12 +229,12 @@ export function PlayerDetail(p: { pl: Player; onBack?: () => void }) {
         )}
       </Panel>
 
-      <Panel title="守备适性">
+      <Panel title="各位置的总评">
         <div class="apt">
           {POSITIONS.map((pos: Pos) => (
-            <span key={pos} class={pos === pl.pos ? 'on' : ''} title={`${POS_NAME[pos]}：${Math.round(pl.apt[pos] ?? 0)}`}>
+            <span key={pos} class={pos === pl.pos ? 'on' : ''} title={POS_NAME[pos]}>
               <small>{POS_SHORT[pos]}</small>
-              {aptMark(pl.apt[pos])}
+              <Num v={posRating(pl, pos)} />
             </span>
           ))}
         </div>

@@ -1,7 +1,7 @@
 // 阵容编排与队伍战力
 import type { Player, Pos } from './types';
 import { FIELD_POS } from './types';
-import { batterOffense, batterOverall, fieldAt, isPitcher, pitcherOverall } from './attrs';
+import { batterOffense, batterOverall, fieldAt, isPitcher, pitchable, pitcherOverall } from './attrs';
 import { avg, clamp } from './util';
 
 export interface Lineup {
@@ -34,7 +34,7 @@ export function starterScoreW(p: Player, limit: number, freshW: number): number 
 }
 
 export function pickStarter(players: Player[], rotation: number[] = [], limit = 500, freshW = 1): Player | null {
-  const pitchers = players.filter((p) => isPitcher(p) || (p.apt.P ?? 0) >= 50);
+  const pitchers = players.filter(pitchable);
   if (!pitchers.length) return players.length ? players.reduce((a, b) => (pitcherOverall(a) > pitcherOverall(b) ? a : b)) : null;
   // 按轮换顺位：第一个状态可以的投手
   for (const id of rotation) {
@@ -167,7 +167,7 @@ export function autoBench(players: Player[], size = 20, dh = true): number[] {
   if (lu.defense.P) chosen.add(lu.defense.P);
   const pitchers = avail.filter((p) => isPitcher(p) && !chosen.has(p.id)).sort((a, b) => pitcherOverall(b) - pitcherOverall(a));
   for (const p of pitchers.slice(0, 4)) if (chosen.size < size) chosen.add(p.id);
-  const catchers = avail.filter((p) => (p.apt.C ?? 0) >= 60 && !chosen.has(p.id)).sort((a, b) => fieldAt(b, 'C') - fieldAt(a, 'C'));
+  const catchers = avail.filter((p) => !chosen.has(p.id)).sort((a, b) => fieldAt(b, 'C') - fieldAt(a, 'C'));
   if (catchers.length && chosen.size < size) chosen.add(catchers[0].id);
   const rest = avail.filter((p) => !chosen.has(p.id)).sort((a, b) => benchValue(b) - benchValue(a));
   const byId = new Map(avail.map((p) => [p.id, p]));

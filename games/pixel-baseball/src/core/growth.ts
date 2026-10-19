@@ -151,7 +151,9 @@ export function learnTrait(p: Player, id: string): boolean {
 type Weights = Partial<Record<AttrKey | 'pitch', number>>;
 
 function planWeights(p: Player, plan: DevPlan): Weights {
-  if (isPitcher(p)) {
+  // 投手的培养方针谁都可以选（野手也能往投手方向练）；自动 / 均衡看现在的位置
+  const pitPlan = plan.startsWith('pit_') || ((plan === 'auto' || plan === 'balanced') && isPitcher(p));
+  if (pitPlan) {
     switch (plan) {
       case 'pit_velo': return { velocity: 1.7, stuff: 0.9, control: 0.5, stamina: 0.4, pitch: 0.4 };
       case 'pit_ctrl': return { control: 1.7, mental: 0.6, stuff: 0.5, stamina: 0.4, velocity: 0.4, pitch: 0.4 };
@@ -180,10 +182,47 @@ function planWeights(p: Player, plan: DevPlan): Weights {
   }
 }
 
-/** 按方针自动消耗经验，返回提升记录 */
+/** 另一边分到的经验比例：投手也练打击和守备，野手也练投球，练得少，但不会停在原地 */
+export const OFF_SHARE = 0.2;
+
+/** 另一边练什么：主练投球的人练打击和守备，主练打击和守备的人练投球 */
+function offWeights(p: Player, plan: DevPlan): Weights {
+  const pitPlan = plan.startsWith('pit_') || ((plan === 'auto' || plan === 'balanced') && isPitcher(p));
+  return pitPlan
+    ? { contact: 1, power: 0.8, eye: 0.5, speed: 0.6, fielding: 0.5, catching: 0.4, arm: 0.3, baserun: 0.2 }
+    : { control: 1, stamina: 0.8, velocity: 0.8, stuff: 0.7, pitch: 0.5 };
+}
+
+/** 另一边的练习用得上哪些经验（投手练打击用不到「变化」） */
+function offUsable(p: Player, plan: DevPlan): Set<ExpKind> {
+  const out = new Set<ExpKind>();
+  for (const k in offWeights(p, plan)) for (const e in k === 'pitch' ? { brk: 1 } : ATTR_COST[k as AttrKey]) out.add(e as ExpKind);
+  return out;
+}
+
+/** 加经验：新经验的两成存进「另一边」的经验（p.xo），留给另一边的练习 */
+export function gainExp(p: Player, e: ExpKind, v: number): void {
+  if (v > 0 && offUsable(p, p.plan).has(e)) {
+    const bank = (p.xo ??= emptyExp());
+    bank[e] += v * OFF_SHARE;
+    v *= 1 - OFF_SHARE;
+  }
+  p.exp[e] += v;
+}
+
+/** 按方针自动消耗经验，返回提升记录：另一边的经验（p.xo）花在另一边，其余按培养方针 */
 export function autoSpend(p: Player, plan: DevPlan = p.plan, budget = 60): Partial<Record<AttrKey | 'pitch', number>> {
   const gained: Partial<Record<AttrKey | 'pitch', number>> = {};
-  const w = planWeights(p, plan === 'auto' ? 'auto' : plan);
+  const bank = (p.xo ??= emptyExp());
+  const main = p.exp;
+  p.exp = bank;
+  spendWith(p, offWeights(p, plan), budget, gained);
+  p.exp = main;
+  spendWith(p, planWeights(p, plan === 'auto' ? 'auto' : plan), budget, gained);
+  return gained;
+}
+
+function spendWith(p: Player, w: Weights, budget: number, gained: Partial<Record<AttrKey | 'pitch', number>>): void {
   for (let iter = 0; iter < budget; iter++) {
     let best: { key: AttrKey | 'pitch'; idx: number; score: number } | null = null;
     for (const key in w) {
@@ -214,7 +253,6 @@ export function autoSpend(p: Player, plan: DevPlan = p.plan, budget = 60): Parti
     if (!ok) break;
     gained[b.key] = (gained[b.key] ?? 0) + 1;
   }
-  return gained;
 }
 
 // ---------- 成长系数 ----------
@@ -247,13 +285,13 @@ export function aiGrow(p: Player, weeks: number, factor = 1): void {
   const total = per * weeks;
   const dist: ExpPool = isPitcher(p)
     ? { str: 0.24, agi: 0.14, tech: 0.18, brk: 0.26, men: 0.18 }
-    : { str: 0.26, agi: 0.25, tech: 0.33, brk: 0, men: 0.16 };
-  for (const e of EXP_KINDS) p.exp[e] += total * dist[e];
+    : { str: 0.26, agi: 0.24, tech: 0.3, brk: 0.04, men: 0.16 };
+  for (const e of EXP_KINDS) gainExp(p, e, total * dist[e]);
   autoSpend(p, 'auto', 400);
 }
 
 export function addExp(p: Player, gain: Partial<ExpPool>): void {
-  for (const e in gain) p.exp[e as ExpKind] += gain[e as ExpKind] ?? 0;
+  for (const e in gain) gainExp(p, e as ExpKind, gain[e as ExpKind] ?? 0);
 }
 
 export function totalExp(p: Player): number {

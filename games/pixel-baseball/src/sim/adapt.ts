@@ -4,7 +4,7 @@ import type { Match, TeamState } from './match';
 import { famOf } from './match';
 import type { BatCmd, OffTactic, PAMemo, PAResult, PitchPlan, PitchSpot, Zone } from './types';
 import type { PitchType, Player } from '../core/types';
-import { batterOffense, has, pitcherOverall } from '../core/attrs';
+import { batterOffense, has, pitchable, pitcherOverall } from '../core/attrs';
 import { chance, hash32 } from '../core/rng';
 import { PITCH_DEFS } from '../data/pitches';
 
@@ -418,7 +418,7 @@ function bestReliever(m: Match, t: TeamState): number | null {
   let best: Player | null = null;
   let bv = -Infinity;
   for (const p of t.bench()) {
-    const canP = p.pos === 'P' || (p.apt.P ?? 0) >= 50;
+    const canP = pitchable(p);
     if (!canP) continue;
     const left = m.rules.pitchLimit - m.weeklyPitches(t, p.id);
     if (left <= 10) continue;

@@ -17,7 +17,7 @@ export interface TraitDef {
   catcherOnly?: boolean;
 }
 
-const isP = (p: Player) => p.pos === 'P' || (p.apt.P ?? 0) >= 60;
+const isP = (p: Player) => p.pos === 'P';
 
 export const TRAITS: readonly TraitDef[] = [
   // ---- 打击 ----
@@ -40,9 +40,9 @@ export const TRAITS: readonly TraitDef[] = [
   { id: 'glove', name: '守备职人', desc: '守备范围更广，失误更少', kind: 'field', good: true, cost: { agi: 40, tech: 50 }, req: (p) => p.a.fielding >= 60, opp: 'errorProne' },
   { id: 'errorProne', name: '失误多', desc: '容易出现守备失误', kind: 'field', good: false, opp: 'glove' },
   { id: 'laser', name: '激光肩', desc: '外野传球威胁大，跑者不敢多跑', kind: 'field', good: true, cost: { str: 50 }, req: (p) => p.a.arm >= 70 },
-  { id: 'leader', name: '配球高手', desc: '担任捕手时，投手的控球与球威提升', kind: 'field', good: true, cost: { men: 60, tech: 40 }, catcherOnly: true, req: (p) => (p.apt.C ?? 0) >= 60, opp: 'leaderX' },
+  { id: 'leader', name: '配球高手', desc: '担任捕手时，投手的控球与球威提升', kind: 'field', good: true, cost: { men: 60, tech: 40 }, catcherOnly: true, req: (p) => p.pos === 'C', opp: 'leaderX' },
   { id: 'leaderX', name: '配球不佳', desc: '担任捕手时，投手的表现下降', kind: 'field', good: false, opp: 'leader' },
-  { id: 'block', name: '拦截○', desc: '担任捕手时，暴投与捕逸减少', kind: 'field', good: true, cost: { agi: 30, men: 20 }, catcherOnly: true, req: (p) => (p.apt.C ?? 0) >= 60 },
+  { id: 'block', name: '拦截○', desc: '担任捕手时，暴投与捕逸减少', kind: 'field', good: true, cost: { agi: 30, men: 20 }, catcherOnly: true, req: (p) => p.pos === 'C' },
   // ---- 投手 ----
   { id: 'pinch', name: '对危机○', desc: '得分圈有人时投球能力提升', kind: 'pit', good: true, cost: { men: 60, brk: 20 }, pitcherOnly: true, req: isP, opp: 'pinchX' },
   { id: 'pinchX', name: '对危机×', desc: '得分圈有人时投球能力下降', kind: 'pit', good: false, pitcherOnly: true, opp: 'pinch' },

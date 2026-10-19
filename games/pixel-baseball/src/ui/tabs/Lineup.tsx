@@ -3,7 +3,7 @@ import type { LineupPlan, Player, Pos } from '../../core/types';
 import { POS_NAME, POS_SHORT } from '../../core/types';
 import { G, myPlayers } from '../../core/state';
 import { available } from '../../core/player';
-import { batterOffense, fieldAt, fullName, isPitcher, pitcherOverall } from '../../core/attrs';
+import { batterOffense, fieldAt, fullName, isPitcher, pitcherOverall, posRating } from '../../core/attrs';
 import { autoPlan, planProblems, todayStarter } from '../../core/lineup';
 import { PITCH_DEFS } from '../../data/pitches';
 import { Btn, Empty, Fatigue, Num, Panel } from '../components/common';
@@ -45,7 +45,7 @@ export function LineupEditor() {
     setPlan(next);
   };
   const avail = myPlayers().filter(available);
-  const pitchers = all.filter((p) => isPitcher(p) || (p.apt.P ?? 0) >= 50).sort((a, b) => pitcherOverall(b) - pitcherOverall(a));
+  const pitchers = all.slice().sort((a, b) => posRating(b, 'P') - posRating(a, 'P'));
   const next = todayStarter(avail, 500, G.nextStarter);
   return (
     <div class="lineup">
