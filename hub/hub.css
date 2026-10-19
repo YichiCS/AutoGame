@@ -248,7 +248,9 @@ img { image-rendering: auto; }
 }
 .dlg::backdrop { background: rgba(11, 12, 20, 0.75); }
 .dlg-title { margin: 0 0 12px; font-size: 24px; line-height: 28px; font-weight: normal; color: var(--c-yellow); }
-.dlg-body ul:not(.pick-list):not(.slots) { margin: 0 0 8px; padding-left: 18px; }
+.dlg-body ul:not(.pick-list):not(.slots), .dlg-body ol { margin: 0 0 8px; padding-left: 18px; }
+.dlg-body ol { padding-left: 24px; }
+.dlg-body ol li + li { margin-top: 4px; }
 .dlg-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .pick-list { display: grid; gap: 8px; margin: 10px 0; padding: 0; list-style: none; }
 .pick { display: grid; gap: 4px; padding: 10px 12px; background: var(--panel-2); clip-path: var(--notch-s); }

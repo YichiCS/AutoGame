@@ -186,7 +186,7 @@ async function renderStorageInfo() {
   if (st && st.persisted) {
     const on = await st.persisted().catch(() => false);
     persistEl.innerHTML = on
-      ? '<span class="good">已开启</span>'
+      ? '<span class="good">已开启</span><button class="btn small" type="button" data-act="persist-off">怎么关闭</button>'
       : '<span class="muted">未开启</span><button class="btn small" type="button" data-act="persist">申请</button>';
   } else persistEl.textContent = '浏览器不支持';
   if (st && st.estimate) {
@@ -228,6 +228,9 @@ function bindEvents() {
         break;
       case 'persist':
         requestPersist();
+        break;
+      case 'persist-off':
+        explainPersistOff();
         break;
       default:
         break;
@@ -493,7 +496,19 @@ async function clearFlow(g) {
 }
 
 // ---------- 持久存储 ----------
+// 浏览器只提供「申请」，没有让网页撤销的接口：开启前说清楚，开启后告诉玩家去浏览器里关
+const PERSIST_WHAT = '<p>开启后，浏览器在磁盘空间不够时不会自动删掉这里的存档；没开启时，浏览器清理空间可能会删掉很久没打开的网站的数据。开启不会多占空间，也不会收集任何信息。</p>';
+
 async function requestPersist() {
+  const r = await openDialog({
+    title: '开启持久存储',
+    body: `${PERSIST_WHAT}<p>注意：开启后<b>在网页里没法再关掉</b>（浏览器没有提供撤销的办法），只能到浏览器的网站设置里清除本站数据。它对整个 <code>${esc(location.host)}</code> 生效。</p>`,
+    actions: [
+      { label: '取消', value: '' },
+      { label: '开启', value: 'ok', kind: 'primary', autofocus: true },
+    ],
+  });
+  if (r.value !== 'ok') return;
   const ok = navigator.storage && navigator.storage.persist ? await navigator.storage.persist().catch(() => false) : false;
   toast(
     ok ? '已开启持久存储：浏览器清理空间时不会自动删掉这里的存档' : '浏览器暂时没有同意。多玩几次、或把本站加入书签后再试试',
@@ -501,4 +516,17 @@ async function requestPersist() {
     4500,
   );
   renderStorageInfo();
+}
+
+async function explainPersistOff() {
+  const host = esc(location.host);
+  await openDialog({
+    title: '怎么关闭持久存储',
+    body: `<p>在网页里关不掉：浏览器只提供了「申请」持久存储的办法，没有提供撤销的办法。</p>${PERSIST_WHAT}<p>所以一般开着就好。一定要关的话：</p>
+      <ol>
+        <li>先点「导出全部存档」，留一份备份。</li>
+        <li>点浏览器地址栏左边的网站图标，在「网站设置」或「Cookie 和网站数据」里清除 <code>${host}</code> 的数据。<b>这会删掉本站的所有存档</b>，同一个域名下其他网页的数据也会一起清掉。</li>
+        <li>回到这里刷新页面，持久存储会显示「未开启」（还显示「已开启」的话，在同一个地方把网站权限也重置一下），再用「导入存档文件」把备份导回来。</li>
+      </ol>`,
+  });
 }

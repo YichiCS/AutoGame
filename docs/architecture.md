@@ -9,7 +9,7 @@ index.html               游戏厅首页（https://yichics.github.io/AutoGame/�
 autogame.json            站点配置：游戏厅版本 + 游戏列表（顺序即展示顺序）
 hub/                     游戏厅
   hub.css                像素风样式（Sweetie 16 配色、Fusion Pixel 字体）
-  dock.js                游戏内悬浮标签，每个游戏的入口页面引入
+  dock.js                游戏接入脚本，每个游戏的入口页面引入（不显示任何东西）
   icon.svg               站点图标
   fonts/                 像素字体（OFL 1.1）
   js/
@@ -75,14 +75,13 @@ CHANGELOG.md             游戏厅的更新日志
     "indexedDB": ["pixel-koshien"],
     "adapter": "save-adapter.js",
     "inGameExport": { "match": ["game", "mgr", "roster", "tours"], "hint": "游戏右上角「⚙ 设置 → 导入存档」" }
-  },
-  "dock": { "y": 0.42 }
+  }
 }
 ```
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `id` | ✓ | 和目录名一致；小写字母、数字、连字符。用于分支名、存档包、悬浮标签，定下来就不再改 |
+| `id` | ✓ | 和目录名一致；小写字母、数字、连字符。用于分支名、存档包、接入脚本，定下来就不再改 |
 | `name` | ✓ | 显示名 |
 | `subtitle` | | 副标题 / 英文名 |
 | `version` | ✓ | `x.y.z`，每个 `<id>-v<版本号>` 分支都要升，规则见 [CONTRIBUTING.md](../CONTRIBUTING.md#版本号怎么升)；有 `package.json` 的要保持一致 |
@@ -95,7 +94,6 @@ CHANGELOG.md             游戏厅的更新日志
 | `source` | | 原始仓库地址 |
 | `build` | | 需要构建的游戏：`command` 在游戏目录里运行，`outputs` 是构建产物（必须提交进仓库） |
 | `saves` | ✓ | 存档声明，见下文 |
-| `dock` | | 悬浮标签：`y` 默认高度（0 顶 ～ 1 底，默认 0.5）；`leaveConfirm` 离开游戏前的确认文字（不会随时自动保存的游戏才需要） |
 
 ## 存档
 
@@ -109,7 +107,7 @@ CHANGELOG.md             游戏厅的更新日志
 - 游戏厅只读写声明过的部分；检查脚本保证不同游戏的声明不重叠，且不使用游戏厅保留的 `autogame` 前缀。
 - 新游戏请用 `<id>:` 作为 localStorage 前缀、`<id>` 作为数据库名。早于游戏厅的两个游戏沿用了原来的名字（`research-sim-*`、`pixel-koshien`），这样它们在原地址（`yichics.github.io/Research-Simulator/` 等）积累的存档，在游戏厅里打开时直接就在。像素甲子园 v2.0.0（原 v1.0.0）改版为挂机游戏后，新存档改用 `pixel-baseball:save`；旧版的 `pixel-koshien:*` 和 IndexedDB `pixel-koshien` 仍然声明，这样旧存档还能在存档中心里导出备份或清除。
 
-游戏厅自己的数据：`autogame:hub`（上次全部导出的时间）、`autogame:dock`（悬浮标签在每个游戏里的位置）。
+游戏厅自己的数据：`autogame:hub`（上次全部导出的时间）。（v1.2.0 之前还有 `autogame:dock`，记悬浮标签的位置，接入脚本会顺手删掉它。）
 
 ### 存档数据
 
@@ -191,7 +189,7 @@ export function beforeImport(data) {
 
 导入、清除之前游戏厅会问一圈，发现对应游戏正在运行就要求先关闭。首页的游戏卡片上也会显示「运行中」。
 
-## 悬浮标签 dock.js
+## 接入脚本 dock.js
 
 每个游戏的入口页面引入（路径按入口文件位置，写到仓库根目录的 `hub/dock.js`）：
 
@@ -202,11 +200,19 @@ export function beforeImport(data) {
 <script src="../../../hub/dock.js" data-game="pixel-baseball" defer></script>
 ```
 
-- 在屏幕左边缘显示一个小标签，点开有「返回游戏厅」「存档管理」。标签可以上下拖动，位置按游戏分别记住；默认高度取 `game.json` 的 `dock.y`。
-- `dock.leaveConfirm` 有内容时，离开游戏前会先确认。
-- 样式在 Shadow DOM 里，不受游戏 CSS 影响；按键不会漏给游戏（比如空格不会让游戏暂停）。
-- 直接双击打开的本地文件（`file://`）不显示标签。
+- **不在游戏画面上显示任何东西**（v1.2.0 起去掉了原来左边缘的悬浮标签）。
 - 应答「谁在运行」的询问（见上文）。
+- 提供 `window.AutoGame`，游戏在**自己的设置菜单**里放「返回游戏厅」「存档管理」两个入口：
+
+  ```js
+  window.AutoGame = {
+    gameId: 'pixel-baseball',
+    hubUrl: 'https://yichics.github.io/AutoGame/',                       // 游戏厅首页
+    savesUrl: 'https://yichics.github.io/AutoGame/#saves/pixel-baseball', // 这个游戏的存档管理
+  };
+  ```
+
+  脚本是 `defer` 加载的，游戏刚启动时可能还读不到，等用户打开菜单时再读，或者监听 `window` 上的 `autogame:ready` 事件。读不到（单独打开的原仓库版本、直接双击打开的本地文件）就不显示这两个入口。不会随时自动保存的游戏，离开前自己先存档或确认。
 
 ## 发布
 
@@ -218,7 +224,7 @@ export function beforeImport(data) {
 ## 检查与预览
 
 ```bash
-node scripts/check.mjs                                     # 清单、文件、悬浮标签、存档声明
+node scripts/check.mjs                                     # 清单、文件、接入脚本、存档声明
 node scripts/check.mjs --branch <分支名> --base main        # 加上分支规则：命名、版本号、改动范围
 node scripts/check.mjs --build                             # 运行各游戏的 build 命令，确认构建产物已提交
 node scripts/serve.mjs                                     # 本地预览 http://localhost:8080/AutoGame/

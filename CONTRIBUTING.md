@@ -10,7 +10,7 @@ main 就是线上版本：GitHub Pages 直接发布 main 分支的根目录，�
 | --- | --- | --- |
 | 某个游戏 | `<游戏id>-v<新版本号>` | `research-simulator-v1.4.0`、`pixel-baseball-v2.1.1` |
 | 收录一个新游戏 | `<新游戏id>-v<首个版本号>` | `pixel-chess-v1.0.0` |
-| 游戏厅框架（首页、存档中心、悬浮标签、脚本、文档、根目录文件） | `hub-v<新版本号>` | `hub-v1.2.0` |
+| 游戏厅框架（首页、存档中心、接入脚本、检查脚本、文档、根目录文件） | `hub-v<新版本号>` | `hub-v1.2.0` |
 
 - **游戏 id** 就是 `games/` 下的目录名，也是该游戏 `game.json` 里的 `id`。现有：`research-simulator`、`pixel-baseball`。
 - **版本号**写这次改完之后的新版本号，必须比 main 上的大。
@@ -113,7 +113,7 @@ git push origin main pixel-baseball-v2.2.0
    git subtree add --prefix=games/<id> https://github.com/<用户>/<仓库>.git main
    ```
 3. 写 `games/<id>/game.json`，照着现有游戏改；字段说明见 [docs/architecture.md](docs/architecture.md#gamejson)。
-4. 入口 HTML 里引入游戏厅的悬浮标签（相对路径按入口文件的位置写到仓库根目录的 `hub/dock.js`）：
+4. 入口 HTML 里引入游戏厅的接入脚本（相对路径按入口文件的位置写到仓库根目录的 `hub/dock.js`）。它不在画面上显示任何东西；游戏要在**自己的设置菜单**里放「返回游戏厅」「存档管理」，地址从 `window.AutoGame.hubUrl` / `savesUrl` 取（见 [docs/architecture.md](docs/architecture.md#接入脚本-dockjs)）。不要在游戏画面上浮任何东西：
    ```html
    <script src="../../hub/dock.js" data-game="<id>" defer></script>
    ```
@@ -130,5 +130,5 @@ git push origin main pixel-baseball-v2.2.0
   git config core.hooksPath .githooks
   ```
   之后在 main 上直接 `git commit` 会被拦下；分支名不符合 `<游戏id>-v<版本号>` 会被拦下；推送 main 时如果有没经过 `--no-ff` 合并的提交也会被拦下。
-- **GitHub Actions「检查」**：每次推送和 PR 自动运行 `scripts/check.mjs`——清单和文件是否齐全、悬浮标签是否引入、存档声明有没有互相冲突、分支名和版本号是否合规、构建产物是否已提交。
+- **GitHub Actions「检查」**：每次推送和 PR 自动运行 `scripts/check.mjs`——清单和文件是否齐全、接入脚本是否引入、存档声明有没有互相冲突、分支名和版本号是否合规、构建产物是否已提交。
 - **建议开启分支保护**（需要在 GitHub 网页上设置一次）：Settings → Rules → Rulesets（或 Settings → Branches）→ 给 `main` 加规则，勾选 *Require a pull request before merging* 和 *Require status checks to pass*（选「检查」）。开启后只能走上面的 A 流程。
