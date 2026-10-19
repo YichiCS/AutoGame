@@ -114,7 +114,7 @@ export async function importFile(file: File): Promise<GameState> {
   return g;
 }
 
-/** 浏览器里有没有旧版（经营版 v0.x）的存档 */
+/** 浏览器里有没有旧版（经营版 v1.x，原 v0.x）的存档 */
 export async function hasLegacySave(): Promise<boolean> {
   try {
     for (let i = 0; i < localStorage.length; i++) if (localStorage.key(i)?.startsWith('pixel-koshien:data:')) return true;

@@ -1,6 +1,6 @@
 // 像素甲子园 · 存档适配器：只给 AutoGame 游戏厅用，游戏本身不加载。接口说明见仓库根目录 docs/architecture.md。
-// v1 起：localStorage 'pixel-baseball:save' 是整局的 JSON，设置在 'pixel-baseball:settings'。
-// v0.x（经营版，已不能在新版里继续）：IndexedDB「pixel-koshien」的 saves 表，以及退回用的 localStorage 'pixel-koshien:*'。
+// v2.0.0（原 v1.0.0）起：localStorage 'pixel-baseball:save' 是整局的 JSON，设置在 'pixel-baseball:settings'。
+// v1.x（经营版，原 v0.x；已不能在新版里继续）：IndexedDB「pixel-koshien」的 saves 表，以及退回用的 localStorage 'pixel-koshien:*'。
 const SAVE_KEY = 'pixel-baseball:save';
 const LEGACY_DB = 'pixel-koshien';
 const LEGACY_SLOT = { auto: '旧版·自动存档', slot1: '旧版·存档 1', slot2: '旧版·存档 2', slot3: '旧版·存档 3' };
