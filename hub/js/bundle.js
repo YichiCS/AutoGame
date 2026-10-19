@@ -94,3 +94,7 @@ export function parseVersion(v) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v || ''));
   return m ? [+m[1], +m[2], +m[3]] : [0, 0, 0];
 }
+// 重新编号过的游戏：存档包里的旧版本号按 game.json 的 legacyVersions 换成现在的编号，不在表里的原样返回
+export function renumberVersion(v, legacy) {
+  return legacy && Object.hasOwn(legacy, v) && typeof legacy[v] === 'string' ? legacy[v] : v;
+}
