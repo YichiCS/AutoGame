@@ -1,6 +1,6 @@
-import { useEffect } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { G, myPlayers, mySchool } from '../core/state';
-import { dateStr, daysText, seasonOf, mdStr } from '../core/calendar';
+import { dateStr, daysText, domOf, monthOf, seasonOf, mdStr } from '../core/calendar';
 import { strengthOf, strengthLetter } from '../core/team';
 import { repTier } from '../core/career';
 import { nextOfficial } from '../core/season';
@@ -8,6 +8,7 @@ import { moneyStr } from '../core/economy';
 import { SPEEDS, loop, setSpeed, togglePause } from './loop';
 import { settings, saveSettings } from './settings';
 import { refresh, ui, useStore, type Tab } from './store';
+import { useIsPhone } from './layout';
 import { SceneView } from './Scene';
 import { EventModal, UIModal } from './Modals';
 import { StartScreen } from './StartScreen';
@@ -31,11 +32,34 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'records', label: '档案', icon: '♛' },
 ];
 
+function goTab(id: Tab): void {
+  if (ui.tab === id && id === 'players') ui.playerId = null;
+  ui.tab = id;
+  refresh();
+}
+
+const openHelp = () => {
+  ui.modal = { kind: 'help' };
+  refresh();
+};
+const openSettings = () => {
+  ui.modal = { kind: 'settings' };
+  refresh();
+};
+
+/** 现在的状态：等你决定 / 已暂停 / 比赛中 */
+function statusText(): { text: string; cls: string } | null {
+  if (ui.match) return { text: '比赛中', cls: 'live' };
+  if (G.queue.length > 0) return { text: '等你决定', cls: '' };
+  if (loop.paused) return { text: '已暂停', cls: '' };
+  return null;
+}
+
 function Topbar() {
   const s = mySchool();
   const st = strengthOf(myPlayers(), G.dh);
   const nx = nextOfficial();
-  const waiting = G.queue.length > 0;
+  const status = statusText();
   return (
     <header class="topbar">
       <span class="tb-school">
@@ -54,8 +78,7 @@ function Topbar() {
             {v}x
           </button>
         ))}
-        {(waiting || loop.paused) && <span class="tb-wait">{waiting ? '等你决定' : '已暂停'}</span>}
-        {ui.match && <span class="tb-wait live">比赛中</span>}
+        {status && <span class={`tb-wait ${status.cls}`}>{status.text}</span>}
       </span>
       <span class="tb-stats">
         <span title="部费">¥ {moneyStr(G.funds)}</span>
@@ -68,13 +91,46 @@ function Topbar() {
         )}
       </span>
       <span class="tb-sys">
-        <button type="button" class="sp" title="怎么玩" onClick={() => { ui.modal = { kind: 'help' }; refresh(); }}>
+        <button type="button" class="sp" title="怎么玩" onClick={openHelp}>
           ?
         </button>
-        <button type="button" class="sp" title="设置 / 存档" onClick={() => { ui.modal = { kind: 'settings' }; refresh(); }}>
+        <button type="button" class="sp" title="设置 / 存档" onClick={openSettings}>
           ⚙
         </button>
       </span>
+    </header>
+  );
+}
+
+/** 手机的顶栏：学校和日期、暂停 / 继续、速度（点一下换一档）、帮助、设置 */
+function PhoneTopbar() {
+  const s = mySchool();
+  const status = statusText();
+  const speedIdx = settings.speedIdx;
+  return (
+    <header class="topbar ptop">
+      <span class="pt-id">
+        <Emblem school={s} />
+        <span class="pt-txt">
+          <b class="pt-name">{s.short || s.name}</b>
+          <span class="pt-date">
+            {monthOf(G.day)}月{domOf(G.day)}日 <span class="dim">{seasonOf(G.day)}</span>
+            {status && <span class={`tb-wait ${status.cls}`}>{status.text}</span>}
+          </span>
+        </span>
+      </span>
+      <button type="button" class={`pt-btn ${loop.paused ? 'on' : ''}`} aria-label={loop.paused ? '继续' : '暂停'} onClick={togglePause}>
+        {loop.paused ? '▶' : '❚❚'}
+      </button>
+      <button type="button" class="pt-btn speed" aria-label="切换速度" title="点一下换一档速度" onClick={() => setSpeed((speedIdx + 1) % SPEEDS.length)}>
+        {SPEEDS[speedIdx] ?? 1}x
+      </button>
+      <button type="button" class="pt-btn sys" aria-label="怎么玩" onClick={openHelp}>
+        ?
+      </button>
+      <button type="button" class="pt-btn sys" aria-label="设置 / 存档" onClick={openSettings}>
+        ⚙
+      </button>
     </header>
   );
 }
@@ -87,7 +143,7 @@ function LogPanel() {
         <span class="grow" />
         <button
           type="button"
-          class="chip"
+          class="chip logtog"
           onClick={() => {
             settings.logOpen = !settings.logOpen;
             saveSettings();
@@ -140,7 +196,25 @@ function TabBody() {
   }
 }
 
+/** 内容区的滚动位置：换页回到顶部；从名单点进球员详情再返回时，回到原来看到的地方 */
+function useScrollMemory() {
+  const ref = useRef<HTMLDivElement>(null);
+  const prev = useRef({ tab: ui.tab, pid: ui.playerId });
+  const listTop = useRef(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const p = prev.current;
+    if (!el || (p.tab === ui.tab && p.pid === ui.playerId)) return;
+    if (p.tab === ui.tab && p.pid === null && ui.playerId !== null) listTop.current = el.scrollTop;
+    el.scrollTop = p.tab === ui.tab && p.pid !== null && ui.playerId === null ? listTop.current : 0;
+    prev.current = { tab: ui.tab, pid: ui.playerId };
+  });
+  return ref;
+}
+
 function Game() {
+  const phone = useIsPhone();
+  const bodyRef = useScrollMemory();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -153,6 +227,42 @@ function Game() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+  const overlays = (
+    <>
+      {ui.match && <MatchScreen />}
+      <EventModal />
+      <UIModal />
+      <Toasts />
+    </>
+  );
+  if (phone) {
+    // 手机：顶栏和底部导航固定，中间的内容区自己滚动；练习场和球队动态放在「概览」的最上面
+    return (
+      <div class="game phone">
+        <PhoneTopbar />
+        <main class="tabbody" ref={bodyRef}>
+          {ui.tab === 'overview' && (
+            <div class="ov-scene">
+              <SceneView />
+              <LogPanel />
+            </div>
+          )}
+          <div class="tabinner">
+            <TabBody />
+          </div>
+        </main>
+        <nav class="bnav" aria-label="页面">
+          {TABS.map((t) => (
+            <button type="button" key={t.id} class={`bn ${ui.tab === t.id ? 'on' : ''}`} aria-current={ui.tab === t.id ? 'page' : undefined} onClick={() => goTab(t.id)}>
+              <span class="bn-i">{t.icon}</span>
+              <span class="bn-l">{t.label}</span>
+            </button>
+          ))}
+        </nav>
+        {overlays}
+      </div>
+    );
+  }
   return (
     <div class="game">
       <Topbar />
@@ -164,42 +274,31 @@ function Game() {
         <aside class="side">
           <nav class="tabs">
             {TABS.map((t) => (
-              <button
-                type="button"
-                key={t.id}
-                class={`tab ${ui.tab === t.id ? 'on' : ''}`}
-                onClick={() => {
-                  if (ui.tab === t.id && t.id === 'players') ui.playerId = null;
-                  ui.tab = t.id;
-                  refresh();
-                }}
-              >
+              <button type="button" key={t.id} class={`tab ${ui.tab === t.id ? 'on' : ''}`} onClick={() => goTab(t.id)}>
                 <span class="ti">{t.icon}</span>
                 {t.label}
               </button>
             ))}
           </nav>
-          <div class="tabbody">
+          <div class="tabbody" ref={bodyRef}>
             <TabBody />
           </div>
         </aside>
       </div>
-      {ui.match && <MatchScreen />}
-      <EventModal />
-      <UIModal />
-      <Toasts />
+      {overlays}
     </div>
   );
 }
 
 export function App() {
   useStore();
-  if (ui.screen === 'start') return (
-    <>
-      <StartScreen />
-      <UIModal />
-      <Toasts />
-    </>
-  );
+  if (ui.screen === 'start')
+    return (
+      <>
+        <StartScreen />
+        <UIModal />
+        <Toasts />
+      </>
+    );
   return <Game />;
 }

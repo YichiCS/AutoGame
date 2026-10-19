@@ -160,14 +160,44 @@ export function condName(v: number): string {
   return COND[Math.max(0, Math.min(4, v + 2))].n;
 }
 
-export function Fatigue(p: { v: number; w?: number }) {
-  const color = p.v >= 70 ? 'var(--red)' : p.v >= 45 ? 'var(--orange)' : 'var(--green)';
-  return <Bar v={p.v} color={color} w={p.w ?? 40} />;
+/** 带名字的数值：「疲劳 23」。名字可以省略（表头已经写了的时候），数字固定宽度、右对齐，上下对得齐 */
+export function Lv(p: { label?: string; v: number; color?: string; title?: string; cls?: string }) {
+  const v = Math.round(p.v);
+  return (
+    <span class={`lv ${p.cls ?? ''}`} title={p.title ?? (p.label ? `${p.label} ${v}` : undefined)}>
+      {p.label && <i>{p.label}</i>}
+      <b style={p.color ? { color: p.color } : undefined}>{v}</b>
+    </span>
+  );
 }
 
-export function Morale(p: { v: number; w?: number }) {
-  const color = p.v >= 75 ? 'var(--accent)' : p.v >= 50 ? 'var(--green)' : p.v >= 30 ? 'var(--orange)' : 'var(--red)';
-  return <Bar v={p.v} color={color} w={p.w ?? 40} />;
+/** 疲劳：45 以下绿、70 以下橙、70 以上红。w 是旧版的条宽，已不用 */
+export function fatigueColor(v: number): string {
+  return v >= 70 ? 'var(--hot)' : v >= 45 ? 'var(--accent2)' : 'var(--green2)';
+}
+
+export function Fatigue(p: { v: number; w?: number; bare?: boolean }) {
+  return <Lv label={p.bare ? undefined : '疲劳'} v={p.v} color={fatigueColor(p.v)} title={`疲劳 ${Math.round(p.v)}（越高越容易受伤，45 以上要注意，70 以上很危险）`} cls="fat" />;
+}
+
+export function moraleColor(v: number): string {
+  return v >= 75 ? 'var(--accent)' : v >= 50 ? 'var(--green2)' : v >= 30 ? 'var(--accent2)' : 'var(--hot)';
+}
+
+export function Morale(p: { v: number; w?: number; bare?: boolean }) {
+  return <Lv label={p.bare ? undefined : '干劲'} v={p.v} color={moraleColor(p.v)} title={`干劲 ${Math.round(p.v)}`} />;
+}
+
+/** 总评：按档位上色的数字；label 时前面写上「总评」，big 时用大字 */
+export function Ovr(p: { v: number; label?: boolean; big?: boolean }) {
+  const v = Math.max(0, Math.min(100, Math.round(p.v)));
+  const letter = gradeLetter(v);
+  return (
+    <span class={`ovr ${p.big ? 'big' : ''}`} title={`总评 ${v}（${letter} 级）`}>
+      {p.label && <i>总评</i>}
+      <b style={{ color: GRADE_COLOR[letter] }}>{v}</b>
+    </span>
+  );
 }
 
 export function Money(p: { v: number; signed?: boolean }) {

@@ -1,7 +1,7 @@
 // 事件的定义格式
 //   ctx()       随机事件：抽出上下文（谁、什么），返回 null 表示现在不满足条件
 //   build(ctx)  生成弹窗的标题、正文和选项。必须只依赖 ctx 和当前状态（读档后会重新生成）
-//   choice.def  推荐选项：托管时选它
+//   choice.def  托管时选它（界面上不显示）
 //   choice.apply() 选了之后的效果，返回一句结果（会写进动态）
 import type { Ctx } from '../types';
 

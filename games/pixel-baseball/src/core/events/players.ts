@@ -248,7 +248,7 @@ def('switchHit', {
   ctx: () => { const p = pickPlayer((x) => !isPitcher(x) && x.bats === 'R' && x.a.speed >= 60 && x.grade <= 2); return p ? { pid: p.id } : null; },
   build: (c) => ({
     title: '改左打？', pid: P(c)?.id,
-    text: `${N(c)} 脚程很快。有人建议他改成左打——离一垒近一步，内野安打会多很多。`,
+    text: `${N(c)} 脚程很快。有人说他要是改成左打——离一垒近一步，内野安打会多很多。`,
     choices: [
       { label: '改左打', apply: () => { const p = P(c); if (!alive(c)) return ''; p.bats = 'L'; p.a.contact = Math.max(5, p.a.contact - 4); if (!has(p, 'infHit') && p.a.speed >= 60) p.traits.push('infHit'); note(p, '改为左打'); return `${p.fam}改成了左打，暂时还不太习惯。`; } },
       { label: '挑战左右开弓', hint: '更难，但成了就很强', apply: () => { const p = P(c); if (!alive(c)) return ''; p.bats = 'S'; p.a.contact = Math.max(5, p.a.contact - 6); addExp(p, { tech: 20 }); note(p, '挑战左右开弓'); return '左右开弓的特训开始了。'; } },
@@ -415,7 +415,7 @@ def('deliveryChange', {
   ctx: () => { const p = pickPlayer((x) => isPitcher(x) && (x.delivery === 'over' || x.delivery === 'three') && x.a.control < 55 && x.grade <= 2); return p ? { pid: p.id } : null; },
   build: (c) => ({
     title: '改成侧投？', pid: P(c)?.id,
-    text: `${N(c)} 的控球一直不稳定。有人建议他放低手臂改成侧投——球速会慢一点，但球路会刁钻得多，还适合投下沉球、内飘球。`,
+    text: `${N(c)} 的控球一直不稳定。有人提出让他放低手臂改成侧投——球速会慢一点，但球路会刁钻得多，还适合投下沉球、内飘球。`,
     choices: [
       { label: '改侧投', apply: () => { const p = P(c); if (!alive(c)) return ''; p.delivery = 'side'; p.a.velocity = Math.max(100, p.a.velocity - 3); p.a.control = Math.min(p.caps.control, p.a.control + 6); p.caps.control = Math.min(99, p.caps.control + 5); if (p.pitches.length < maxPitchCount(p)) { const t = pickNewPitch(p.pitches.map((x) => x.type), 'side', 2); if (t) p.pitches.push({ type: t, lv: 1 }); } note(p, '改为侧投'); return `${p.fam}改成了侧投。`; } },
       { label: '改下勾投法', hint: '更极端，变化更大', apply: () => { const p = P(c); if (!alive(c)) return ''; p.delivery = 'under'; p.a.velocity = Math.max(100, p.a.velocity - 6); p.a.control = Math.min(p.caps.control, p.a.control + 4); p.a.stuff = Math.min(p.caps.stuff, p.a.stuff + 6); if (p.pitches.length < maxPitchCount(p)) { const t = pickNewPitch(p.pitches.map((x) => x.type), 'under', 3); if (t) p.pitches.push({ type: t, lv: 1 }); } note(p, '改为下勾投法'); return `${p.fam}成了少见的下勾投手！`; } },

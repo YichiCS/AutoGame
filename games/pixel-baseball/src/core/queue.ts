@@ -1,4 +1,4 @@
-// 决策队列：需要监督拿主意的事排在这里，时间会暂停；托管的类别按推荐选项自动处理
+// 决策队列：需要监督拿主意的事排在这里，时间会暂停；托管的类别自动处理（选 def 选项）
 import type { Ctx, QueueItem } from './types';
 import { G, log } from './state';
 import { EVENTS, type EventView } from './events/registry';
