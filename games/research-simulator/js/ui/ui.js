@@ -1852,6 +1852,8 @@
       <div class="sub">存档</div>
       <div class="row wrap"><button data-act="export">导出存档</button><button data-act="import">导入存档</button><button class="danger" data-act="reset">删除存档，重新开始</button></div>
       <p class="small dim">游戏每 15 秒自动保存到本地。</p>
+      ${window.AutoGame ? `<div class="sub">AutoGame 游戏厅</div>
+      <div class="row wrap"><button data-act="toHub" data-arg="hub">◀ 返回游戏厅</button><button data-act="toHub" data-arg="saves">存档管理</button></div>` : ''}
       <div class="choices"><button class="choice def" data-act="closeLocal"><b>关闭</b></button></div>`, '');
   }
   function renderHelp() {
@@ -2430,6 +2432,14 @@
         break;
       }
       case 'export': exportSave(); break;
+      case 'toHub': {
+        // 从 AutoGame 游戏厅打开时才有（hub/dock.js 提供地址）；离开前先存一次
+        const hub = window.AutoGame;
+        if (!hub) break;
+        G.save(g);
+        location.href = arg === 'saves' ? hub.savesUrl : hub.hubUrl;
+        return;
+      }
       case 'import': $('importFile').click(); break;
       case 'reset': modal = { kind: 'local', type: 'reset' }; break;
       case 'resetYes': G.clearSave(); RS.Main.stop(); modal = null; $('modalLayer').innerHTML = ''; ng = null; UI.showStart(null); return;
