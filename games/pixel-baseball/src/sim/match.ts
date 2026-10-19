@@ -2,17 +2,32 @@
 import type { Player, Pos, PitchType } from '../core/types';
 import { POS_NAME } from '../core/types';
 import type {
-  BatCmd, BipInfo, BipKind, BoxBat, BoxPit, DefTactic, EventKind, Intent, MatchRules, MatchSummary, OffTactic, PAMemo, PAResult,
-  PitchInfo, PitchPlan, PitchResult, PitchSpot, PitchUse, PlayEvent, RunPlay, RunnerMove, RunnerSlot, Snap, TeamSetup, Zone,
+  BipInfo, BipKind, BoxBat, BoxPit, DefTactic, EventKind, MatchRules, MatchSummary, OffTactic, PAMemo, PAResult,
+  PitchInfo, PitchResult, PitchSpot, PitchUse, PlayEvent, RunnerMove, RunnerSlot, Snap, TeamSetup, Zone,
 } from './types';
 import { chance, gauss, rand, weightedPick } from '../core/rng';
 import { clamp, z } from '../core/util';
-import { aptOf, breakingScore, has, velScore } from '../core/attrs';
+import { aptOf, has } from '../core/attrs';
 import { PITCH_DEFS } from '../data/pitches';
 import * as AI from './ai';
-import * as Adapt from './adapt';
+import { hotZones, locOf, pickoffSkill, pitchQuality, sampleLanding, spreadOf, swingOutcome, type Loc, type PitcherNow, type Rng, type Spread } from './pitching';
+import { batterHunt, coachThrow, leadFor, mindSpreads, pickOpt, pitcherMind, type Mind } from './brain';
 
-type Loc = 'heart' | 'corner' | 'shadow' | 'waste';
+/** 比赛用全局随机数（LiveGame 会把它换成比赛自己的状态） */
+const RNG: Rng = { rand, gauss };
+
+/** 玩家（或教练）这一球的打击指令：狙哪一格（-1 不挥棒）、各垒跑者提前跑不跑 */
+export interface SwingCall {
+  z: number;
+  run: [boolean, boolean, boolean];
+}
+
+/** 玩家（或教练）这一球的投球指令：球种与瞄准点（好球带坐标） */
+export interface ThrowCall {
+  type: PitchType | 'FB';
+  x: number;
+  y: number;
+}
 
 /** 一球的位置相对打者的分类（x>0 是一垒侧；右打者站三垒侧，内角在 x<0） */
 export function spotOf(x: number, y: number, side: 'R' | 'L'): PitchSpot {
@@ -62,29 +77,14 @@ export class TeamState {
   tactic: OffTactic = 'auto';
   def: DefTactic = { approach: 'normal', align: 'normal', ibb: false, pitchout: false };
   auto: boolean;
-  /** 人类一方：守备阵型与投球方针交给 AI */
-  defAI = true;
-  /** 进攻方：狙球（本打席有效） */
-  guess: 'FB' | 'BR' | null = null;
-  /** 守方：下一球的配球指示 */
-  call: { type: PitchType | 'FB' | null; intent: 'zone' | 'edge' | 'chase' | null } | null = null;
   halfRuns = 0; // 本半局失分（作为守方）
-  /** 进攻方：本打席的指令（人类或 AI） */
-  cmd: BatCmd | null = null;
-  /** 进攻方：狙的区域（本打席有效） */
-  zoneGuess: Zone | null = null;
-  /** 进攻方：两好球后专等某个球种（AI 打者看穿了对方的决胜球） */
-  sit2: PitchType | 'FB' | null = null;
   /** 进攻方：跑垒积极度 -1 稳健 / 0 普通 / 1 积极 */
   runAgg = 0;
-  /** 进攻方：本打席第一球的跑垒指示（人类指令用，执行一次） */
-  runOnce: RunPlay = 'none';
-  /** 守方：本打席的配球计划 */
-  plan: PitchPlan | null = null;
   /** 守方：注意跑者（快速投球） */
   hold = false;
-  /** AI 这一打席的打算（给对方玩家的情报） */
-  intent: Intent = { why: [] };
+  /** 玩家一方：下一球的投球指令 / 打击指令（用一次就收回；没有就交给教练） */
+  callNext: ThrowCall | null = null;
+  swingNext: SwingCall | null = null;
 
   constructor(s: TeamSetup, side: 0 | 1, rules: MatchRules) {
     this.s = s;
@@ -207,6 +207,14 @@ export class Match {
   private pickoffs = 0;
   private lastSpot: PitchSpot | null = null;
   private lastSide: 'R' | 'L' = 'R';
+  /** 这一球之前已经定好（AI 的打算、跑者的离垒）；投完一球就作废 */
+  pitchReady = false;
+  /** AI 守方这一球的打算（玩家打击时看到的热区图）与每个打算的散布 */
+  mind: Mind | null = null;
+  mindSp: Spread[] | null = null;
+  /** AI 攻方这一球各垒跑者的离垒（玩家投球时看到的离垒警告）和真正要跑的跑者 */
+  leads: ('big' | 'normal' | null)[] = [null, null, null];
+  goAI: boolean[] = [false, false, false];
 
   constructor(away: TeamSetup, home: TeamSetup, rules: MatchRules) {
     this.rules = rules;
@@ -280,6 +288,7 @@ export class Match {
     if (this.over) return this.flush();
     if (this.needHalf) this.startHalf();
     if (!this.over && this.needPA) this.startPA();
+    if (!this.over && !this.needPA && !this.needHalf) this.prepPitch();
     return this.flush();
   }
 
@@ -439,11 +448,9 @@ export class Match {
     if (this.needPA || this.over) return;
     const off = this.off;
     const dfn = this.dfn;
-    if (dfn.auto) {
-      AI.defenseBeforePA(this, dfn);
-      Adapt.aiDefense(this, dfn);
-    }
-    if (off.auto) Adapt.aiOffense(this, off);
+    if (dfn.auto) AI.defenseBeforePA(this, dfn);
+    // 对决换了人：这一球的打算重新定
+    this.pitchReady = false;
     const b = this.batter();
     const bx = off.bbox(b.id);
     this.paSnap = { h: bx.h, d: bx.d, t: bx.t, hr: bx.hr, bb: bx.bb, hbp: bx.hbp, so: bx.so, sac: bx.sac, sf: bx.sf, e: off.errors, ab: bx.ab };
@@ -466,27 +473,34 @@ export class Match {
     return Math.max(0, 3 - this.pickoffs);
   }
 
-  pickoff(): PlayEvent[] {
+  /** 牵制 idx 垒（0 一垒、1 二垒、2 三垒；不给就牵制领先的跑者） */
+  pickoff(idx = -1): PlayEvent[] {
     this.out = [];
-    this.doPickoff();
+    if (idx < 0) idx = this.bases[1] && !this.bases[2] ? 1 : this.bases[0] ? 0 : this.bases[1] ? 1 : this.bases[2] ? 2 : -1;
+    this.doPickoff(idx, false);
     return this.flush();
   }
 
-  private doPickoff(): void {
+  /**
+   * 牵制：投手的牵制能力越高、跑者离垒越大、跑者本来就打算跑，越容易抓到；离垒正常的跑者很难抓。
+   * read：AI 投手看穿了玩家的跑者要跑。同一个打席里牵制得越多越没有效果。
+   */
+  private doPickoff(idx: number, read: boolean): void {
     const t = this.dfn;
     const p = t.get(t.pitcher);
-    const idx = this.bases[1] && !this.bases[2] ? 1 : this.bases[0] ? 0 : this.bases[1] ? 1 : -1;
-    if (idx < 0 || this.over || this.pickoffs >= 3) return;
+    if (idx < 0 || !this.bases[idx] || this.over || this.pickoffs >= 3) return;
     this.pickoffs++;
     const r = this.off.get(this.bases[idx]!.pid);
-    // 同一个打席里牵制得越多越没有效果；跑者离垒越大越危险
-    const pOut = (0.012 + (has(p, 'pickoff') ? 0.035 : 0) - 0.012 * z(r.a.baserun) + this.off.runAgg * 0.02) / this.pickoffs;
-    if (chance(0.008 * this.pickoffs)) {
+    const big = read || this.leads[idx] === 'big';
+    const going = read || !!this.goAI[idx];
+    const pk = pickoffSkill(p);
+    const pOut = ((0.03 + (0.22 * pk) / 100) * (big ? (going ? 2.2 : 1.3) : 0.45) * (1 - 0.35 * z(r.a.baserun))) / Math.sqrt(this.pickoffs);
+    if (chance(0.006 + 0.004 * this.pickoffs)) {
       this.emit('pickoff', `牵制球暴传！${nm(r)}趁机推进！`);
       this.advanceRunnersBy(1, true);
       return;
     }
-    if (chance(Math.max(0.002, pOut))) {
+    if (chance(clamp(pOut, 0.005, 0.6))) {
       this.bases[idx] = null;
       this.outs++;
       t.pbox(t.pitcher).outs++;
@@ -495,6 +509,9 @@ export class Match {
       if (this.outs >= 3) this.endHalf(false);
     } else {
       this.leadPenalty = Math.min(0.14, this.leadPenalty + 0.06);
+      // 被牵制过的跑者收小离垒，原本想跑的也可能打消念头
+      this.leads[idx] = this.leads[idx] ? 'normal' : null;
+      if (this.goAI[idx] && chance(0.6)) this.goAI[idx] = false;
       this.emit('pickoff', `${nm(p)}投出牵制球，${nm(r)}安全回垒。`);
     }
   }
@@ -507,6 +524,8 @@ export class Match {
     this.strikes = 0;
     this.bases = [null, null, null];
     this.momentum = 0;
+    this.pitchReady = false;
+    this.leads = [null, null, null];
     const off = this.off;
     const dfn = this.dfn;
     off.line[this.inning - 1] = off.line[this.inning - 1] ?? 0;
@@ -586,12 +605,9 @@ export class Match {
       }
     }
     if (dfn.auto) AI.defenseBeforePA(this, dfn);
-    else if (dfn.defAI) AI.defenseTactics(this, dfn);
     if (off.auto) AI.offenseBeforePA(this, off, false);
-    else if (off.tactic === 'auto' && off.defAI) AI.offenseBeforePA(this, off, true);
-    // AI 参考这场比赛之前的打席，定下这个打席的打算
-    if (dfn.auto) Adapt.aiDefense(this, dfn);
-    if (off.auto) Adapt.aiOffense(this, off);
+    this.pitchReady = false;
+    this.leads = [null, null, null];
     const b = this.batter();
     const bx = off.bbox(b.id);
     this.paSnap = { h: bx.h, d: bx.d, t: bx.t, hr: bx.hr, bb: bx.bb, hbp: bx.hbp, so: bx.so, sac: bx.sac, sf: bx.sf, e: off.errors, ab: bx.ab };
@@ -601,38 +617,11 @@ export class Match {
     this.paTypes = [];
     this.lastSpot = null;
     this.pickoffs = 0;
-    // AI 投手看到快腿跑者大离垒，偶尔会牵制
+    // AI 投手看到快腿跑者，偶尔会牵制
     if (dfn.auto && this.bases[0] && !this.bases[1] && this.outs < 2) {
       const r = off.get(this.bases[0].pid);
-      if (r.a.speed >= 60 && chance(0.12 + off.runAgg * 0.08 + (has(r, 'steal') ? 0.08 : 0))) this.doPickoff();
+      if (r.a.speed >= 60 && chance(0.12 + (has(r, 'steal') ? 0.08 : 0))) this.doPickoff(0, false);
     }
-  }
-
-  // ======================= 打席指令（人类 / 教练） =======================
-  /** 进攻方的打席指令：在 prepare() 之后、stepPA() 之前下达 */
-  setBatCmd(cmd: BatCmd): void {
-    const off = this.off;
-    off.cmd = { ...cmd };
-    const tac: Record<BatCmd['app'], OffTactic> = {
-      normal: 'swing', power: 'power', contact: 'contact', aggressive: 'aggressive', wait: 'wait', bunt: 'bunt', buntHit: 'buntHit', squeeze: 'squeeze',
-    };
-    off.tactic = tac[cmd.app];
-    if (cmd.app === 'squeeze' && !this.bases[2]) off.tactic = 'bunt';
-    off.guess = cmd.sit === 'none' ? null : cmd.sit;
-    off.zoneGuess = cmd.zone === 'none' ? null : cmd.zone;
-    off.runOnce = cmd.run;
-    off.runAgg = cmd.agg;
-  }
-
-  /** 守方的配球计划：在 prepare() 之后、stepPA() 之前下达 */
-  setPitchPlan(plan: PitchPlan): void {
-    const dfn = this.dfn;
-    dfn.plan = { ...plan };
-    dfn.def.approach = plan.approach;
-    dfn.def.align = plan.align;
-    dfn.def.ibb = plan.ibb;
-    dfn.def.pitchout = plan.pitchout && this.bases.some(Boolean);
-    dfn.hold = plan.hold;
   }
 
   /** 某投手的用球统计 */
@@ -687,8 +676,8 @@ export class Match {
       res,
       np: this.paNp,
       last: lp && this.lastSpot ? { t: lp.type, fam: famOf(lp.type), spot: this.lastSpot, res: lp.res } : null,
-      cmd: off.cmd,
-      plan: this.dfn.plan,
+      cmd: null,
+      plan: null,
     };
     this.memo.push(memo);
     this.paSnap = null;
@@ -702,17 +691,15 @@ export class Match {
     off.batIdx = (off.batIdx + 1) % 9;
     this.needPA = true;
     off.tactic = 'auto';
-    off.guess = null;
-    off.cmd = null;
-    off.zoneGuess = null;
-    off.sit2 = null;
-    off.runOnce = 'none';
     off.runAgg = 0;
-    this.dfn.call = null;
+    off.swingNext = null;
+    this.dfn.callNext = null;
     this.dfn.def.ibb = false;
     this.dfn.def.pitchout = false;
-    this.dfn.plan = null;
     this.dfn.hold = false;
+    this.pitchReady = false;
+    this.mind = null;
+    this.leads = [null, null, null];
     if (this.outs >= 3 && !this.over) this.endHalf(true);
   }
 
@@ -955,59 +942,6 @@ export class Match {
   }
 
   // ======================= 投球 =======================
-  private choosePitch(p: Player): { type: PitchType | 'FB'; lv: number; sig?: string } {
-    if (!p.pitches.length) return { type: 'FB', lv: 0 };
-    const plan = this.dfn.plan;
-    // 决胜球：两好球后优先使用（不是每一球都用，免得被看穿）
-    if (plan?.finisher && this.strikes === 2 && chance(0.68)) {
-      if (plan.finisher === 'FB') return { type: 'FB', lv: 0 };
-      const own = p.pitches.find((x) => x.type === plan.finisher);
-      if (own) return { type: own.type, lv: own.lv, sig: own.sig };
-    }
-    let fb = 0.6 - 0.035 * p.pitches.length + (has(p, 'powerPitcher') ? 0.08 : 0);
-    if (this.balls >= 2 && this.balls > this.strikes) fb += 0.15;
-    if (this.strikes === 2 && this.balls <= 1) fb -= 0.15;
-    if (this.dfn.def.approach === 'max') fb += 0.08;
-    if (velScore(p.a.velocity) > 75) fb += 0.06;
-    if (plan?.mix === 'FB') fb += 0.22;
-    else if (plan?.mix === 'BR') fb -= 0.25;
-    // 直球系变化球（二缝线、卡特……）也算在「直球为主」里
-    const fastOwned = p.pitches.filter((x) => PITCH_DEFS[x.type].family === 'fast');
-    if (plan?.mix === 'FB' && fastOwned.length && chance(0.3)) {
-      const s = weightedPick(fastOwned, (x) => x.lv + 1);
-      return { type: s.type, lv: s.lv, sig: s.sig };
-    }
-    if (chance(clamp(fb, 0.12, 0.9))) return { type: 'FB', lv: 0 };
-    let pool = p.pitches;
-    if (plan?.mix === 'BR') {
-      const br = p.pitches.filter((x) => PITCH_DEFS[x.type].family !== 'fast');
-      if (br.length) pool = br;
-    }
-    const s = weightedPick(pool, (x) => x.lv ** 1.5 + 0.5 + (x.sig ? 2 : 0));
-    return { type: s.type, lv: s.lv, sig: s.sig };
-  }
-
-  private chooseIntent(): 'zone' | 'edge' | 'chase' {
-    let pz = 0.48;
-    let pe = 0.34;
-    let pc = 0.18;
-    if (this.balls === 3) [pz, pe, pc] = [0.76, 0.22, 0.02];
-    else if (this.balls === 2 && this.strikes < 2) [pz, pe, pc] = [0.6, 0.32, 0.08];
-    if (this.strikes === 2 && this.balls < 2) [pz, pe, pc] = [0.24, 0.4, 0.36];
-    switch (this.dfn.def.approach) {
-      case 'contact':
-        pz += 0.15;
-        pc -= 0.08;
-        break;
-      case 'careful':
-        pz -= 0.2;
-        pe += 0.1;
-        pc += 0.1;
-        break;
-    }
-    return weightedPick<['zone' | 'edge' | 'chase', number]>([['zone', pz], ['edge', pe], ['chase', Math.max(0.01, pc)]], (x) => x[1])[0];
-  }
-
   private chargePitch(p: Player, cost: number): void {
     const t = this.dfn;
     t.ensurePool(p.id);
@@ -1015,21 +949,74 @@ export class Match {
     t.pbox(p.id).np++;
   }
 
+  /** 投手此刻的有效能力（疲劳、调子之后），给打算、球种质量和散布用 */
+  pitcherNow(): PitcherNow {
+    const pe = this.pitcherEff(this.pitcher());
+    return { vel: pe.vel, ctl: pe.ctl, stuff: pe.stuff };
+  }
+
+  /**
+   * 这一球之前：AI 攻方定下跑者跑不跑（决定离垒大小），AI 守方定下这一球的打算（玩家打击时看到的热区图）。
+   * 用比赛的随机数，同一球只算一次（玩家下指令、牵制之后不重算）。
+   */
+  prepPitch(): void {
+    if (this.over || this.needHalf || this.needPA || this.pitchReady) return;
+    const off = this.off;
+    const dfn = this.dfn;
+    this.goAI = [false, false, false];
+    this.leads = [null, null, null];
+    if (off.auto) {
+      AI.offenseBeforePitch(this, off);
+      const tac = off.tactic;
+      const [r1, r2, r3] = this.bases.map(Boolean);
+      if ((tac === 'steal' || tac === 'hitRun') && r1 && !r2) this.goAI[0] = true;
+      else if (tac === 'steal' && r2 && !r3 && !r1) this.goAI[1] = true;
+      else if ((tac === 'steal' || tac === 'doubleSteal') && r1 && r2 && !r3) this.goAI = [true, true, false];
+      for (let i = 0; i < 2; i++) {
+        const r = this.bases[i];
+        if (r) this.leads[i] = leadFor(this.goAI[i], off.get(r.pid), RNG);
+      }
+    }
+    if (dfn.auto) {
+      const now = this.pitcherNow();
+      this.mind = pitcherMind(this, dfn, now, RNG);
+      this.mindSp = mindSpreads(this.mind, dfn.get(dfn.pitcher), now, dfn.fatigueRatio(dfn.pitcher));
+      AI.defenseBeforePitch(this, dfn);
+    } else {
+      this.mind = null;
+      this.mindSp = null;
+    }
+    this.pitchReady = true;
+  }
+
   private pitchOnce(): void {
+    if (!this.pitchReady) this.prepPitch();
+    this.pitchReady = false;
     const off = this.off;
     const dfn = this.dfn;
     const b = this.batter();
     const p = this.pitcher();
+    // 玩家（或替玩家拿主意的教练）这一球的指令：用一次就收回
+    const human = off.auto ? null : off.swingNext;
+    off.swingNext = null;
+    const call = dfn.auto ? null : dfn.callNext;
+    dfn.callNext = null;
 
-    if (off.auto) AI.offenseBeforePitch(this, off);
-    if (dfn.auto) AI.defenseBeforePitch(this, dfn);
-
-    // 申告敬远
+    // 申告敬远（AI）
     if (dfn.def.ibb) {
       dfn.def.ibb = false;
       this.emit('ibb', `${dfn.s.short}申告敬远，${nm(b)}被故意保送。`);
       this.walk(b, true);
       return;
+    }
+
+    // 玩家让跑者提前跑：AI 投手有可能看穿，先牵制（这一球就不投了）
+    if (dfn.auto && human && human.run.some(Boolean) && this.pickoffs < 3) {
+      const idx = human.run[1] && this.bases[1] ? 1 : human.run[0] && this.bases[0] ? 0 : -1;
+      if (idx >= 0 && chance(0.1 + (0.15 * pickoffSkill(p)) / 100 + dfn.s.mgrTactics / 1000)) {
+        this.doPickoff(idx, true);
+        return;
+      }
     }
 
     let tac = off.tactic;
@@ -1039,74 +1026,50 @@ export class Match {
       tac = 'contact';
       off.tactic = 'contact';
     }
-    // 人类下达的跑垒指示：只在这个打席的第一球执行
-    let fromRun = false;
-    if (off.runOnce !== 'none') {
-      const r: RunPlay = off.runOnce;
-      off.runOnce = 'none';
-      if (this.bases.some(Boolean) && !(tac === 'squeeze' && this.bases[2])) {
-        tac = r;
-        fromRun = true;
-      }
-    }
-    // 跑者启动
+    // 跑者启动：玩家按自己的指示，AI 按这一球之前定下的打算
     this.stealers = [];
-    if ((tac === 'steal' || tac === 'hitRun') && this.bases[0] && !this.bases[1]) this.stealers = [0];
-    else if (tac === 'steal' && this.bases[1] && !this.bases[2] && !this.bases[0]) this.stealers = [1];
-    else if (tac === 'steal' && this.bases[0] && this.bases[1] && !this.bases[2]) this.stealers = [1, 0];
-    if (tac === 'doubleSteal' && this.bases[0] && this.bases[1] && !this.bases[2]) this.stealers = [1, 0];
-    else if (tac === 'doubleSteal' && this.bases[0] && !this.bases[1]) this.stealers = [0];
+    const go = human ? human.run : this.goAI;
+    if (go[1] && this.bases[1] && !this.bases[2]) this.stealers.push(1);
+    if (go[0] && this.bases[0] && (!this.bases[1] || this.stealers.includes(1))) this.stealers.push(0);
+    // 三垒跑者提前跑：打出去就冲本垒
+    const goHome = !!human?.run[2] && !!this.bases[2];
     const squeeze = tac === 'squeeze' && !!this.bases[2];
     const bunting = tac === 'bunt' || tac === 'buntHit' || squeeze;
     const hitRun = tac === 'hitRun' && this.stealers.length > 0;
-    if (!fromRun && (tac === 'steal' || tac === 'doubleSteal' || tac === 'hitRun' || tac === 'squeeze' || tac === 'buntHit')) off.tactic = 'swing';
-    else if (fromRun && (off.tactic === 'squeeze' || off.tactic === 'buntHit')) off.tactic = 'swing';
+    if (tac === 'steal' || tac === 'doubleSteal' || tac === 'hitRun' || tac === 'squeeze' || tac === 'buntHit') off.tactic = 'swing';
 
     const pe = this.pitcherEff(p);
     const be = this.batterEff(b, p);
-    // 注意跑者：快速投球，球质略降
-    if (dfn.hold && this.bases.some(Boolean)) {
-      pe.ctl -= 2;
-      pe.stuff -= 3;
-    }
     // 同一场里第几次面对这个投手：看得越多越有感觉
     const seen = Math.min(3, this.timesFaced(b.id, p.id));
     be.con += seen * 2;
     be.pow += seen * 1.5;
-    // 配球：人类守方可以指定下一球的球种与位置（只对一球有效）
-    const call = dfn.call;
-    dfn.call = null;
-    let pk = this.choosePitch(p);
-    if (call?.type === 'FB') pk = { type: 'FB', lv: 0 };
-    else if (call?.type) {
-      const owned = p.pitches.find((x) => x.type === call.type);
-      if (owned) pk = { type: owned.type, lv: owned.lv, sig: owned.sig };
-    }
-    const isFB = pk.type === 'FB';
-    const def = isFB ? null : PITCH_DEFS[pk.type as PitchType];
+    const now: PitcherNow = { vel: pe.vel, ctl: pe.ctl, stuff: pe.stuff };
+
+    // 这一球投什么、瞄哪里：玩家的指令 / AI 的打算 / 交给教练
+    let aim: { type: PitchType | 'FB'; x: number; y: number };
+    if (call) aim = call;
+    else if (this.mind) aim = pickOpt(this.mind, RNG);
+    else aim = coachThrow(this, dfn, now, RNG);
+    const owned = aim.type === 'FB' ? null : p.pitches.find((x) => x.type === aim.type) ?? null;
+    const type: PitchType | 'FB' = owned ? owned.type : 'FB';
+    const sig = owned?.sig;
+    const isFB = type === 'FB';
+    const def = isFB ? null : PITCH_DEFS[type as PitchType];
     const kmh = Math.round(pe.vel * (isFB ? 1 : def!.speed) + gauss(0, 1.2));
-    const tname = isFB ? '直球' : pk.sig ?? def!.name;
-    const fam = famOf(pk.type);
-    // 狙球：猜中球种时打击能力上升，猜错则下降
-    let guessHit = 0;
-    if (off.guess) {
-      guessHit = off.guess === fam ? 1 : -1;
-      be.con += guessHit > 0 ? 8 : -9;
-      be.pow += guessHit > 0 ? 6 : -3;
-    }
-    // 两好球后专等对方的决胜球
-    if (off.sit2 && this.strikes === 2 && off.sit2 === pk.type) be.con += 7;
+    const tname = isFB ? '直球' : sig ?? def!.name;
+    const fam = famOf(type);
     // 同一球种在这个打席里连续投，打者会慢慢对上时机
     let rep = 0;
-    for (let i = this.paTypes.length - 1; i >= 0 && this.paTypes[i] === pk.type; i--) rep++;
+    for (let i = this.paTypes.length - 1; i >= 0 && this.paTypes[i] === type; i--) rep++;
     if (rep >= 2) be.con += (rep - 1) * 3;
-    this.paTypes.push(pk.type);
+    this.paTypes.push(type);
 
-    // 外角吊球（识破盗垒/抢分）
+    // 外角吊球（AI 识破盗垒 / 抢分）
     if (dfn.def.pitchout) {
       dfn.def.pitchout = false;
       this.chargePitch(p, 0.9);
-      const info: PitchInfo = { type: 'FB', kmh: kmh - 4, x: 1.9, y: 0.2, res: 'pitchout' };
+      const info: PitchInfo = { type: 'FB', kmh: kmh - 4, x: 1.9, y: 0.2, res: 'pitchout', tx: 1.9, ty: 0.2 };
       this.lastPitch = info;
       this.balls++;
       if (squeeze) {
@@ -1126,61 +1089,20 @@ export class Match {
       return;
     }
 
-    // 投球位置
-    const intent = call?.intent ?? this.chooseIntent();
-    const c = clamp(pe.ctl, 0, 115) / 100;
-    let pZone = intent === 'zone' ? 0.48 + 0.28 * c : intent === 'edge' ? 0.26 + 0.26 * c : 0.06 + 0.08 * c;
-    if (def) pZone -= def.ctrl;
-    if (has(p, 'wild') && chance(0.15)) pZone -= 0.2;
-    // 配球计划的主攻区域：攻边角，进好球带的球少一些
-    const plan = dfn.plan;
-    const focus = plan && plan.focus !== 'auto' ? plan.focus : null;
-    if (focus === 'in' || focus === 'out') pZone -= 0.03;
-    else if (focus === 'low') pZone -= 0.02;
-    const inZone = chance(clamp(pZone, 0.03, 0.97));
-    let loc: Loc;
-    if (inZone) {
-      const pHeart = intent === 'zone' ? 0.6 - 0.22 * c : intent === 'edge' ? 0.25 - 0.15 * c : 0.5;
-      loc = chance(clamp(pHeart, 0.05, 0.8)) ? 'heart' : 'corner';
-    } else {
-      loc = intent === 'chase' ? (chance(0.6) ? 'waste' : 'shadow') : chance(0.25) ? 'waste' : 'shadow';
-    }
+    // 打者狙哪一格：投出之前就定好（看不到这一球的实际落点）
+    const hunt = human ? human.z : batterHunt(this, off, this.mind, this.mindSp, RNG);
 
-    // 球的威力
-    let nasty: number;
-    if (isFB) {
-      const bs = breakingScore(p.pitches);
-      const rep = p.pitches.length === 0 ? -8 : Math.min(6, (bs - 30) / 8);
-      nasty = 0.62 * velScore(pe.vel) + 0.38 * pe.stuff + (has(p, 'nobi') ? 6 : 0) + (has(p, 'powerPitcher') ? 4 : 0) + rep;
-    } else {
-      // 直球系变化球更依赖球速，慢速变化球全靠变化本身
-      const vw = def!.velW;
-      nasty = (0.68 - 0.45 * vw) * (22 + pk.lv * 10) + (0.18 + 0.45 * vw) * velScore(pe.vel) + 0.14 * pe.stuff;
-      if (pk.sig) nasty += 8;
-      if (has(p, 'kire')) nasty += 5;
-      if (def!.dir === 'X') nasty += gauss(0, 10); // 蝴蝶球：连投手自己都不知道会怎么飘
-      if (def!.same && be.side === p.throws) nasty += 5;
-      if (!def!.same && be.side !== p.throws) nasty += 4;
-    }
-    if (p.delivery === 'side' || p.delivery === 'under') nasty += be.side === p.throws ? 4 : -2;
-    if (has(p, 'mix') && p.pitches.length >= 4) nasty += 3;
-    const whiffNasty = nasty + (this.strikes === 2 && has(p, 'kArtist') ? 7 : 0) + (def ? (def.whiff - 1) * 12 : 0);
-
-    const xy = locToXY(loc, focus && chance(0.55 + 0.3 * c) ? focus : null, be.side);
-    const spot = spotOf(xy[0], xy[1], be.side);
+    // 球种质量与落点
+    const f = dfn.fatigueRatio(p.id);
+    let q = pitchQuality(p, type, now);
+    if (dfn.hold && this.bases.some(Boolean)) q -= 3;
+    const sp = spreadOf(type, p.throws, pe.ctl, q, f);
+    if (has(p, 'wild')) sp.s *= 1.15;
+    const land = sampleLanding(aim.x, aim.y, sp, RNG);
+    const info: PitchInfo = { type, sig, kmh, x: land.x, y: land.y, res: 'ball', tx: aim.x, ty: aim.y, q: Math.round(q), hang: land.hang, hunt };
+    const spot = spotOf(info.x, info.y, be.side);
     this.lastSpot = spot;
     this.lastSide = be.side;
-    // 狙区域：来到狙的区域更好打；不在区域里的球，两好球前多半不出棒
-    let zoneHit = 0;
-    if (off.zoneGuess) {
-      zoneHit = spotIn(spot, off.zoneGuess) ? 1 : -1;
-      be.con += zoneHit > 0 ? 7 : -5;
-      be.pow += zoneHit > 0 ? 5 : -2;
-    }
-    // 高的直球：球速快、尾劲足时容易挥空
-    let highHeat = 0;
-    if (fam === 'FB' && spot.vz === 'high' && pe.vel > 138) highHeat = (pe.vel - 138) * 0.004 + (has(p, 'nobi') ? 0.03 : 0);
-    const info: PitchInfo = { type: pk.type, sig: pk.sig, kmh, x: xy[0], y: xy[1], res: 'ball' };
     this.lastPitch = info;
     // 用球统计（对手会据此调整）
     const u = this.useOf(p.id);
@@ -1193,60 +1115,52 @@ export class Match {
     else if (spot.vz === 'low') u.low++;
     if (this.strikes === 2) {
       u.twoN++;
-      u.two[pk.type] = (u.two[pk.type] ?? 0) + 1;
+      u.two[type] = (u.two[type] ?? 0) + 1;
     }
     this.paNp++;
     this.chargePitch(p, (isFB ? 1 : 1.12) * (dfn.def.approach === 'max' ? 1.45 : dfn.def.approach === 'contact' ? 0.85 : 1) + (this.risp() ? 0.18 : 0));
+    const loc = locOf(info.x, info.y);
+
+    // 这一球的威力（打中以后、触击用）
+    let nasty = q;
+    if (def && (def.same ? be.side === p.throws : be.side !== p.throws)) nasty += 5;
+    if (p.delivery === 'side' || p.delivery === 'under') nasty += be.side === p.throws ? 4 : -2;
+    if (has(p, 'mix') && p.pitches.length >= 4) nasty += 3;
 
     if (bunting) {
       this.doBunt(b, p, info, loc, nasty, tac === 'buntHit', squeeze, tname);
       return;
     }
 
-    // 挥棒判断
-    let pSwing: number;
-    if (loc === 'heart') pSwing = 0.78;
-    else if (loc === 'corner') pSwing = 0.58;
-    else if (loc === 'shadow') pSwing = 0.31 - 0.15 * z(be.eye) + 0.08 * z(nasty);
-    else pSwing = 0.09 - 0.08 * z(be.eye) + 0.06 * z(nasty);
-    if (this.balls === 0 && this.strikes === 0) pSwing -= 0.08;
-    if (this.strikes === 2) pSwing += loc === 'waste' ? 0.1 : 0.2;
-    if (this.balls === 3 && this.strikes < 2) pSwing -= this.strikes === 0 ? 0.45 : 0.15;
-    if (tac === 'aggressive') pSwing += 0.1;
-    if (tac === 'wait' && this.strikes < 2) pSwing *= 0.45;
-    if (zoneHit < 0 && this.strikes < 2) pSwing *= 0.7;
-    else if (zoneHit > 0) pSwing += 0.06;
-    if (has(b, 'firstPitch') && this.balls === 0 && this.strikes === 0) pSwing += 0.1;
-    // 猜错球种时更容易被诱骗出棒
-    if (guessHit < 0 && (loc === 'shadow' || loc === 'waste')) pSwing += 0.06;
-    if (hitRun) pSwing = loc === 'waste' ? 0.6 : 0.97;
-    const swing = chance(clamp(pSwing, 0.02, 0.98));
-
-    let res: PitchResult;
-    if (!swing) {
-      if (loc === 'heart') res = chance(0.99) ? 'called' : 'ball';
-      else if (loc === 'corner') res = chance(0.86 + (dfn.fielder('C').a.catching - 50) * 0.002) ? 'called' : 'ball';
-      else if (loc === 'shadow') res = chance(0.1) ? 'called' : 'ball';
-      else res = 'ball';
-      if (res === 'ball' && loc === 'waste' && chance(0.035 * (1 + (50 - pe.ctl) / 60))) res = 'hbp';
-    } else {
-      const base = loc === 'heart' ? 0.9 : loc === 'corner' ? 0.8 : loc === 'shadow' ? 0.67 : 0.46;
-      let pc = base + 0.2 * z(be.con) - 0.17 * z(whiffNasty);
-      if (this.strikes === 2) pc += 0.03 + (has(b, 'tough') ? 0.04 : 0);
-      if (has(b, 'kProne')) pc -= 0.05;
-      if (isFB && pe.vel > 145) pc -= ((pe.vel - 145) / 5) * 0.03;
-      pc -= highHeat;
-      if (!chance(clamp(pc, 0.15, 0.98))) res = 'swinging';
-      else {
-        let pf = loc === 'heart' ? 0.33 : loc === 'corner' ? 0.45 : loc === 'shadow' ? 0.52 : 0.58;
-        if (this.strikes === 2) pf += 0.05;
-        res = chance(pf) ? 'foul' : 'inplay';
-      }
-    }
+    // 挥棒：打者狙的那一格附近来球才出棒；挥空倾向高的球种、两好球后的「三振王」更难碰到
+    let qSwing = nasty + (def ? (def.whiff - 1) * 12 : 0) + (this.strikes === 2 && has(p, 'kArtist') ? 7 : 0);
+    if (isFB && pe.vel > 145) qSwing += (pe.vel - 145) * 0.6;
+    if (isFB && spot.vz === 'high' && pe.vel > 138) qSwing += (pe.vel - 138) * 0.5 + (has(p, 'nobi') ? 4 : 0);
+    if (has(b, 'kProne')) qSwing += 6;
+    if (this.strikes === 2 && has(b, 'tough')) qSwing -= 5;
+    const out = swingOutcome(
+      {
+        hunt,
+        force: hitRun,
+        x: info.x,
+        y: info.y,
+        q: qSwing,
+        hang: land.hang,
+        breaking: !!def && def.family !== 'fast',
+        con: be.con,
+        eye: be.eye,
+        strikes: this.strikes,
+        hot: hotZones(b, be.side),
+        insideSign: be.side === 'R' ? -1 : 1,
+        framing: dfn.fielder('C').a.catching,
+      },
+      RNG,
+    );
+    const res: PitchResult = out.res;
     info.res = res;
 
     if (res === 'inplay') {
-      this.ballInPlay(b, p, be, pe, nasty, loc, info, hitRun || this.stealers.length > 0);
+      this.ballInPlay(b, p, be, pe, nasty, loc, info, hitRun || this.stealers.length > 0 || goHome, out.solid);
       return;
     }
     if (res === 'hbp') {
@@ -1683,13 +1597,13 @@ export class Match {
   // ======================= 击球入场 =======================
   private ballInPlay(
     b: Player, p: Player, be: { con: number; pow: number; side: 'R' | 'L' }, pe: { vel: number },
-    nasty: number, loc: Loc, info: PitchInfo, running: boolean,
+    nasty: number, loc: Loc, info: PitchInfo, running: boolean, solidIn?: number,
   ): void {
     const off = this.off;
     const dfn = this.dfn;
     const locAdj = loc === 'heart' ? 0.06 : loc === 'corner' ? -0.02 : loc === 'shadow' ? -0.08 : -0.18;
     const spot = spotOf(info.x, info.y, be.side);
-    let solid = 0.52 + 0.2 * z(be.con) - 0.16 * z(nasty) + locAdj + gauss(0, 0.19);
+    let solid = solidIn ?? 0.52 + 0.2 * z(be.con) - 0.16 * z(nasty) + locAdj + gauss(0, 0.19);
     if (has(p, 'heavy')) solid -= 0.03;
     // 内角有威力的球会让打者被塞住；外角的球不容易打得扎实
     if (spot.hz === 'in' && nasty > 55) solid -= 0.04;
@@ -2341,33 +2255,4 @@ export class Match {
     }
     return best;
   }
-}
-
-function baseXY(loc: Loc): [number, number] {
-  const r = () => rand() * 2 - 1;
-  const sgn = () => (rand() < 0.5 ? -1 : 1);
-  switch (loc) {
-    case 'heart':
-      return [r() * 0.5, r() * 0.5];
-    case 'corner':
-      return rand() < 0.5 ? [sgn() * (0.6 + rand() * 0.35), r() * 0.9] : [r() * 0.9, sgn() * (0.6 + rand() * 0.35)];
-    case 'shadow':
-      return rand() < 0.5 ? [sgn() * (1.05 + rand() * 0.3), r() * 1.2] : [r() * 1.2, sgn() * (1.05 + rand() * 0.3)];
-    default:
-      return rand() < 0.5 ? [sgn() * (1.4 + rand() * 0.5), r() * 1.6] : [r() * 1.4, -1.4 - rand() * 0.5];
-  }
-}
-
-/** 球的落点（好球带坐标，-1..1 是好球带；x>0 是一垒侧）。focus：按配球计划偏向某个区域 */
-function locToXY(loc: Loc, focus: Zone | null = null, side: 'R' | 'L' = 'R'): [number, number] {
-  let [x, y] = baseXY(loc);
-  if (!focus) return [x, y];
-  const edge = () => (loc === 'heart' ? 0.2 + rand() * 0.25 : 0.6 + rand() * 0.35);
-  if (focus === 'in' || focus === 'out') {
-    const ins = side === 'R' ? -1 : 1; // 右打者的内角在三垒侧（x<0）
-    x = (focus === 'in' ? ins : -ins) * Math.max(Math.abs(x), edge());
-  } else {
-    y = (focus === 'high' ? 1 : -1) * Math.max(Math.abs(y), edge());
-  }
-  return [x, y];
 }

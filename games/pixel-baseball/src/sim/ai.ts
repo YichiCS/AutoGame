@@ -71,6 +71,11 @@ function shouldReplace(m: Match, t: TeamState): boolean {
   return false;
 }
 
+/** 教练替玩家决定要不要换投、换谁（不消耗随机数） */
+export function coachWantsChange(m: Match, t: TeamState): number | null {
+  return shouldReplace(m, t) ? pickReliever(m, t) : null;
+}
+
 export function betweenInnings(m: Match, t: TeamState): void {
   if (shouldReplace(m, t)) {
     const r = pickReliever(m, t);
@@ -184,9 +189,6 @@ function chooseTactic(m: Match, t: TeamState): OffTactic {
 }
 
 export function offenseBeforePitch(m: Match, t: TeamState): void {
-  // 这个打席有既定的狙球就照做；否则打者有利的球数时常常锁定直球
-  if (t.cmd && t.cmd.sit !== 'none') t.guess = t.cmd.sit;
-  else t.guess = m.balls >= 2 && m.balls > m.strikes && chance(0.4) ? 'FB' : null;
   if (t.tactic !== 'swing' && t.tactic !== 'auto') return;
   const st = style(t);
   const [r1, r2, r3] = m.bases.map(Boolean);

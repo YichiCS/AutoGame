@@ -200,23 +200,24 @@ export interface PendingMatch {
   live?: LiveRecord;
 }
 
-/** 亲自指挥时玩家的一个操作 */
+/** 亲自指挥时玩家的一个操作（每一球的投球 / 打击指令、换人、牵制、交给教练打完） */
 export type LiveAct =
-  | { k: 'bat'; c: import('../sim/types').BatCmd }
-  | { k: 'pitch'; c: import('../sim/types').PitchPlan }
+  | { k: 'throw'; t: PitchType | 'FB'; x: number; y: number }
+  | { k: 'swing'; z: number; run: [boolean, boolean, boolean] }
   | { k: 'ph'; slot: number; pid: number }
   | { k: 'pr'; base: number; pid: number }
   | { k: 'pc'; pid: number }
   | { k: 'ds'; pos: Pos; pid: number }
-  | { k: 'po' };
+  | { k: 'po'; base?: number }
+  | { k: 'end' };
 
 export interface LiveRecord {
   order: number[];
   defense: Partial<Record<Pos, number>>;
   players: number[];
-  /** n：第几个打席步（每打完一个打席加一）；a：这一步里的操作 */
+  /** n：第几球（每投一球加一）；a：这一球之前的操作 */
   log: { n: number; a: LiveAct }[];
-  /** 已经打完的打席步数 */
+  /** 已经投了几球 */
   played: number;
 }
 
