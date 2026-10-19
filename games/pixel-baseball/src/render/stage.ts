@@ -138,6 +138,9 @@ export class MatchStage {
   private mitt: [number, number] = [0, 0];
   /** 网格的透明度（演出时淡出） */
   private gridA = 1;
+  /** 上次画的时间；有变化要马上重画 */
+  private drawnAt = -1;
+  private dirty = true;
 
   constructor(cv: HTMLCanvasElement, o: { koshien: boolean; home: TeamColors; away: TeamColors }) {
     this.cv = cv;
@@ -272,6 +275,7 @@ export class MatchStage {
 
   // ---------------- 动画 ----------------
   private kick(): void {
+    this.dirty = true;
     if (!this.raf) {
       this.last = performance.now();
       this.raf = requestAnimationFrame(this.frame);
@@ -301,7 +305,13 @@ export class MatchStage {
       if (this.pop.t <= 0) this.pop = null;
     }
     if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt * 3);
-    this.draw();
+    // 没有动画时只为观众的小动作慢慢画（省电）
+    const idle = !this.tracks.length && !this.flash && !this.pop && !this.flinch && !this.dirty;
+    if (!idle || this.time - this.drawnAt > 0.12) {
+      this.draw();
+      this.drawnAt = this.time;
+      this.dirty = false;
+    }
     this.raf = requestAnimationFrame(this.frame);
   };
 
